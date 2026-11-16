@@ -9,11 +9,6 @@ from kerberos.copy import TEXT
 # Literal keys only: t("risk." + risk) style lookups are checked by their own tests.
 KEY_USE = re.compile(r"""\bt\(\s*["']([\w.]*\w)["']\s*[,)]""")
 SECTION_15_ROW = re.compile(r"^\| ([a-z_]+(?:\.[a-z_]+)+) \| (.+) \|$")
-# §15 texts changed by the review fixes of K13; tech.md v18 takes them over.
-PENDING_V18 = {
-    "app.tagline": "Защита VPN-серверов на Remnawave и 3x-ui",
-    "mode.check": "Проверка: настройки серверов не меняет",
-}
 
 
 def test_every_used_key_exists():
@@ -31,4 +26,4 @@ def test_section_15_texts_are_verbatim():
     rows = [m.groups() for m in map(SECTION_15_ROW.match, section.splitlines()) if m]
     assert len(rows) >= 30
     for key, value in rows:
-        assert TEXT.get(key) == PENDING_V18.get(key, value), key
+        assert TEXT.get(key) == value, key
