@@ -443,7 +443,7 @@ TEXT: dict[str, str] = {
     "plan.edges.failed": "Не удалось прочитать логи nginx на ноде: {reason}",
     "plan.edges.confirm": "подтвердить отмеченные",
     "plan.need_edges": "Подтвердите сети CDN (клавиша e) или снимите отметку с фильтра CDN",
-    "plan.blocked.realip_enabled": "в nginx включён real_ip: фильтр отрезал бы всех",
+    "plan.blocked.realip_enabled": "включён real_ip",
     "error.realip_enabled": "в nginx включён real_ip",
     "error.bad_response": "панель ответила не по схеме",
     "keys.reserve": "резерв",
