@@ -13,7 +13,11 @@ from kerberos.flow import EXIT_INTERRUPTED, EXIT_OK, EXIT_PARTIAL, EXIT_ROLLBACK
 TO_PLAN = login_keys() + ["enter", "enter"] + ["enter"] * 5 + ["esc"] + ["enter", "enter"]
 TO_PLAN += ["enter", "enter", "enter"]
 APPLY = ["enter", "enter"]  # S7 → consent → accept
-ALL_CHANGES = 14  # nl-1: 7, nl-2: 3, de-1: 1, fi-1: 3 on the demo fleet
+# Marked by default on the demo fleet: nl-1: 7, nl-2: 3, de-1: 1, fi-1: 3 on the nodes, then
+# sub.template and sub.ping_type in the panel; the journal also gets sub.templates.
+ALL_ITEMS = 16
+ALL_CHANGES = 17
+ROLLBACK_LOGIN = ["enter", "enter", "enter"] + list("admin") + ["enter"] + list("pw") + ["enter"]
 
 
 def fix_run(extra, nodes=None, height=40, state=None):
@@ -66,9 +70,8 @@ def test_apply_roll_back_apply_again():
     facts = nodes["nl-1"].state["facts"]
     assert facts["mptcp"]["enabled"] is False and facts["ssh"]["passwordAuthentication"] is False
     first = last_run(app)
-    keys = ["enter", "enter", "enter", "x"]  # choose the run, all changes, consent, notice
     term = app.env.terminal
-    term.feed(*keys)
+    term.feed(*ROLLBACK_LOGIN, "x")  # the run, all changes, consent, the panel, the notice
     assert app.run("rollback") == EXIT_OK
     assert facts["mptcp"]["enabled"] is True and facts["ssh"]["passwordAuthentication"] is True
     assert nodes["nl-1"].state["facts"]["listening"][-1]["firewalled"] is False
@@ -160,7 +163,7 @@ def test_rollback_that_fails_exits_with_5(fail_on):
     nodes = demo_nodes()
     app, _term, _code = fix_run(APPLY + ["enter"], nodes=list(nodes.values()))
     nodes["nl-1"].state[fail_on] = True
-    app.env.terminal.feed("enter", "enter", "enter", "x")
+    app.env.terminal.feed(*ROLLBACK_LOGIN, "x")
     assert app.run("rollback") == EXIT_ROLLBACK_FAILED
     run = last_run(app)
     assert run["mode"] == "rollback"
@@ -182,5 +185,5 @@ def test_s9_snapshot_and_s7_rows():
     assert_snapshot("s9", text.replace(run["runId"], "<run>"))
     s7 = next(f for f in term.frames if t("plan.title") in f.splitlines()[0])
     assert t("fix.mptcp.guard.label") in s7
-    # ssh.port (4 nodes) and self-steal (4 nodes, waiting for a domain) are not marked
-    assert t("plan.selected", n=ALL_CHANGES, total=ALL_CHANGES + 8) in s7
+    # Not marked: ssh.port (4 nodes), self-steal waiting for a domain (4), host.fingerprint (low)
+    assert t("plan.selected", n=ALL_ITEMS, total=ALL_ITEMS + 9) in s7
