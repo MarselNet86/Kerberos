@@ -2,7 +2,7 @@
 a run, the SSH transport and S4 picking the node address."""
 
 import pytest
-from helpers import login_keys, make_app, seen, typed
+from helpers import login_keys, make_app, row_of, seen, typed
 
 from kerberos.copy import t
 from kerberos.demo.fleet import build_nodes
@@ -14,7 +14,19 @@ from kerberos.nodes.transport import NodeAgentError
 TO_PLAN = login_keys() + ["enter", "enter"] + ["enter"] * 5 + ["esc"] + ["enter", "enter"]
 TO_PLAN += ["enter", "enter", "enter"]
 DEFAULT_APPLY = ["enter", "enter", "enter"]  # S7 → consent → accept, S9
-EVERYTHING = ["a", "enter", "enter", "enter"]  # ssh.port too
+
+
+def everything(*names):
+    """`a` marks every row but the SSH ports (§6): the port rows are marked by hand."""
+    keys, cursor = ["a"], 0
+    for name in names:
+        row = row_of(name, "ssh.port")
+        keys += ["down"] * (row - cursor) + ["space"]
+        cursor = row
+    return keys + ["enter", "enter", "enter"]  # consent, accept, S9
+
+
+EVERYTHING = everything("nl-1")
 ROLLBACK = ["enter", "enter", "enter"] + list("admin") + ["enter"] + list("pw") + ["enter"]
 NL1 = "203.0.113.10"
 
