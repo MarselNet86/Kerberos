@@ -1,0 +1,1 @@
+{"ID": "d1", "Image": "remnawave/node:latest", "Names": "remnanode", "Ports": "0.0.0.0:2222->2222/tcp, [::]:2222->2222/tcp"}

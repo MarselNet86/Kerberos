@@ -1,0 +1,142 @@
+{
+  "agent": "0.3.0",
+  "certbot": {
+    "certs": [],
+    "installed": false
+  },
+  "fail2ban": {
+    "installed": false,
+    "jailPorts": [],
+    "sshdJail": false
+  },
+  "firewall": {
+    "ufw": "inactive"
+  },
+  "hostKeys": [
+    {
+      "fingerprint": "SHA256:Pud2wwfqt34jVOXyI18umfsYSl2277MelImnv1641JI",
+      "type": "ED25519"
+    },
+    {
+      "fingerprint": "SHA256:T/8lCaOskOxLo9d9t87nSx57E/VGGV7zhj+AaxpfY/I",
+      "type": "RSA"
+    }
+  ],
+  "ipv4": [
+    "203.0.113.10"
+  ],
+  "ipv6": [
+    "2001:db8::10"
+  ],
+  "listening": [
+    {
+      "address": "127.0.0.53",
+      "docker": false,
+      "firewalled": false,
+      "port": 53,
+      "process": "systemd-resolve",
+      "proto": "tcp"
+    },
+    {
+      "address": "0.0.0.0",
+      "docker": false,
+      "firewalled": false,
+      "port": 22,
+      "process": "sshd",
+      "proto": "tcp"
+    },
+    {
+      "address": "0.0.0.0",
+      "docker": false,
+      "firewalled": false,
+      "port": 443,
+      "process": "xray",
+      "proto": "tcp"
+    },
+    {
+      "address": "0.0.0.0",
+      "docker": false,
+      "firewalled": false,
+      "port": 443,
+      "process": "xray",
+      "proto": "udp"
+    },
+    {
+      "address": "0.0.0.0",
+      "docker": false,
+      "firewalled": false,
+      "port": 2222,
+      "process": "node",
+      "proto": "tcp"
+    },
+    {
+      "address": "0.0.0.0",
+      "docker": false,
+      "firewalled": false,
+      "port": 8080,
+      "process": "python3",
+      "proto": "tcp"
+    },
+    {
+      "address": "::",
+      "docker": false,
+      "firewalled": false,
+      "port": 22,
+      "process": "sshd",
+      "proto": "tcp"
+    },
+    {
+      "address": "127.0.0.1",
+      "docker": false,
+      "firewalled": false,
+      "port": 61000,
+      "process": "xray",
+      "proto": "tcp"
+    }
+  ],
+  "mptcp": {
+    "enabled": true,
+    "ipOptionsDrop": false,
+    "sockets": 2
+  },
+  "nftTables": [
+    "ip nat",
+    "ip filter"
+  ],
+  "nginx": {
+    "installed": false,
+    "realip": false,
+    "sites": []
+  },
+  "nodeApi": {
+    "otherPeers": 1,
+    "panelOnly": false,
+    "port": 2222
+  },
+  "os": {
+    "id": "ubuntu",
+    "kernel": "6.8.0-49-generic",
+    "version": "24.04"
+  },
+  "protocol": 1,
+  "remnanode": {
+    "letsencryptMounted": false,
+    "network": "host",
+    "nodePort": 2222,
+    "present": true,
+    "xrayVersion": "25.10.15"
+  },
+  "ssh": {
+    "adminKeys": 0,
+    "kbdInteractive": false,
+    "passwordAuthentication": true,
+    "permitRootLogin": "yes",
+    "ports": [
+      22
+    ],
+    "socketActivated": true
+  },
+  "watch": {
+    "installed": false
+  }
+}

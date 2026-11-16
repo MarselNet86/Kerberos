@@ -1,0 +1,35 @@
+{
+  "port": 443,
+  "protocol": 1,
+  "v4": {
+    "clientIps": 3,
+    "connections": 3,
+    "cut": 2,
+    "cutNets": [
+      {
+        "count": 1,
+        "net": "198.51.0.0/16"
+      },
+      {
+        "count": 1,
+        "net": "203.0.0.0/16"
+      }
+    ]
+  },
+  "v6": {
+    "clientIps": 1,
+    "connections": 1,
+    "cut": 1,
+    "cutNets": [
+      {
+        "count": 1,
+        "net": "2001:db8::/32"
+      }
+    ]
+  },
+  "xray": {
+    "accepted5m": 3,
+    "ruShare": 0.3333,
+    "users5m": 2
+  }
+}

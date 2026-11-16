@@ -1,0 +1,13 @@
+server {
+    listen 80;
+    server_name de-1.example.com;
+    location /.well-known/acme-challenge/ { root /var/www/kerberos-acme; }
+    location / { return 301 https://$host$request_uri; }
+}
+server {
+    listen 127.0.0.1:8445 ssl;
+    http2 on;
+    server_name de-1.example.com;
+    ssl_certificate /etc/letsencrypt/live/de-1.example.com/fullchain.pem;
+    root /var/www/kerberos-site;
+}

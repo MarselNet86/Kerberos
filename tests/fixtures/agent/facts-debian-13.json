@@ -1,0 +1,160 @@
+{
+  "agent": "0.3.0",
+  "certbot": {
+    "certs": [],
+    "installed": true
+  },
+  "fail2ban": {
+    "installed": true,
+    "jailPorts": [
+      22,
+      24622
+    ],
+    "sshdJail": true
+  },
+  "firewall": {
+    "ufw": "active"
+  },
+  "hostKeys": [
+    {
+      "fingerprint": "SHA256:XIGcyKJ/c3verIpRPAu2F8dGbT14kjz70bn1ErI+2Yg",
+      "type": "ED25519"
+    }
+  ],
+  "ipv4": [
+    "198.51.100.20"
+  ],
+  "ipv6": [],
+  "listening": [
+    {
+      "address": "0.0.0.0",
+      "docker": false,
+      "firewalled": false,
+      "port": 22,
+      "process": "sshd",
+      "proto": "tcp"
+    },
+    {
+      "address": "0.0.0.0",
+      "docker": false,
+      "firewalled": false,
+      "port": 24622,
+      "process": "sshd",
+      "proto": "tcp"
+    },
+    {
+      "address": "0.0.0.0",
+      "docker": false,
+      "firewalled": false,
+      "port": 443,
+      "process": "xray",
+      "proto": "tcp"
+    },
+    {
+      "address": "0.0.0.0",
+      "docker": false,
+      "firewalled": false,
+      "port": 80,
+      "process": "nginx",
+      "proto": "tcp"
+    },
+    {
+      "address": "127.0.0.1",
+      "docker": false,
+      "firewalled": true,
+      "port": 8445,
+      "process": "nginx",
+      "proto": "tcp"
+    },
+    {
+      "address": "0.0.0.0",
+      "docker": true,
+      "firewalled": true,
+      "port": 2222,
+      "process": "docker-proxy",
+      "proto": "tcp"
+    },
+    {
+      "address": "0.0.0.0",
+      "docker": false,
+      "firewalled": true,
+      "port": 8080,
+      "process": "python3",
+      "proto": "tcp"
+    },
+    {
+      "address": "0.0.0.0",
+      "docker": false,
+      "firewalled": true,
+      "port": 9100,
+      "process": "node_exporter",
+      "proto": "tcp"
+    }
+  ],
+  "mptcp": {
+    "enabled": false,
+    "ipOptionsDrop": true,
+    "sockets": 0
+  },
+  "nftTables": [
+    "inet kerberos_mptcp",
+    "inet kerberos_node_api",
+    "inet kerberos_ports"
+  ],
+  "nginx": {
+    "installed": true,
+    "realip": false,
+    "sites": [
+      {
+        "file": "/etc/nginx/sites-enabled/kerberos-site",
+        "listen": [
+          "80"
+        ],
+        "serverNames": [
+          "de-1.example.com"
+        ]
+      },
+      {
+        "file": "/etc/nginx/sites-enabled/kerberos-site",
+        "listen": [
+          "127.0.0.1:8445 ssl"
+        ],
+        "serverNames": [
+          "de-1.example.com"
+        ]
+      }
+    ]
+  },
+  "nodeApi": {
+    "otherPeers": 0,
+    "panelOnly": true,
+    "port": 2222
+  },
+  "os": {
+    "id": "debian",
+    "kernel": "6.12.48+deb13-amd64",
+    "version": "13"
+  },
+  "protocol": 1,
+  "remnanode": {
+    "letsencryptMounted": true,
+    "network": "bridge",
+    "nodePort": 2222,
+    "present": true,
+    "xrayVersion": "26.11.2"
+  },
+  "ssh": {
+    "adminKeys": 1,
+    "kbdInteractive": false,
+    "passwordAuthentication": false,
+    "permitRootLogin": "without-password",
+    "ports": [
+      22,
+      24622
+    ],
+    "socketActivated": false
+  },
+  "watch": {
+    "installed": true
+  }
+}

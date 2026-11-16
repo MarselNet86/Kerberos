@@ -1,0 +1,20 @@
+[
+ {
+  "Config": {
+   "Env": [
+    "APP_PORT=2222",
+    "SECRET_KEY=never-read-this-value"
+   ]
+  },
+  "HostConfig": {
+   "NetworkMode": "remnanode_default"
+  },
+  "Mounts": [
+   {
+    "Type": "bind",
+    "Source": "/etc/letsencrypt",
+    "Destination": "/etc/letsencrypt"
+   }
+  ]
+ }
+]

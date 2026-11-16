@@ -1,0 +1,8 @@
+0      0      203.0.113.10:443       198.51.100.7:51234
+	 cubic wscale:7,7 rto:204 rtt:3.2/1.6 mss:1448 bytes_sent:120 bytes_acked:121 bytes_received:517 segs_out:3 segs_in:4 lastsnd:5000 lastrcv:5200 lastack:5000
+0      0      203.0.113.10:443       198.51.100.8:51235
+	 cubic wscale:7,7 rto:204 rtt:3.2/1.6 bytes_sent:812345 bytes_acked:812346 bytes_received:98765 segs_out:300 segs_in:400 lastsnd:20 lastrcv:20 lastack:20
+0      0      [2001:db8::10]:443     [2001:db8:1::7]:51236
+	 cubic wscale:7,7 rto:204 rtt:3.2/1.6 bytes_received:900 lastsnd:8000 lastrcv:9000 lastack:8000
+0      0      203.0.113.10:443       203.0.113.99:51237
+	 cubic wscale:7,7 rto:204 rtt:3.2/1.6 lastsnd:4000 lastrcv:4000

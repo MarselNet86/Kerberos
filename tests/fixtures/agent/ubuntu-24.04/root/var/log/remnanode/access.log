@@ -1,0 +1,5 @@
+2026/11/16 11:56:01.120000 from 198.51.100.200:50001 accepted tcp:www.example.com:443 [VLESS-REALITY-NL1 >> DIRECT] email: u1
+2026/11/16 11:57:02.120000 from 198.51.100.201:50002 accepted tcp:shop.example.ru:443 [VLESS-REALITY-NL1 >> DIRECT] email: u2
+2026/11/16 11:58:03.120000 from 198.51.100.202:50003 accepted udp:cdn.example.net:443 [VLESS-REALITY-NL1 >> DIRECT] email: u1
+2026/11/16 11:40:00.000000 from 198.51.100.203:50004 accepted tcp:old.example.ru:443 [VLESS-REALITY-NL1 >> DIRECT] email: u3
+2026/11/16 11:59:59.000000 from 198.51.100.204:50005 rejected  invalid request
