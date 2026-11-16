@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -228,6 +229,36 @@ def error_text(code: Optional[str]) -> str:
     return TEXT.get(f"error.{code}", code)
 
 
+def site_preview(app: App, session: Session, item: PlanItem) -> Text:
+    """§10.4: what the stub site of the node will be, with its colours (g draws another)."""
+    from kerberos.agent import site_spec
+
+    spec = site_spec(item.params.get("siteSeed", 0))
+    theme = spec["theme"]
+    line = Text(t("plan.site", node=app.mask(app.session_name(item.node_uuid)),
+                  title=spec["title"], kind=t(f"site.kind.{spec['kind']}")))  # fmt: skip
+    for key in ("background", "text", "accent"):
+        line.append("  ")
+        line.append("██", style=theme[key])
+        line.append(f" {theme[key]}", style="muted")
+    line.append("  " + t("plan.site.again"), style="muted")
+    return line
+
+
+def new_site(session: Session, item: PlanItem) -> None:
+    """Another random stub site for the node, still unlike the other nodes' sites."""
+    from kerberos.agent import site_html, template_hash
+    from kerberos.fixes.plan import free_site_seed, site_layouts_in_use
+
+    data = session.data["input"]
+    used = site_layouts_in_use(data)
+    for other in session.data["plan"]:
+        if other.fix_id == "self_steal":
+            used.add(template_hash(site_html(other.params.get("siteSeed", 0), "example.com")))
+    rng = session.data.setdefault("rng", random.SystemRandom())
+    item.params["siteSeed"] = free_site_seed(used, rng)
+
+
 def waits_for_input(item: PlanItem) -> bool:
     if item.fix_id == "self_steal":
         return item.params.get("dns") != "ok"
@@ -242,9 +273,12 @@ def step_plan(app: App, session: Session) -> Any:
     if "plan" not in session.data:
         records = app.env.state.nodes()
         panel_ips = {uuid: r.panel_ip for uuid, r in records.items()}
+        # The demo draws the same ports and stub sites every time: snapshots stay stable.
+        session.data["rng"] = random.Random(20261116) if app.env.demo else random.SystemRandom()
         session.data["plan"] = build_plan(
-            session.data["findings"], data, session.data.get("admin"), panel_ips
-        )
+            session.data["findings"], data, session.data.get("admin"), panel_ips,
+            session.data["rng"],
+        )  # fmt: skip
     items: list[PlanItem] = session.data["plan"]
     if not items:
         app.notice("info", t("plan.empty"), t("plan.title"))
@@ -300,6 +334,9 @@ def step_plan(app: App, session: Session) -> Any:
                 # The record to make, in full: the table column is too narrow for it.
                 tail.append(Text(t("plan.domain.wait", record=app.mask(item.params["record"])),
                                  style="risk.medium"))  # fmt: skip
+        current = items[checklist.cursor] if items else None
+        if current is not None and current.fix_id == "self_steal" and not current.blocked:
+            tail.append(site_preview(app, session, current))
         if any(i.fix_id == "self_steal" for i in items):
             auto = session.data.get("auto_finalize", False)
             tail.append(Text(t("plan.finalize.auto" if auto else "plan.finalize.manual"),
@@ -337,6 +374,9 @@ def step_plan(app: App, session: Session) -> Any:
             confirm_edges(app, session, item)
             if item.selected:
                 checklist.selected.add(checklist.cursor)
+            return None
+        if hotkey(key) == "g" and items[checklist.cursor].fix_id == "self_steal":
+            new_site(session, items[checklist.cursor])
             return None
         if hotkey(key) == "f":
             session.data["auto_finalize"] = not session.data.get("auto_finalize", False)
@@ -516,6 +556,12 @@ def change_lines(app: App, session: Session, run: dict) -> list[RenderableType]:
                               style="risk.high"))  # fmt: skip
         node = session.snapshot.node(change["params"].get("node")
                                      or change["target"].partition(":")[2])  # fmt: skip
+        site = change["details"].get("site")
+        if change["fixId"] == "self_steal.site" and change["state"] == "applied" and site:
+            lines.append(Text("  " + t("s9.site", title=site["title"],
+                                         kind=t(f"site.kind.{site['kind']}"),
+                                         background=site["background"],
+                                         accent=site["accent"]), style="muted"))  # fmt: skip
         if change["fixId"] == "self_steal.hosts" and change["state"] == "applied":
             lines.append(Text("  " + t("s9.hosts", created=len(change["details"]["created"]),
                                          disabled=len(change["details"]["disabled"])),

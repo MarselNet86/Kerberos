@@ -158,7 +158,7 @@ def build_plan(
         facts = node.facts if node else {}
         if item.fix_id == "self_steal":
             item.blocked = self_steal_blocker(data, node)
-            item.params["siteSeed"] = free_layout(used_layouts)
+            item.params["siteSeed"] = free_site_seed(used_layouts, rng)
         if item.fix_id == "cdn.edge_only":
             item.params = {"paths": edge_paths(data, node), "nets": None}
             if (facts.get("nginx") or {}).get("realip"):
@@ -251,16 +251,22 @@ def site_layouts_in_use(data: CheckInput) -> set:
     return {s.get("template") for n in data.nodes for s in n.sites.values() if s}
 
 
-def free_layout(used: set) -> int:
-    """A stub layout no other node shows (site.same_template), if one is left."""
-    from kerberos.agent import site_html, template_hash
+def free_site_seed(used: set, rng: random.Random) -> int:
+    """A random stub site whose markup no other node shows (site.same_template).
 
-    for seed in range(4):
+    The site is built from the seed alone, so its structure is known before
+    the domain is typed in S7.
+    """
+    from kerberos.agent import SITE_SEEDS, site_html, template_hash
+
+    seed = rng.randrange(SITE_SEEDS)
+    for _ in range(64):
         layout = template_hash(site_html(seed, "example.com"))
         if layout not in used:
             used.add(layout)
             return seed
-    return len(used) % 4
+        seed = rng.randrange(SITE_SEEDS)
+    return seed
 
 
 def self_steal_blocker(data: CheckInput, node) -> Optional[str]:
