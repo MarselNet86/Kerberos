@@ -141,3 +141,39 @@ def test_reserve_rollback_on_a_tag_panel():
     app.env.terminal.feed(*ROLLBACK, "x")
     assert app.run("rollback") == EXIT_OK
     assert {c["state"] for c in fix_run(app)["changes"]} == {"rolled_back"}
+
+
+# -- app 14: zones and names known only from the nodes are masked too --------------------------
+def test_masker_hides_the_zone_of_a_registered_domain():
+    from kerberos.mask import Masker
+
+    masker = Masker(True)
+    masker.register("nl-1.mysite.icu", "nl-2.mysite.icu", "nl-3.example.com")
+    out = masker("Домены трёх нод в одной зоне mysite.icu: nl-1.mysite.icu, nl-2.mysite.icu")
+    assert "mysite" not in out
+    assert "example.com" not in masker._registered, "documentation zones stay as they are"
+
+
+def test_names_only_the_nodes_know_are_masked():
+    from demo_input import Collector, Progress, demo_env, demo_snapshot, grant_access
+
+    env = demo_env()
+    grant_access(env)
+    facts = next(n for n in env.transport.nodes.values() if n.name == "fi-1").state["facts"]
+    facts["nginx"]["sites"].append(
+        {
+            "file": "/etc/nginx/sites-enabled/shop",
+            "serverNames": ["shop.mysite.icu"],
+            "listen": ["8080"],
+        }
+    )
+    facts["certbot"]["certs"].append({"domain": "mail.othersite.icu",
+                                      "notAfter": "2027-01-01T00:00:00Z"})  # fmt: skip
+    _client, snapshot = demo_snapshot(env)
+    selected = [n.uuid for n in snapshot.nodes if not n.is_disabled]
+    reachable = {n.address for n in env.transport.nodes.values() if n.reachable}
+    access = {n.uuid: "ok" if n.address in reachable else "none" for n in snapshot.nodes}
+    Collector(env, snapshot, selected, access, False, Progress()).run()
+    env.masker.enabled = True
+    out = env.masker("shop.mysite.icu, mail.othersite.icu, зона othersite.icu")
+    assert "mysite" not in out and "othersite" not in out
