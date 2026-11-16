@@ -18,7 +18,16 @@ from kerberos.fixes.journal import RunStore
 from kerberos.panel.client import PanelClient
 from kerberos.panel.errors import PanelError
 
-PANEL_FIXES = {"self_steal.profile", "self_steal.squads", "self_steal.hosts"}
+PANEL_FIXES = {
+    "self_steal.profile",
+    "self_steal.squads",
+    "self_steal.hosts",
+    "sub.templates",
+    "sub.template",
+    "sub.ping_type",
+    "host.fingerprint",
+    "reserve",
+}
 
 
 def canonical(value: Any) -> str:
@@ -63,6 +72,36 @@ def undo(client: PanelClient, change: dict,
             for uuid in details.get("created", []):
                 if uuid in existing:
                     client.delete_host(uuid)
+            return None
+        if fix_id == "sub.templates":
+            # Templates KERBEROS created stay (the API has no delete); edited ones go back.
+            for uuid, info in (details.get("templates") or {}).items():
+                previous = load_snapshot(info.get("previousPath"))
+                if previous is not None and info.get("written"):
+                    client.patch_template(uuid, previous)
+            return None
+        if fix_id == "sub.template":
+            for uuid, template in (details.get("hosts") or {}).items():
+                client.patch_host(uuid, {"xrayJsonTemplateUuid": template})
+            return None
+        if fix_id == "sub.ping_type":
+            current = client.sub_settings()
+            headers = dict(current.headers)
+            previous = details.get("previous") or {}
+            if "ping-type" in previous:
+                headers["ping-type"] = previous["ping-type"]
+            else:
+                headers.pop("ping-type", None)
+            client.patch_sub_settings(current.uuid, headers)
+            return None
+        if fix_id == "host.fingerprint":
+            client.patch_host(
+                change["params"]["host"], {"fingerprint": details.get("previous", "")}
+            )
+            return None
+        if fix_id == "reserve":
+            for uuid, before in (details.get("hosts") or {}).items():
+                client.patch_host(uuid, before)
             return None
         if fix_id == "self_steal.squads":
             for uuid, inbounds in (details.get("squads") or {}).items():
