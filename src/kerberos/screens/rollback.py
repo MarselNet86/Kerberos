@@ -16,7 +16,8 @@ from rich.text import Text
 from kerberos.copy import t
 from kerberos.fixes.engine import ROLLBACKABLE
 from kerberos.fixes.journal import RunStore, iso
-from kerberos.flow import EXIT_OK, EXIT_ROLLBACK_FAILED
+from kerberos.fixes.panel_changes import PANEL_FIXES, undo
+from kerberos.flow import EXIT_OK, EXIT_PANEL, EXIT_ROLLBACK_FAILED
 from kerberos.nodes.transport import NodeAgentError, Target, TransportError
 from kerberos.screens.check import write_report
 from kerberos.screens.fix import error_text
@@ -32,11 +33,17 @@ def node_of(run: dict, target: str) -> Optional[dict]:
 
 
 def label(app: App, run: dict, change: dict) -> str:
-    node = node_of(run, change["target"])
-    name = node["name"] if node else change["target"]
+    target = (
+        f"node:{change['params']['node']}" if change["params"].get("node") else change["target"]
+    )
+    node = node_of(run, target)
+    name = node["name"] if node else t("target.panel")
     ports = ", ".join(change["params"].get("ports", []))
     text = t(
-        "fix." + change["fixId"] + ".label", ports=ports, port=change["params"].get("port", "")
+        "fix." + change["fixId"] + ".label",
+        ports=ports,
+        port=change["params"].get("port", ""),
+        domain=change["params"].get("domain", ""),
     )
     return f"{app.mask(name)}: {app.mask(text)}"
 
@@ -59,18 +66,49 @@ def choose_run(app: App, runs: list) -> Optional[dict]:
 
 
 def target_of(app: App, run: dict, change: dict) -> Target:
-    node = node_of(run, change["target"]) or {}
+    target = (
+        f"node:{change['params']['node']}" if change["params"].get("node") else change["target"]
+    )
+    node = node_of(run, target) or {}
     record = app.env.state.node(node.get("uuid", ""))
     port = record.ssh_port if record else node.get("sshPort", 22)
     address = record.address if record else node.get("address", "")
     return Target(node.get("uuid", ""), node.get("name", ""), address, port)
 
 
-def roll_back(app: App, run: dict, changes: list) -> list:
+def ask_diff(app: App, diff: str) -> bool:
+    """§11.4: the panel object changed after KERBEROS: show how, ask before undoing."""
+    from kerberos.screens.check import show_pager
+
+    show_pager(app, t("rb.diff.intro") + "\n\n" + app.mask(diff), t("rb.title"))
+    body = Group(Notice("warning", t("rb.diff.question")),
+                 Text(f"{t('quit.yes')}    {t('quit.no')}", style="muted"))  # fmt: skip
+    app.draw(t("rb.title"), body)
+    return app.term.read_key() == "enter"
+
+
+def roll_back(app: App, run: dict, changes: list, client=None) -> list:
     """Reverse order; returns the changes that did not go back."""
     failed = []
     store = RunStore(app.env.state, app.env.clock)
     for change in sorted(changes, key=lambda c: c["startedAt"], reverse=True):
+        if change["fixId"] in PANEL_FIXES:
+            reason = (
+                undo(client, change, ask=lambda diff: ask_diff(app, diff))
+                if client
+                else ("no_panel")
+            )
+            if reason:
+                change["error"] = reason
+                failed.append(change)
+                store.save(run)
+                continue
+            run["pending"] = [p for p in run.get("pending", [])
+                              if p.get("changeId") != change["changeId"]]  # fmt: skip
+            change["state"] = "rolled_back"
+            change["finishedAt"] = iso(app.env.clock)
+            store.save(run)
+            continue
         target = target_of(app, run, change)
         try:
             app.env.transport.agent(target, f"rollback {change['changeId']}")
@@ -127,7 +165,15 @@ def rollback_flow(app: App, run_id: Optional[str] = None) -> int:
                                                        t("consent.keys")), ()))  # fmt: skip
         if Consent.handle(app.term.read_key() or ""):
             break
-    failed = roll_back(app, run, chosen)
+    client = None
+    if any(c["fixId"] in PANEL_FIXES for c in chosen):
+        from kerberos.screens.panel import open_panel
+
+        opened = open_panel(app)
+        if not isinstance(opened, tuple):
+            return EXIT_PANEL if opened == EXIT_PANEL else EXIT_OK
+        client = opened[1]
+    failed = roll_back(app, run, chosen, client)
     record = store.new_run("rollback", run["panel"], run["nodes"])
     record["changes"] = copy.deepcopy(chosen)
     record["findings"] = run.get("findings", [])

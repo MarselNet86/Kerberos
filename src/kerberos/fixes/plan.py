@@ -41,6 +41,7 @@ IMPLEMENTED = {
     "hostkeys.regenerate",
     "ssh.key_only",
     "ssh.port",
+    "self_steal",
 }
 ACCESS_FIXES = {"ssh.key_only", "ssh.port", "hostkeys.regenerate"}
 RISK_RANK = {"high": 0, "medium": 1, "low": 2, "info": 3}
@@ -86,6 +87,8 @@ def node_params(
 ) -> dict:
     if fix_id == "ssh.port":
         return {"port": choose_port(facts, rng)}
+    if fix_id == "self_steal":
+        return {"domain": None, "dns": "none", "siteSeed": 0}
     if fix_id == "fail2ban.sshd":
         return {"sshPorts": list(facts["ssh"]["ports"]), "panelIp": panel_ip}
     if fix_id == "node_api.panel_only":
@@ -129,9 +132,13 @@ def build_plan(
             for port in finding["evidence"].get("ports", []):
                 if port not in item.params["ports"]:
                     item.params["ports"].append(port)
+    used_layouts = site_layouts_in_use(data)
     for item in list(items.values()):
         node = data.node_data(item.node_uuid or "")
         facts = node.facts if node else {}
+        if item.fix_id == "self_steal":
+            item.blocked = self_steal_blocker(data, node)
+            item.params["siteSeed"] = free_layout(used_layouts)
         if (
             item.fix_id == "node_api.panel_only"
             and (facts.get("remnanode") or {}).get("network") == "bridge"
@@ -148,13 +155,49 @@ def build_plan(
             else:
                 item.blocked = "no_admin_key"
     for item in items.values():
+        # self-steal needs a domain typed in S7: it gets marked once DNS matches.
         item.selected = (
             item.blocked is None
             and item.risk in ("high", "medium")
-            and item.fix_id not in ("ssh.port", "watch.install")
+            and item.fix_id not in ("ssh.port", "watch.install", "self_steal")
         )
     node_index = {n.node.uuid: i for i, n in enumerate(data.nodes)}
     return sorted(items.values(), key=lambda i: order_key(i, node_index))
+
+
+def site_layouts_in_use(data: CheckInput) -> set:
+    return {s.get("template") for n in data.nodes for s in n.sites.values() if s}
+
+
+def free_layout(used: set) -> int:
+    """A stub layout no other node shows (site.same_template), if one is left."""
+    from kerberos.agent import site_html, template_hash
+
+    for seed in range(4):
+        layout = template_hash(site_html(seed, "example.com"))
+        if layout not in used:
+            used.add(layout)
+            return seed
+    return len(used) % 4
+
+
+def self_steal_blocker(data: CheckInput, node) -> Optional[str]:
+    """§10.4 conditions; the reason text keys are plan.blocked.<reason>."""
+    if node is None or not node.node.is_connected:
+        return "node_offline"
+    profile = data.snapshot.node_profile(node.node)
+    if profile is None:
+        return "no_profile"
+    if len(profile.node_uuids) > 1:
+        return "shared_profile"
+    listening = (node.facts or {}).get("listening", [])
+    if any(s["port"] == 80 and s["proto"] == "tcp" and s.get("process") != "nginx"
+           for s in listening):  # fmt: skip
+        return "port80_busy"
+    on443 = [s for s in listening if s["port"] == 443 and s["proto"] == "tcp"]
+    if on443 and not any(s.get("process") in ("xray", "rw-core") for s in on443):
+        return "port443"
+    return None
 
 
 def follow_admin_key(items: list[PlanItem]) -> None:

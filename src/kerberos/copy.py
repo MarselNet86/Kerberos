@@ -402,6 +402,57 @@ TEXT: dict[str, str] = {
     "fix.hostkeys.regenerate.label": "Новые ключи сервера",
     "fix.ssh.key_only.label": "Вход только по ключу",
     "fix.ssh.port.label": "Перенести SSH на порт {port}",
+    "fix.self_steal.label": "Свой домен {domain}: сайт, сертификат, профиль, копии хостов",
+    "fix.self_steal.site.label": "Сайт и сертификат на {domain}",
+    "fix.node.letsencrypt_mount.label": "Сертификат виден контейнеру ноды",
+    "fix.self_steal.profile.label": "Профиль ноды по шаблону KERBEROS на {domain}",
+    "fix.self_steal.squads.label": "Новый инбаунд в сквадах",
+    "fix.self_steal.hosts.label": "Копии хостов с SNI {domain}, старые выключены",
+    "keys.domain": "домен",
+    "plan.domain.label": "Домен для {node}",
+    "plan.domain.hint": "A-запись домена должна указывать на IP ноды",
+    "plan.domain.invalid": "нужен домен вида node.example.com",
+    "plan.domain.none": "d: введите домен",
+    "plan.domain.wait": "ждёт DNS: {record}",
+    "plan.domain.ok": "домен {domain} ✓",
+    "plan.need_domain": (
+        "У отмеченного self-steal нет домена с верной A-записью: введите домен (d) "
+        "или снимите отметку"
+    ),
+    "plan.blocked.node_offline": "нода не подключена к панели",
+    "plan.blocked.no_profile": "у ноды нет профиля",
+    "plan.blocked.shared_profile": "профиль общий с другими нодами: нужен свой профиль",
+    "plan.blocked.port80_busy": "порт 80 занят не nginx",
+    "plan.blocked.port443": "порт 443 держит не Xray",
+    "plan.finalize.manual": "Старые имена уберёт kerberos finalize через сутки (f: автоматически)",
+    "plan.finalize.auto": "Старые имена уберутся автоматически через сутки (f: вручную)",
+    "s9.hosts": (
+        "Копий хостов: {created}, выключено старых: {disabled}. Копии стоят в конце списка."
+    ),
+    "s9.finalize": "Через сутки уберите старые имена: {command}",
+    "s9.finalize.auto": "Старые имена уберутся сами через сутки (таймер на сервере панели)",
+    "error.port80_busy": "порт 80 занят не nginx",
+    "error.certbot_failed": "сертификат не выпустился",
+    "error.nginx_test_failed": "nginx -t не принял конфиг",
+    "error.check_failed": "проверка снаружи не увидела свой домен",
+    "error.node_offline": "нода не подключилась к панели после смены профиля",
+    "error.host_mismatch": "панель сохранила копию хоста не так, как её отправили",
+    "error.changed_in_panel": "объект в панели изменён после KERBEROS",
+    "error.no_panel": "нет доступа к панели",
+    "error.no_snapshot": "нет снимка объекта до изменения",
+    "error.gone": "объекта больше нет в панели",
+    "rb.diff.intro": "Этот объект в панели изменили после KERBEROS. Различия:",
+    "rb.diff.question": "Откатить всё равно? Ручные правки пропадут.",
+    "mode.finalize": "Завершить self-steal: убрать старые имена",
+    "app.pending": "Есть незавершённое: убрать старое имя у {n} нод",
+    "fin.title": "Финализация",
+    "fin.none": "Завершать пока нечего: сутки ещё не прошли или self-steal не было.",
+    "fin.consent": (
+        "Старые имена уйдут из serverNames. Клиенты без новой подписки перестанут подключаться:"
+    ),
+    "fin.accept": "Убрать старые имена",
+    "fin.done": "Готово: старые имена убраны у {n} нод",
+    "fin.failed": "Не получилось у {n} нод: подробности в отчёте",
     "error.port_closed": (
         "новый порт не открылся, похоже, его закрывает фаервол хостера: откройте порт "
         "в панели хостера; KERBEROS вернул старый"

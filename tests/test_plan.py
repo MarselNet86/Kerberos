@@ -57,7 +57,8 @@ def test_key_only_is_blocked_without_an_admin_key():
 def test_defaults_and_params():
     data, items = plan({"mode": "create", "keys": []})
     nl1 = {i.fix_id: i for i in by_node(data, items)["nl-1"]}
-    assert all(i.selected for k, i in nl1.items() if k != "ssh.port")
+    assert all(i.selected for k, i in nl1.items() if k not in ("ssh.port", "self_steal"))
+    assert nl1["self_steal"].params["domain"] is None and not nl1["self_steal"].selected
     assert nl1["ports.drop"].params == {"ports": ["8080/tcp"]}
     assert nl1["fail2ban.sshd"].params == {"sshPorts": [22], "panelIp": PANEL_IP}
     assert nl1["node_api.panel_only"].params == {"port": 2222, "panelIp": PANEL_IP}

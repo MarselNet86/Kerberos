@@ -32,7 +32,7 @@ import time
 from typing import Any, Callable, Optional
 
 PROTOCOL = 1
-AGENT_VERSION = "0.5.0"
+AGENT_VERSION = "0.6.0"
 AGENT_PATH = "/usr/local/sbin/kerberos-agent"
 STATE_DIR = "/var/lib/kerberos"
 
@@ -924,6 +924,7 @@ class Plan:
         self.keep: list = []  # backed up now, changed only by `confirm`
         self.confirm_files: dict = {}  # path -> (text, mode), written by `confirm`
         self.confirm_commands: list = []  # (argv, error code), run by `confirm`
+        self.steps: list = []  # ordered writes and runs after files and commands
 
     def write(self, path: str, text: Optional[str], mode: int = 0o644) -> None:
         self.files[path] = (text, mode)
@@ -940,6 +941,15 @@ class Plan:
                 self.keep.append(path)
         if argv is not None:
             self.confirm_commands.append((argv, code))
+
+    def step_write(self, path: str, text: str, mode: int = 0o644) -> None:
+        """An ordered step: for fixes that must interleave files and commands."""
+        self.steps.append(("write", path, text, mode))
+        if path not in self.keep and path not in self.files:
+            self.keep.append(path)
+
+    def step_run(self, argv: list, code: str = "command_failed", timeout: float = 120) -> None:
+        self.steps.append(("run", argv, code, timeout))
 
 
 FIXES: dict = {}
@@ -1095,6 +1105,11 @@ def cmd_apply(system: System, args: list, data: dict) -> dict:
             result = system.run(argv, timeout=600 if argv[:1] == ["apt-get"] else 120)
             if not result.ok:
                 raise AgentError(code, " ".join(argv))
+        for step in plan.steps:
+            if step[0] == "write":
+                system.write(step[1], step[2], step[3])
+            elif not system.run(step[1], timeout=step[3]).ok:
+                raise AgentError(step[2], " ".join(step[1]))
         if plan.after is not None:
             record["details"].update(plan.after(system))
     except AgentError:
@@ -1482,6 +1497,224 @@ def fix_ssh_port(system: System, params: dict) -> Plan:
         plan.on_confirm(argv=["systemctl", "restart", "fail2ban"])
         plan.undo_after.append(["systemctl", "restart", "fail2ban"])
     plan.details = {"newPort": port, "oldPorts": old, "socket": bool(socket and listen)}
+    return plan
+
+
+# -- self-steal on the node (§10.4 step 1, §10.9) ------------------------------
+SITE_CONF = "/etc/nginx/sites-enabled/kerberos-site"
+ACME_ROOT = "/var/www/kerberos-acme"
+SITE_ROOT = "/var/www/kerberos-site"
+RENEW_HOOK = "/etc/letsencrypt/renewal-hooks/deploy/kerberos-nginx-reload"
+COMPOSE_FILE = "/opt/remnanode/docker-compose.yml"
+LETSENCRYPT_VOLUME = "/etc/letsencrypt:/etc/letsencrypt:ro"
+
+WORDS = {
+    "studio": ["Design", "Craft", "Atelier", "Works", "Studio", "Lab"],
+    "topics": [
+        "Mountains",
+        "Coffee",
+        "Gardens",
+        "Bicycles",
+        "Old maps",
+        "Bread",
+        "Jazz",
+        "Pottery",
+    ],
+    "items": ["Notebook", "Lamp", "Mug", "Backpack", "Poster", "Candle", "Scarf", "Bottle"],
+    "roles": ["photographer", "translator", "architect", "illustrator", "editor", "engineer"],
+}
+
+# Four stub sites with different HTML structure: two nodes never look alike.
+SITE_LAYOUTS = (
+    """<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{name} {w0}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"><style>{css}</style></head>
+<body><header><h1>{name} {w0}</h1><nav><a href="#work">Work</a> <a href="#about">About</a>
+<a href="#contact">Contact</a></nav></header><main><section id="work"><h2>Selected work</h2>
+<article><h3>{t0}</h3><p>{p0}</p></article><article><h3>{t1}</h3><p>{p1}</p></article>
+<article><h3>{t2}</h3><p>{p2}</p></article></section><section id="about"><h2>About</h2>
+<p>{p3}</p></section></main><footer id="contact"><p>{name} &middot; {year}</p></footer>
+</body></html>""",
+    """<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Notes on {t0}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"><style>{css}</style></head>
+<body><div class="wrap"><h1>Notes on {t0}</h1><ul class="posts"><li><time>{d0}</time>
+<a href="#">{t1}</a></li><li><time>{d1}</time><a href="#">{t2}</a></li><li><time>{d2}</time>
+<a href="#">{t0} again</a></li></ul><blockquote>{p0}</blockquote><p class="small">{p1}</p>
+</div></body></html>""",
+    """<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{name} shop</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"><style>{css}</style></head>
+<body><header class="bar"><strong>{name}</strong><span>Free delivery</span></header>
+<div class="grid"><figure><figcaption>{i0}</figcaption><b>{price0}</b></figure><figure>
+<figcaption>{i1}</figcaption><b>{price1}</b></figure><figure><figcaption>{i2}</figcaption>
+<b>{price2}</b></figure><figure><figcaption>{i3}</figcaption><b>{price3}</b></figure></div>
+<form><input type="email" placeholder="Your email"><button>Subscribe</button></form>
+</body></html>""",
+    """<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{name}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"><style>{css}</style></head>
+<body><table class="card"><tr><td><h1>{name}</h1><p>{role}</p></td></tr><tr><td><dl>
+<dt>Based in</dt><dd>{t0}</dd><dt>Interests</dt><dd>{t1}, {t2}</dd><dt>Mail</dt>
+<dd>hello at {domain}</dd></dl></td></tr></table><p>{p0}</p></body></html>""",
+)
+SITE_CSS = (
+    "body{{font-family:{font};margin:0 auto;max-width:{width}px;padding:24px;color:#{fg};"
+    "background:#{bg}}}a{{color:#{accent}}}h1{{font-weight:{weight}}}"
+)
+FONTS = ("Georgia,serif", "Helvetica,Arial,sans-serif", "Verdana,sans-serif", "monospace")
+
+
+def site_html(seed: int, domain: str) -> str:
+    """The stub site of `seed` for `domain`: layout by seed, words by seed and domain."""
+    import random
+
+    rng = random.Random(f"{seed}:{domain}")
+    pick = lambda key, n: rng.sample(WORDS[key], n)  # noqa: E731
+    name = domain.split(".")[0].replace("-", " ").title()
+    topics, items = pick("topics", 3), pick("items", 4)
+    sentences = [
+        f"We work on {rng.choice(topics).lower()} and small things that last.",
+        f"Since {rng.randint(2009, 2021)} we keep it simple and slow.",
+        "Write to us and we will answer within a few days.",
+        f"Most of our time goes to {rng.choice(topics).lower()}.",
+    ]
+    css = SITE_CSS.format(
+        font=rng.choice(FONTS), width=rng.choice((640, 720, 860, 960)),
+        fg=rng.choice(("222", "333", "1d2a33")), bg=rng.choice(("fff", "fbf8f1", "f4f6f8")),
+        accent=rng.choice(("8a3b12", "1f5fa8", "2e7d32")), weight=rng.choice((400, 600, 700)),
+    )  # fmt: skip
+    values = {
+        "name": name, "domain": domain, "css": css, "w0": rng.choice(WORDS["studio"]),
+        "t0": topics[0], "t1": topics[1], "t2": topics[2], "role": rng.choice(WORDS["roles"]),
+        "i0": items[0], "i1": items[1], "i2": items[2], "i3": items[3],
+        "year": rng.randint(2022, 2026),
+    }  # fmt: skip
+    for i in range(4):
+        values[f"p{i}"] = sentences[i]
+        values[f"price{i}"] = f"{rng.randint(9, 89)}.00"
+    for i in range(3):
+        values[f"d{i}"] = f"2026-{rng.randint(1, 11):02d}-{rng.randint(1, 28):02d}"
+    return SITE_LAYOUTS[seed % len(SITE_LAYOUTS)].format(**values)
+
+
+def nginx_site(domain: str, with_tls: bool) -> str:
+    acme = (
+        "server {\n"
+        "    listen 80;\n"
+        "    listen [::]:80;\n"
+        f"    server_name {domain};\n"
+        f"    location /.well-known/acme-challenge/ {{ root {ACME_ROOT}; }}\n"
+        "    location / { return 301 https://$host$request_uri; }\n"
+        "}\n"
+    )
+    if not with_tls:
+        return acme
+    return acme + (
+        "server {\n"
+        "    listen 127.0.0.1:8445 ssl http2;\n"
+        f"    server_name {domain};\n"
+        f"    ssl_certificate /etc/letsencrypt/live/{domain}/fullchain.pem;\n"
+        f"    ssl_certificate_key /etc/letsencrypt/live/{domain}/privkey.pem;\n"
+        "    ssl_protocols TLSv1.2 TLSv1.3;\n"
+        f"    root {SITE_ROOT};\n"
+        "    index index.html;\n"
+        "    location / { try_files $uri $uri/ =404; }\n"
+        "}\n"
+    )
+
+
+def domain_param(params: dict) -> str:
+    domain = str(params.get("domain", "")).lower().rstrip(".")
+    if not DOMAIN.match(domain):
+        raise AgentError("bad_params", "domain")
+    return domain
+
+
+@fix("self_steal.site")
+def fix_site(system: System, params: dict) -> Plan:
+    domain = domain_param(params)
+    seed = params.get("siteSeed", 0)
+    if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed < 1000:
+        raise AgentError("bad_params", "siteSeed")
+    on80 = [s for s in parse_ss_listen(system.run(["ss", "-Hlntup"]).stdout)
+            if s["port"] == 80 and s["proto"] == "tcp"]  # fmt: skip
+    if any(s["process"] != "nginx" for s in on80):
+        raise AgentError("port80_busy", ", ".join(s["process"] or "?" for s in on80))
+    had_nginx = system.exists("/usr/sbin/nginx")
+    plan = Plan("self_steal.site")
+    if not had_nginx:
+        plan.packages.append("nginx")
+    if not system.exists("/usr/bin/certbot"):
+        plan.packages.append("certbot")
+    html = site_html(seed, domain)
+    plan.step_write(f"{ACME_ROOT}/.kerberos", "acme webroot of KERBEROS\n")
+    plan.step_write(SITE_CONF, nginx_site(domain, with_tls=False))
+    plan.step_run(["nginx", "-t"], "nginx_test_failed")
+    plan.step_run(["systemctl", "enable", "nginx"])
+    plan.step_run(["systemctl", "reload-or-restart", "nginx"])
+    plan.step_run(["certbot", "certonly", "--webroot", "-w", ACME_ROOT, "-d", domain,
+                   "--register-unsafely-without-email", "--agree-tos", "--non-interactive",
+                   "--keep-until-expiring"], "certbot_failed", timeout=300)  # fmt: skip
+    plan.step_write(f"{SITE_ROOT}/index.html", html)
+    plan.step_write(SITE_CONF, nginx_site(domain, with_tls=True))
+    # Renewal reloads nginx only: Xray rereads certificates itself every hour.
+    plan.step_write(RENEW_HOOK, "#!/bin/sh\nsystemctl reload nginx\n", 0o755)
+    plan.step_run(["nginx", "-t"], "nginx_test_failed")
+    plan.step_run(["systemctl", "reload", "nginx"])
+    plan.undo_after.append(["systemctl", "reload-or-restart", "nginx"])
+    if not had_nginx:
+        plan.undo_after.append(["systemctl", "disable", "--now", "nginx"])
+    plan.details = {"domain": domain, "template": template_hash(html), "siteSeed": seed}
+    return plan
+
+
+def add_volume(text: str, service: str, volume: str) -> str:
+    """Add a volume to one service of a compose file, keeping its indentation."""
+    lines = text.splitlines()
+    start = next((i for i, line in enumerate(lines)
+                  if re.match(rf"^(\s+){re.escape(service)}:\s*$", line)), None)  # fmt: skip
+    if start is None:
+        raise AgentError("bad_params", f"service {service} not in the compose file")
+    indent = len(lines[start]) - len(lines[start].lstrip())
+    end = len(lines)
+    for i in range(start + 1, len(lines)):
+        stripped = lines[i].strip()
+        if (
+            stripped
+            and not stripped.startswith("#")
+            and len(lines[i]) - len(lines[i].lstrip()) <= indent
+        ):
+            end = i
+            break
+    block = range(start + 1, end)
+    child = next((len(lines[i]) - len(lines[i].lstrip()) for i in block if lines[i].strip()),
+                 indent + 2)  # fmt: skip
+    key = next((i for i in block if re.match(rf"^\s{{{child}}}volumes:\s*$", lines[i])), None)
+    if key is None:
+        insert = [f"{' ' * child}volumes:", f"{' ' * (child + 2)}- {volume}"]
+        return "\n".join(lines[:end] + insert + lines[end:]) + "\n"
+    items = []
+    for i in range(key + 1, end):
+        stripped = lines[i].strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if len(lines[i]) - len(lines[i].lstrip()) <= child:
+            break  # the next key of the service: the volumes list is over
+        if stripped.startswith("- "):
+            items.append(i)
+    item_indent = (len(lines[items[0]]) - len(lines[items[0]].lstrip())) if items else child + 2
+    after = (items[-1] if items else key) + 1
+    return "\n".join(lines[:after] + [f"{' ' * item_indent}- {volume}"] + lines[after:]) + "\n"
+
+
+@fix("node.letsencrypt_mount")
+def fix_mount(system: System, params: dict) -> Plan:
+    text = system.read(COMPOSE_FILE)
+    if text is None:
+        raise AgentError("bad_params", f"no {COMPOSE_FILE}")
+    plan = Plan("node.letsencrypt_mount")
+    if "/etc/letsencrypt" in text:
+        return plan
+    plan.write(COMPOSE_FILE, add_volume(text, "remnanode", LETSENCRYPT_VOLUME))
+    plan.run(["docker", "compose", "-f", COMPOSE_FILE, "up", "-d"])
+    plan.undo_after.append(["docker", "compose", "-f", COMPOSE_FILE, "up", "-d"])
     return plan
 
 

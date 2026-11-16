@@ -123,7 +123,8 @@ def save_check_run(app: App, session: Session) -> Run:
     run = session.data.get("run")
     if run is None:
         panel = {"version": snapshot.version, "nodes": len(snapshot.nodes),
-                 "hosts": len(snapshot.hosts)}  # fmt: skip
+                 "hosts": len(snapshot.hosts),
+                 "api": session.location.api if session.location else ""}  # fmt: skip
         run = store.new_run(session.mode, panel, node_entries(session))
         session.data["run"] = run
     run["nodes"] = node_entries(session)
