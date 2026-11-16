@@ -191,7 +191,8 @@ def main() -> int:
           lambda f: f["ssh"]["adminKeys"] == before["ssh"]["adminKeys"] + 1,
           lambda f: f["ssh"]["adminKeys"] == before["ssh"]["adminKeys"])  # fmt: skip
 
-    old = {k["fingerprint"] for k in before["hostKeys"]}
+    # Taken right before the cycle: the keys of a fresh cloud VM may change at first boot.
+    old = {k["fingerprint"] for k in facts()["hostKeys"]}
     cycle("hostkeys.regenerate", {},
           lambda f: not ({k["fingerprint"] for k in f["hostKeys"]} & old),
           lambda f: {k["fingerprint"] for k in f["hostKeys"]} == old, confirm=True)  # fmt: skip
