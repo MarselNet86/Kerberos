@@ -421,7 +421,7 @@ class FindingItem:
 
 
 class FindingList:
-    """Findings grouped by topic; Enter or Space opens the details of one."""
+    """Findings grouped by topic; Space opens the details of one (Enter goes on)."""
 
     def __init__(self, items: Sequence[FindingItem], group_by: str = "group") -> None:
         self.items = list(items)
@@ -438,7 +438,7 @@ class FindingList:
             self.cursor = max(0, self.cursor - 1)
         elif key == "down":
             self.cursor = min(len(self.items) - 1, self.cursor + 1)
-        elif key in ("space", "enter"):
+        elif key == "space":
             self.expanded ^= {self.cursor}
         return None
 

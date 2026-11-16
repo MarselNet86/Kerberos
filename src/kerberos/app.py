@@ -17,18 +17,20 @@ from rich.text import Text
 from kerberos import __version__
 from kerberos.clock import Clock
 from kerberos.copy import t
-from kerberos.flow import BACK, EXIT_OK, NEXT
+from kerberos.flow import BACK, EXIT_OK, EXIT_USAGE, NEXT
 from kerberos.host import Host
 from kerberos.mask import Masker
 from kerberos.nodes.transport import NodeTransport
 from kerberos.panel.client import PanelClient, Transport
 from kerberos.panel.discover import PanelLocation
 from kerberos.panel.model import PanelSnapshot
+from kerberos.probe import Prober
 from kerberos.state import State
 from kerberos.ui.keys import hotkey
 from kerberos.ui.logo import LOGO_ART
 from kerberos.ui.terminal import Terminal
 from kerberos.ui.widgets import Body, KeyHints, Menu, Notice, Screen
+from kerberos.whois import Whois
 
 T = TypeVar("T")
 
@@ -48,6 +50,8 @@ class Env:
     panel_transport: Optional[Transport] = None
     state: Optional[State] = None
     transport: Optional[NodeTransport] = None
+    prober: Optional[Prober] = None
+    whois: Optional[Whois] = None
     demo: bool = False
 
 
@@ -111,16 +115,20 @@ class App:
         timeout: Optional[float] = None,
         tick: Optional[Callable[[], Optional[T]]] = None,
     ) -> T:
-        """Draw and dispatch keys until `handle` or `tick` returns a value."""
+        """Draw and dispatch keys until `handle` or `tick` returns a value.
+
+        `tick` runs before every key read, so background work that finished
+        moves the screen on before the next key is taken.
+        """
         while True:
+            if tick is not None:
+                result = tick()
+                if result is not None:
+                    return result
             if not self.term.has_pending():
                 self.draw(title, body, keys)
             key = self.term.read_key(timeout)
             if key is None:
-                if tick is not None:
-                    result = tick()
-                    if result is not None:
-                        return result
                 continue
             if key == "ctrl-c":
                 if self.confirm_quit():
@@ -186,15 +194,20 @@ class App:
             if command in ("check", "fix"):
                 result = self.run_mode(command)
                 return EXIT_OK if result is None else result
+            if command == "report":
+                return self.show_report(arg)
             self.notice("info", t("app.soon"))
             return EXIT_OK
         except QuitApp:
             return EXIT_OK
 
     def steps(self, session: Session) -> list[Callable[[Session], Any]]:
-        from kerberos.screens import access, nodes, panel
+        from kerberos.screens import access, check, nodes, panel
 
-        return [panel.step, nodes.step, access.step, self.step_soon]
+        steps = [panel.step, nodes.step, access.step, check.step_collect, check.step_report]
+        if session.mode == "fix":
+            steps.append(self.step_soon)
+        return steps
 
     def run_mode(self, mode: str) -> Optional[int]:
         """Walk the screens of a mode. None: the person went back to S1."""
@@ -248,5 +261,25 @@ class App:
             choice = self.interact("", self.s1_body(menu), keys_menu(), menu.handle)
             if choice in ("check", "fix"):
                 self.run_mode(choice)
+            elif choice == "reports":
+                from kerberos.screens.check import reports_menu
+
+                reports_menu(self)
             else:
                 self.notice("info", t("app.soon"))
+
+    def show_report(self, run_id: Optional[str]) -> int:
+        """`kerberos report [runId]` in a terminal: the report with scrolling."""
+        from kerberos.fixes.journal import RunStore
+        from kerberos.screens.check import show_pager
+
+        store = RunStore(self.env.state, self.env.clock)
+        runs = store.runs()
+        if run_id is None and runs:
+            run_id = runs[0]["runId"]
+        text = store.report_text(run_id) if run_id else None
+        if text is None:
+            self.notice("info", t("report.empty"), t("reports.title"))
+            return EXIT_USAGE
+        show_pager(self, self.mask(text), t("reports.title"))
+        return EXIT_OK

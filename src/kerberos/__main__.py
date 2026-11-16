@@ -98,6 +98,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 0
     tty = sys.stdin.isatty() and sys.stdout.isatty()
     if not tty:
+        if opts.command == "report":
+            return print_report(opts)
         if opts.command in WITHOUT_TTY:
             print(t("app.soon"))
             return 0
@@ -122,12 +124,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         from kerberos.host import LiveHost
         from kerberos.nodes.transport import SshTransport
         from kerberos.panel.client import urllib_transport
+        from kerberos.probe import LiveProber
         from kerberos.state import State
+        from kerberos.whois import CymruWhois
 
         env.host = LiveHost()
         env.panel_transport = urllib_transport
         env.state = State()
         env.transport = SshTransport(env.state)
+        env.prober = LiveProber()
+        env.whois = CymruWhois()
     try:
         with env.state.lock():
             env.terminal = LiveTerminal(color=opts.color)
@@ -138,6 +144,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     except Locked:
         print(t("lock.busy"), file=sys.stderr)
         return 2
+
+
+def print_report(opts: Options, state=None) -> int:
+    """`kerberos report` without a terminal: report.md to stdout (§5.3)."""
+    from kerberos.clock import SystemClock
+    from kerberos.fixes.journal import RunStore
+    from kerberos.mask import Masker
+    from kerberos.state import State
+
+    store = RunStore(state or State(), SystemClock())
+    run_id = opts.arg
+    if run_id is None:
+        runs = store.runs()
+        run_id = runs[0]["runId"] if runs else None
+    text = store.report_text(run_id) if run_id else None
+    if text is None:
+        print(t("report.empty"), file=sys.stderr)
+        return 2
+    print(Masker(opts.mask)(text), end="")
+    return 0
 
 
 def admin_ssh(opts: Options) -> int:

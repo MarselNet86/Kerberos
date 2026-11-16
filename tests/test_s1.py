@@ -36,7 +36,7 @@ def test_s1_russian_layout_quit():
 def test_s1_menu_number_opens_item():
     app, term = make_app(["4", "x", "q", "enter"])
     assert app.run() == 0
-    assert t("app.soon") in term.frames[1]
+    assert t("report.empty") in term.frames[1]
 
 
 def test_s1_ctrl_c_asks_before_leaving():

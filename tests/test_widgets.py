@@ -127,7 +127,7 @@ def test_finding_list_groups_and_expands():
     fl = FindingList(items)
     frame = render(fl)
     assert "Тема 1" in frame and "Тема 2" in frame and "sshd -T" not in frame
-    fl.handle("enter")
+    fl.handle("space")
     assert "sshd -T" in render(fl)
     fl.handle("down")
     assert fl.cursor == 1

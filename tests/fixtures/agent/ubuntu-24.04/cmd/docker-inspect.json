@@ -1,0 +1,25 @@
+[
+ {
+  "Name": "/remnanode",
+  "Config": {
+   "Env": [
+    "NODE_PORT=2222",
+    "SECRET_KEY=never-read-this-value",
+    "PATH=/usr/local/sbin:/usr/bin"
+   ],
+   "Labels": {
+    "com.docker.compose.project.working_dir": "/opt/remnanode"
+   }
+  },
+  "HostConfig": {
+   "NetworkMode": "host"
+  },
+  "Mounts": [
+   {
+    "Type": "bind",
+    "Source": "/var/log/remnanode",
+    "Destination": "/var/log/remnanode"
+   }
+  ]
+ }
+]

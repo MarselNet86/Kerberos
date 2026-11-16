@@ -1,0 +1,7 @@
+[DEFAULT]
+ignoreip = 127.0.0.1/8 ::1 198.51.100.5
+[sshd]
+enabled = true
+port = 22,24622
+backend = systemd
+maxretry = 5

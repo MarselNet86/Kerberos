@@ -22,7 +22,7 @@ def test_s2_connects_without_typing_an_address():
     app, term = make_app(keys, panel=strict_panel())
     assert app.run("check") == 0
     assert any(t("panel.found", version="2.8.1") in f for f in term.frames)
-    assert any(t("panel.ok", nodes=6, hosts=9) in f for f in term.frames)
+    assert any(t("panel.ok", nodes=6, hosts=10) in f for f in term.frames)
     assert any(t("nodes.title") in f for f in term.frames)
 
 
@@ -32,7 +32,7 @@ def test_s2_wrong_password_then_right_one():
     app, term = make_app(keys, panel=strict_panel())
     app.run("check")
     assert any(t("panel.err.login") in f for f in term.frames)
-    assert any(t("panel.ok", nodes=6, hosts=9) in f for f in term.frames)
+    assert any(t("panel.ok", nodes=6, hosts=10) in f for f in term.frames)
 
 
 def test_password_and_token_never_reach_the_screen():
@@ -43,7 +43,7 @@ def test_password_and_token_never_reach_the_screen():
     app.run("check")
     assert all(token not in f for f in term.frames)
     assert any(t("panel.token") in f for f in term.frames)
-    assert any(t("panel.ok", nodes=6, hosts=9) in f for f in term.frames)
+    assert any(t("panel.ok", nodes=6, hosts=10) in f for f in term.frames)
     keys = typed("admin") + ["enter"] + typed("admin-password") + ["enter", "esc", "esc", "esc"]
     app, term = make_app(keys, panel=strict_panel())
     app.run("check")
@@ -63,7 +63,7 @@ def test_panel_not_found_asks_for_the_api_address():
     app, term = make_app(keys, host=FakeHost(), panel=strict_panel())
     app.run("check")
     assert t("panel.not_found") in term.frames[1]
-    assert any(t("panel.ok", nodes=6, hosts=9) in f for f in term.frames)
+    assert any(t("panel.ok", nodes=6, hosts=10) in f for f in term.frames)
 
 
 def test_server_error_offers_retry_and_esc_exits_with_3():
@@ -77,7 +77,7 @@ def test_server_error_offers_retry_and_esc_exits_with_3():
     keys = ["enter"] + login_keys() + ["esc", "esc", "esc"]
     app, term = make_app(keys, panel=panel)
     app.run("check")
-    assert any(t("panel.ok", nodes=6, hosts=9) in f for f in term.frames)
+    assert any(t("panel.ok", nodes=6, hosts=10) in f for f in term.frames)
 
 
 def test_forbidden_while_reading_is_shown_with_the_operation():

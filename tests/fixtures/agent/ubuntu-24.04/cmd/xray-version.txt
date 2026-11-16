@@ -1,0 +1,2 @@
+Xray 25.10.15 (Xray, Penetrates Everything.) 8a3d0bc (go1.25.1 linux/amd64)
+A unified platform for anti-censorship.

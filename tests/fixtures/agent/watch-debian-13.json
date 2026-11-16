@@ -1,0 +1,21 @@
+{
+  "port": 443,
+  "protocol": 1,
+  "v4": {
+    "clientIps": 0,
+    "connections": 0,
+    "cut": 0,
+    "cutNets": []
+  },
+  "v6": {
+    "clientIps": 0,
+    "connections": 0,
+    "cut": 0,
+    "cutNets": []
+  },
+  "xray": {
+    "accepted5m": null,
+    "ruShare": null,
+    "users5m": null
+  }
+}
