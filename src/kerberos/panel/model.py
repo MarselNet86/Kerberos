@@ -106,6 +106,11 @@ class PanelSnapshot:
     sub_settings: Optional[SubSettings] = None
     host_shape: str = "tags"
     panel_domain: Optional[str] = None
+    # 3x-ui (tech.md §7.6): one server is panel and node at once; its inbounds,
+    # the web panel and the subscription listen on ports meant to be public.
+    kind: str = "remnawave"
+    open_ports: dict = field(default_factory=dict)  # node uuid -> [(port, proto)]
+    panel_info: dict = field(default_factory=dict)  # {port, secretPath, tls, listen}
 
     def node(self, uuid: str) -> Optional[Node]:
         return next((n for n in self.nodes if n.uuid == uuid), None)

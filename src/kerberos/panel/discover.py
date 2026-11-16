@@ -10,7 +10,8 @@ read: the other values of that file are secrets.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from typing import Optional
 
 from kerberos.host import Host
@@ -25,6 +26,8 @@ class PanelLocation:
     version: str
     container: str = ""
     panel_domain: Optional[str] = None
+    kind: str = "remnawave"  # remnawave | 3x-ui (§7.6)
+    info: dict = field(default_factory=dict)  # 3x-ui: {port, secretPath, tls, listen, sub...}
 
 
 def _image_tag(image: str) -> str:
@@ -98,4 +101,70 @@ def discover(host: Host) -> Optional[PanelLocation]:
         version=version or "?",
         container=container,
         panel_domain=domain,
+    )
+
+
+# -- 3x-ui (tech.md §7.6) ---------------------------------------------------------
+XUI_DB = "/etc/x-ui/x-ui.db"
+XUI_BIN = "/usr/local/x-ui/x-ui"
+XUI_PORT = 2053
+# Keys of the 3x-ui settings table KERBEROS reads; credentials, the session
+# secret and the two-factor token are never among them.
+XUI_KEYS = (
+    "webListen",
+    "webPort",
+    "webBasePath",
+    "webCertFile",
+    "webDomain",
+    "subEnable",
+    "subListen",
+    "subPort",
+    "subPath",
+    "twoFactorEnable",
+)
+
+
+def base_path(value: str) -> str:
+    """3x-ui stores the path with or without slashes; the API wants /path/."""
+    path = "/" + (value or "").strip().strip("/")
+    return path if path == "/" else path + "/"
+
+
+def discover_xui(host: Host) -> Optional[PanelLocation]:
+    settings = host.read_settings(XUI_DB, XUI_KEYS)
+    if settings is None:
+        return None
+    try:
+        port = int(settings.get("webPort") or XUI_PORT)
+    except ValueError:
+        port = XUI_PORT
+    listen = (settings.get("webListen") or "").strip()
+    tls = bool((settings.get("webCertFile") or "").strip())
+    address = listen if listen not in ("", "0.0.0.0", "::", "[::]") else "127.0.0.1"
+    if ":" in address and not address.startswith("["):
+        address = f"[{address}]"
+    path = base_path(settings.get("webBasePath", "/"))
+    version = "?"
+    result = host.run([XUI_BIN, "-v"], timeout=10)
+    match = re.search(r"(\d+\.\d+\.\d+)", result.stdout or "")
+    if result.ok and match:
+        version = match.group(1)
+    try:
+        sub_port = int(settings.get("subPort") or 0)
+    except ValueError:
+        sub_port = 0
+    info = {
+        "port": port,
+        "secretPath": path != "/",
+        "tls": tls,
+        "listen": listen,
+        "subPort": sub_port if settings.get("subEnable", "").lower() == "true" else 0,
+        "twoFactor": settings.get("twoFactorEnable", "").lower() == "true",
+    }
+    return PanelLocation(
+        api=f"{'https' if tls else 'http'}://{address}:{port}{path}",
+        version=version,
+        panel_domain=(settings.get("webDomain") or "").strip() or None,
+        kind="3x-ui",
+        info=info,
     )

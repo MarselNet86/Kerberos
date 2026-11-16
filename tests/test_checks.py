@@ -27,6 +27,7 @@ SECTION_10_2 = {
     "sub.probe_interval", "exit.ru_traffic", "reserve.missing", "reserve.same_asn",
     "node.blocked", "watch.missing",
 }  # fmt: skip
+XUI_ONLY = {"xui.panel_exposed"}  # §7.6: checked on a 3x-ui server, see test_xui.py
 
 
 @pytest.fixture(scope="module")
@@ -40,7 +41,7 @@ def results(data, check_id):
 
 def test_registry_is_section_10_2():
     run_checks(demo_input()[1])  # registers the rules
-    assert {item.check_id for item in REGISTRY} == SECTION_10_2
+    assert {item.check_id for item in REGISTRY} == SECTION_10_2 | XUI_ONLY
 
 
 @pytest.mark.parametrize("check_id", sorted(SECTION_10_2))

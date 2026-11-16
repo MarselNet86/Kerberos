@@ -8,6 +8,7 @@ and --demo never touch the machine they run on.
 
 from __future__ import annotations
 
+import os
 import socket
 import subprocess
 from collections.abc import Sequence
@@ -34,6 +35,8 @@ class Host(Protocol):
     def read_env_keys(self, path: str, keys: Sequence[str]) -> dict[str, str]: ...
 
     def read_text(self, path: str) -> Optional[str]: ...
+
+    def read_settings(self, path: str, keys: Sequence[str]) -> Optional[dict[str, str]]: ...
 
     def hostname(self) -> str: ...
 
@@ -94,6 +97,30 @@ class LiveHost:
     def hostname(self) -> str:
         return socket.gethostname()
 
+    def read_settings(self, path: str, keys: Sequence[str]) -> Optional[dict[str, str]]:
+        """Only the named keys of the `settings` table, read-only (3x-ui, §7.6).
+
+        None: no database or no sqlite3 module (python3-minimal lacks it).
+        """
+        try:
+            import sqlite3
+        except ImportError:
+            return None
+        if not os.path.exists(path):
+            return None
+        marks = ",".join("?" for _ in keys)
+        try:
+            db = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
+            try:
+                rows = db.execute(
+                    "SELECT key, value FROM settings WHERE key IN (" + marks + ")", list(keys)
+                ).fetchall()
+            finally:
+                db.close()
+        except sqlite3.Error:
+            return None
+        return {str(key): "" if value is None else str(value) for key, value in rows}
+
 
 Responder = Union[CommandResult, Callable[[Sequence[str], Optional[str]], CommandResult]]
 
@@ -105,6 +132,7 @@ class FakeHost:
     commands: dict[tuple[str, ...], Responder] = field(default_factory=dict)
     files: dict[str, str] = field(default_factory=dict)
     name: str = "panel"
+    databases: dict[str, dict[str, str]] = field(default_factory=dict)  # path -> settings
     calls: list[tuple[str, ...]] = field(default_factory=list)
 
     def on(self, prefix: Sequence[str], result: Responder) -> None:
@@ -133,3 +161,9 @@ class FakeHost:
 
     def hostname(self) -> str:
         return self.name
+
+    def read_settings(self, path: str, keys: Sequence[str]) -> Optional[dict[str, str]]:
+        table = self.databases.get(path)
+        if table is None:
+            return None
+        return {key: table[key] for key in keys if key in table}

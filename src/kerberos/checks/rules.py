@@ -25,6 +25,9 @@ from kerberos.checks import (
 from kerberos.fixes.model import Finding
 from kerberos.panel.model import Host
 
+# Hosts, templates, squads, reserves and subscription settings exist only in
+# Remnawave; with 3x-ui these checks have nothing to look at (tech.md §7.6).
+REMNAWAVE = ("remnawave",)
 LOCAL_DEST = re.compile(r"^(127\.0\.0\.1|localhost|\[::1\]|::1):\d+$|^/|^@")
 
 
@@ -187,7 +190,7 @@ def no_sni(data: CheckInput) -> list[Finding]:
     return result
 
 
-@check("hy2.foreign_masquerade", "sni", "medium", "self_steal", "fix")
+@check("hy2.foreign_masquerade", "sni", "medium", "self_steal", "fix", panels=REMNAWAVE)
 def foreign_masquerade(data: CheckInput) -> list[Finding]:
     result = []
     for item in data.nodes:
@@ -238,7 +241,7 @@ def profile_differences(config: dict) -> list[str]:
     return diffs
 
 
-@check("profile.template", "sni", "medium", "self_steal", "fix")
+@check("profile.template", "sni", "medium", "self_steal", "fix", panels=REMNAWAVE)
 def profile_template(data: CheckInput) -> list[Finding]:
     result = []
     seen = set()
@@ -352,6 +355,8 @@ def public_ports(item: NodeData, data: CheckInput) -> list[str]:
         allowed.add((api, "tcp"))
     # TLS ports of nginx sites stay: an origin behind a CDN is reached there.
     allowed |= {(p, "tcp") for p in tls_listen_ports(facts)}
+    # 3x-ui: its inbounds, the web panel and the subscription are public on purpose.
+    allowed |= {tuple(p) for p in data.snapshot.open_ports.get(item.node.uuid, [])}
     public_addresses = {"0.0.0.0", "::", "*"} | set(data.node_ips(item))
     ports = []
     for sock in facts.get("listening", []):
@@ -406,7 +411,7 @@ def xhttp_path(inbound: dict, host: Host) -> str:
     return path if path.startswith("/") else "/" + path
 
 
-@check("cdn.origin_direct", "scanning", "high", "cdn.edge_only", "fix")
+@check("cdn.origin_direct", "scanning", "high", "cdn.edge_only", "fix", panels=REMNAWAVE)
 def cdn_origin_direct(data: CheckInput) -> list[Finding]:
     result = []
     for item in with_facts(data):
@@ -428,7 +433,7 @@ def cdn_origin_direct(data: CheckInput) -> list[Finding]:
     return result
 
 
-@check("panel.public", "scanning", "medium", None, "manual")
+@check("panel.public", "scanning", "medium", None, "manual", panels=REMNAWAVE)
 def panel_public(data: CheckInput) -> list[Finding]:
     page = data.panel_page
     if not data.snapshot.panel_domain or page is None:
@@ -437,7 +442,20 @@ def panel_public(data: CheckInput) -> list[Finding]:
     return [finding("panel.public", "panel", not exposed, {"status": page.status})]
 
 
-@check("panel_server.ssh", "scanning", "high", None, "manual")
+@check("xui.panel_exposed", "scanning", "medium", None, "manual", panels=("3x-ui",))
+def xui_panel_exposed(data: CheckInput) -> list[Finding]:
+    """The 3x-ui web panel on all addresses with the default port, no secret path or no TLS."""
+    info = data.snapshot.panel_info
+    if not info:
+        return []
+    public = str(info.get("listen") or "") in ("", "0.0.0.0", "::", "[::]")
+    weak = info.get("port") == 2053 or not info.get("secretPath") or not info.get("tls")
+    evidence = {"port": info.get("port"), "secretPath": bool(info.get("secretPath")),
+                "tls": bool(info.get("tls"))}  # fmt: skip
+    return [finding("xui.panel_exposed", "panel", not (public and weak), evidence)]
+
+
+@check("panel_server.ssh", "scanning", "high", None, "manual", panels=REMNAWAVE)
 def panel_server_ssh(data: CheckInput) -> list[Finding]:
     if data.panel_ssh is None:
         return []
@@ -446,7 +464,7 @@ def panel_server_ssh(data: CheckInput) -> list[Finding]:
                     {"passwordAuthentication": password})]  # fmt: skip
 
 
-@check("client.ping_type", "scanning", "medium", "sub.ping_type", "fix")
+@check("client.ping_type", "scanning", "medium", "sub.ping_type", "fix", panels=REMNAWAVE)
 def client_ping_type(data: CheckInput) -> list[Finding]:
     settings = data.snapshot.sub_settings
     if settings is None:
@@ -471,7 +489,7 @@ def has_padding(extra: Optional[dict]) -> bool:
     return bool(extra) and "xPaddingBytes" in extra
 
 
-@check("xhttp.padding", "dpi", "medium", "xhttp.padding", "fix")
+@check("xhttp.padding", "dpi", "medium", "xhttp.padding", "fix", panels=REMNAWAVE)
 def xhttp_padding(data: CheckInput) -> list[Finding]:
     result = []
     for item in data.nodes:
@@ -490,7 +508,7 @@ def xhttp_padding(data: CheckInput) -> list[Finding]:
     return result
 
 
-@check("xhttp.uplink_get", "dpi", "medium", "xhttp.uplink_get", "fix")
+@check("xhttp.uplink_get", "dpi", "medium", "xhttp.uplink_get", "fix", panels=REMNAWAVE)
 def xhttp_uplink_get(data: CheckInput) -> list[Finding]:
     result = []
     for item in data.nodes:
@@ -508,7 +526,7 @@ def max_post_bytes(value) -> Optional[int]:
     return max(numbers) if numbers else None
 
 
-@check("xhttp.post_size", "dpi", "info", None, "explain")
+@check("xhttp.post_size", "dpi", "info", None, "explain", panels=REMNAWAVE)
 def xhttp_post_size(data: CheckInput) -> list[Finding]:
     result = []
     for item in data.nodes:
@@ -535,7 +553,7 @@ def xhttp_extra_outer(data: CheckInput) -> list[Finding]:
     return result
 
 
-@check("host.fingerprint", "dpi", "low", "host.fingerprint", "fix")
+@check("host.fingerprint", "dpi", "low", "host.fingerprint", "fix", panels=REMNAWAVE)
 def host_fingerprint(data: CheckInput) -> list[Finding]:
     result = []
     seen = set()
@@ -599,7 +617,7 @@ def ru_direct(template_json: dict) -> dict:
     return found
 
 
-@check("sub.ru_direct", "routing", "medium", "sub.template", "fix")
+@check("sub.ru_direct", "routing", "medium", "sub.template", "fix", panels=REMNAWAVE)
 def sub_ru_direct(data: CheckInput) -> list[Finding]:
     result = []
     for template in used_templates(data):
@@ -621,7 +639,7 @@ def probe_interval(template_json: dict) -> Optional[float]:
     return min(values) if values else None
 
 
-@check("sub.probe_interval", "routing", "medium", "sub.template", "fix")
+@check("sub.probe_interval", "routing", "medium", "sub.template", "fix", panels=REMNAWAVE)
 def sub_probe_interval(data: CheckInput) -> list[Finding]:
     result = []
     for template in used_templates(data):
@@ -633,7 +651,7 @@ def sub_probe_interval(data: CheckInput) -> list[Finding]:
     return result
 
 
-@check("exit.ru_traffic", "routing", "medium", None, "plan")
+@check("exit.ru_traffic", "routing", "medium", None, "plan", panels=REMNAWAVE)
 def exit_ru_traffic(data: CheckInput) -> list[Finding]:
     result = []
     for item in data.nodes:
@@ -660,7 +678,7 @@ def reserves_of(data: CheckInput, item: NodeData) -> list:
     return found
 
 
-@check("reserve.missing", "reserves", "medium", "reserve", "plan")
+@check("reserve.missing", "reserves", "medium", "reserve", "plan", panels=REMNAWAVE)
 def reserve_missing(data: CheckInput) -> list[Finding]:
     result = []
     for item in data.nodes:
@@ -673,7 +691,7 @@ def reserve_missing(data: CheckInput) -> list[Finding]:
     return result
 
 
-@check("reserve.same_asn", "reserves", "medium", None, "manual")
+@check("reserve.same_asn", "reserves", "medium", None, "manual", panels=REMNAWAVE)
 def reserve_same_asn(data: CheckInput) -> list[Finding]:
     if data.asn is None:
         return []
