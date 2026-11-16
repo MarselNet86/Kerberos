@@ -22,8 +22,7 @@ TEXT: dict[str, str] = {
     "access.password": "Введите пароль root для {node}. KERBEROS его не видит и не сохраняет",
     "access.admin_keys": "Чтобы вы не потеряли вход, добавим ваш ключ на ноды",
     "access.no_admin_key": (
-        "Своего ключа нет. Создать ключ на сервере панели? "
-        "Входить на ноды: kerberos ssh <нода>"
+        "Своего ключа нет. Создать ключ на сервере панели? Входить на ноды: kerberos ssh <нода>"
     ),
     "report.score": "Защищённость {score} из 100",
     "report.saved": "Отчёт сохранён: {path}",
@@ -104,6 +103,57 @@ TEXT: dict[str, str] = {
     "score.red": "Слабая защита",
     "score.yellow": "Защита есть, но не полная",
     "score.green": "Хорошая защита",
+    "error.retry": "Enter: повторить",
+    "error.back": "Esc: назад",
+    "keys.field": "поле",
+    # K1: S2 panel (§7)
+    "s2.title": "Панель",
+    "panel.searching": "Ищу Remnawave на этом сервере…",
+    "panel.not_found": "Remnawave на этом сервере не нашёл. Укажите адрес API панели.",
+    "panel.api_label": "Адрес API панели",
+    "panel.api_hint": "Например, http://127.0.0.1:3000/api",
+    "panel.api_invalid": "нужен адрес вида http://127.0.0.1:3000/api",
+    "panel.api": "API: {api}",
+    "panel.domain": "Домен панели: {domain}",
+    "panel.login_hint": "Войдите как администратор панели. Пароль нужен только на время входа.",
+    "panel.token_hint": (
+        "Вход по паролю в панели выключен, поэтому нужен API-токен. "
+        "Браузер понадобится только чтобы создать его в панели."
+    ),
+    "panel.connecting": "Подключаюсь к панели…",
+    "panel.loading": "Читаю ноды, хосты и профили…",
+    "panel.err.login": "Неверный логин или пароль",
+    "panel.err.token": "Токен не подходит",
+    "panel.err.password_off": "Вход по паролю в панели выключен",
+    "panel.err.forbidden": "У токена нет прав: {operation}",
+    "panel.err.server": "Панель отвечает ошибкой {status}: {operation}",
+    "panel.err.timeout": "Панель не отвечает: {operation}",
+    "panel.err.unreachable": "Панель не принимает соединения: {api}",
+    "panel.err.no_response": (
+        "Панель не ответила на {operation}. Объект мог создаться, "
+        "поэтому KERBEROS не повторяет запрос."
+    ),
+    "panel.err.bad_request": "Панель отклонила запрос {operation}: {detail}",
+    "panel.err.bad_response": (
+        "Панель ответила не так, как ожидалось ({detail}). KERBEROS остановился до изменений."
+    ),
+    # K1: S3 nodes
+    "s3.title": "Ноды",
+    "nodes.col.country": "Страна",
+    "nodes.col.name": "Нода",
+    "nodes.col.address": "Адрес",
+    "nodes.col.status": "Статус",
+    "nodes.col.online": "Онлайн",
+    "nodes.col.protocols": "Протоколы",
+    "nodes.col.role": "Роль",
+    "nodes.status.connected": "подключена",
+    "nodes.status.offline": "нет связи",
+    "nodes.status.disabled": "выключена",
+    "nodes.role.main": "основа",
+    "nodes.role.reserve": "резерв",
+    "nodes.selected": "Отмечено: {n} из {total}",
+    "nodes.disabled_hint": "Выключенные в панели ноды видны серыми и не выбираются.",
+    "nodes.need_one": "Отметьте хотя бы одну ноду",
     # CLI (§5.3)
     "cli.usage": "Использование: sudo ./kerberos [команда] [флаги]",
     "cli.help": (
