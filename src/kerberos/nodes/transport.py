@@ -23,6 +23,11 @@ from kerberos.state import State
 RUN_DIR = "/run/kerberos"
 AGENT_TIMEOUT = 120
 APT_TIMEOUT = 600
+# Commands that change a node may install packages (the agent gives apt at most
+# APT_TIMEOUT in all), run certbot and wait for the agent's lock: KERBEROS waits longer
+# than the agent can work, or a slow apt looks like a failure while it goes on.
+CHANGE_TIMEOUT = APT_TIMEOUT + 600
+CHANGE_COMMANDS = ("apply", "confirm", "rollback", "undo", "update")
 
 
 class TransportError(Exception):
@@ -222,6 +227,8 @@ class SshTransport:
         )
         if not fresh:
             self._used[f"{target.address}:{target.port}"] = target
+        if command.split(" ", 1)[0] in CHANGE_COMMANDS:
+            timeout = max(timeout, CHANGE_TIMEOUT)
         try:
             proc = subprocess.run(
                 self._agent_argv(target, command, fresh),

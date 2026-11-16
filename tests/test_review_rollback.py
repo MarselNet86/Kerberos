@@ -242,3 +242,39 @@ def test_node_set_up_by_name_before_moves_to_its_ipv4_without_questions():
     question = t("access.hostkey", node="nl-1", fingerprint="@").split("@")[0].strip()
     assert seen(check_by_name(build_nodes())[1], question), "the question looks like this"
     assert not seen(term, question)
+
+
+# -- 8. KERBEROS waits for a change as long as the agent may work on it ----------------------
+@pytest.mark.parametrize("command", ["apply mptcp.guard 0f8b6c1e-2b1c-4b5e-9a3e-1c2d3e4f5a6b",
+                                     "confirm 0f8b6c1e-2b1c-4b5e-9a3e-1c2d3e4f5a6b",
+                                     "rollback 0f8b6c1e-2b1c-4b5e-9a3e-1c2d3e4f5a6b",
+                                     "undo 0f8b6c1e-2b1c-4b5e-9a3e-1c2d3e4f5a6b",
+                                     "update " + "0" * 64])  # fmt: skip
+def test_changes_get_the_long_timeout(monkeypatch, tmp_path, command):
+    import subprocess
+
+    from kerberos import agent
+    from kerberos.nodes import transport
+    from kerberos.nodes.transport import SshTransport, Target
+    from kerberos.state import State
+
+    seen_timeouts = []
+
+    class Done:
+        returncode, stdout, stderr = 0, b'{"protocol": 1}\n', b""
+
+    def fake_run(argv, **kwargs):
+        seen_timeouts.append(kwargs["timeout"])
+        return Done()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(SshTransport, "_run_dir", lambda self: str(tmp_path))
+    ssh = SshTransport(State(tmp_path))
+    ssh.agent(Target("u", "nl-1", NL1), command)
+    ssh.agent(Target("u", "nl-1", NL1), "facts")
+    assert seen_timeouts[0] >= transport.CHANGE_TIMEOUT > transport.APT_TIMEOUT
+    assert seen_timeouts[1] < transport.CHANGE_TIMEOUT, "reading stays quick"
+    # A command waiting for the agent's lock gives up before KERBEROS stops waiting.
+    assert set(transport.CHANGE_COMMANDS) == agent.LOCKED
+    assert agent.LOCK_WAIT < transport.CHANGE_TIMEOUT
+    assert agent.APT_TIMEOUT == transport.APT_TIMEOUT
