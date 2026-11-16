@@ -1,6 +1,6 @@
 """Review K13, panels, checks, plan and masking: each test replays a review scenario."""
 
-from helpers import make_app, typed
+from helpers import make_app, seen, typed
 from test_review_logic import APPLY, DONE, fix_run
 
 from kerberos.demo.nodes import listening
@@ -55,3 +55,20 @@ def test_3xui_inbound_ports_are_not_dropped():
     assert drops == [["3306/tcp"]]
     assert not [s for s in node.state["facts"]["listening"] if s["port"] in (8443, 8388)
                 and s.get("firewalled")]  # fmt: skip
+
+
+# -- app 6: 3x-ui runs Xray as xray-linux-<arch>; self-steal is not blocked by the name ---------
+def test_3xui_xray_binary_name_does_not_block_self_steal():
+    from kerberos.copy import t
+    from kerberos.fixes.plan import is_xray
+
+    app, term = make_app(X_TO_PLAN + ["esc", "esc", "q", "enter"], panel_kind=None, height=44)
+    node = app.env.transport.nodes["127.0.0.1"]
+    for sock in node.state["facts"]["listening"]:
+        if sock["port"] == 443:
+            sock["process"] = "xray-linux-amd6"  # how ss shows /usr/local/x-ui/bin/xray-linux-amd64
+    app.run("fix")
+    steal = next(i for i in app.session.data["plan"] if i.fix_id == "self_steal")
+    assert steal.blocked is None and not seen(term, t("plan.blocked.port443"))
+    assert is_xray("xray") and is_xray("rw-core") and is_xray("xray-linux-arm6")
+    assert not is_xray("nginx") and not is_xray(None)

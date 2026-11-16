@@ -283,9 +283,23 @@ def self_steal_blocker(data: CheckInput, node) -> Optional[str]:
            for s in listening):  # fmt: skip
         return "port80_busy"
     on443 = [s for s in listening if s["port"] == 443 and s["proto"] == "tcp"]
-    if on443 and not any(s.get("process") in ("xray", "rw-core") for s in on443):
+    xray = any(is_xray(s.get("process")) for s in on443) or xui_port(data, node, 443)
+    if on443 and not xray:
         return "port443"
     return None
+
+
+def is_xray(process) -> bool:
+    """Xray as `ss` names it: xray, rw-core in remnanode, xray-linux-amd6 of 3x-ui (15 chars)."""
+    name = str(process or "")
+    return name == "rw-core" or name.startswith("xray")
+
+
+def xui_port(data: CheckInput, node, port: int) -> bool:
+    """3x-ui (§7.6): a port of a running inbound is Xray's, whatever its binary is called."""
+    if data.snapshot.kind != "3x-ui":
+        return False
+    return any(not h.is_disabled and h.port == port for h in data.snapshot.node_hosts(node.node))
 
 
 def follow_admin_key(items: list[PlanItem]) -> None:
