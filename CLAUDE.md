@@ -11,8 +11,8 @@ KERBEROS: скрипт защиты VPN-серверов для владельц
 | Часть | Папка | Стек |
 |---|---|---|
 | launcher | `kerberos` | bash: root, python3, TTY |
-| приложение | `kerberos/` | Python 3.9+, стандартная библиотека и вендорённый Rich |
-| агент ноды | `kerberos/agent.py` | Python 3.9+, только стандартная библиотека |
+| приложение | `src/kerberos/` | Python 3.9+, стандартная библиотека и вендорённый Rich |
+| агент ноды | `src/kerberos/agent.py` | Python 3.9+, только стандартная библиотека |
 | конфиги | `templates/` | проверенные профиль и шаблоны подписки с метками (§10.9); менять только через `tech.md` |
 | вендоринг | `vendor/`, `tools/vendor.py` | Rich и его зависимости, закреплённые версии |
 | тесты | `tests/` | pytest, Hypothesis, ruff (только для разработки) |
@@ -42,7 +42,7 @@ sudo ./kerberos                  # interactive run on a panel server
 python3 -m pytest                # needs: pip install pytest hypothesis (dev only)
 python3 -m pytest tests/agent    # agent tests
 ruff check .
-python3 -I -S -c "import sys; sys.path[:0] = ['.', 'vendor']; import kerberos"   # runs without site-packages
+python3 -I -S -c "import sys; sys.path[:0] = ['src', 'vendor']; import kerberos"   # runs without site-packages
 python3 tools/vendor.py          # refresh vendor/ to the pinned versions
 tools/check.sh                   # ruff, pytest on Python 3.9 and 3.14 via uv, run without site-packages, template hashes
 tools/stand.sh                   # agent tests and apply/rollback on the five stand VMs (§17, §18)
