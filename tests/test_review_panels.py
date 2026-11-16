@@ -90,3 +90,22 @@ def test_node_api_rule_is_blocked_when_the_panel_comes_from_elsewhere():
     assert plan[(nl1.node.uuid, "node_api.panel_only")].blocked == "panel_peer"
     assert plan[(nl1.node.uuid, "node_api.panel_only")].selected is False
     assert plan[(fi1.node.uuid, "node_api.panel_only")].blocked is None
+
+
+# -- app 11: the secret base path of 3x-ui never reaches the screen ----------------------------
+def test_3xui_error_names_the_panel_without_its_secret_path():
+    from kerberos.demo.xui import SETTINGS
+    from kerberos.panel.client import Unreachable
+    from kerberos.panel.discover import XUI_DB
+
+    keys = X_CHOOSE + X_LOGIN + ["esc", "esc", "esc", "q", "enter"]
+    app, term = make_app(keys, panel_kind=None, height=44)
+    app.env.host.databases[XUI_DB] = dict(SETTINGS, webBasePath="/s3cr3tpathXYZ/")
+
+    def refused(*_args, **_kwargs):
+        raise Unreachable("[Errno 61] Connection refused")
+
+    app.env.xui_transport = refused  # x-ui is stopped
+    app.run("check")
+    assert seen(term, "http://127.0.0.1:2053")
+    assert not seen(term, "s3cr3tpathXYZ")

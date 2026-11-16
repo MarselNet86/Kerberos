@@ -325,6 +325,8 @@ def xui_lines(app: App, location: PanelLocation) -> list[RenderableType]:
 
 
 def xui_login_form(app: App, client: Any, location: PanelLocation) -> bool:
+    from kerberos.panel.xui import origin
+
     fields = [TextInput(t("panel.xui.login")), TextInput(t("panel.password"), secret=True)]
     if location.info.get("twoFactor"):
         fields.append(TextInput(t("panel.xui.code"), secret=True))
@@ -378,7 +380,7 @@ def xui_login_form(app: App, client: Any, location: PanelLocation) -> bool:
                 state["error"] = t("panel.xui.err.login")
             elif exc.code == "forbidden":
                 state["error"] = t("panel.xui.err.forbidden")
-            elif not app.ask_retry(t("s2.title"), error_text(exc, location.api)):
+            elif not app.ask_retry(t("s2.title"), error_text(exc, origin(location.api))):
                 return False
             state["focus"] = 1
 
@@ -422,6 +424,8 @@ def public_ipv4(app: App, location: PanelLocation) -> Optional[str]:
 
 
 def load_xui(app: App, client: Any, location: PanelLocation) -> Optional[PanelSnapshot]:
+    from kerberos.panel.xui import origin
+
     address = public_ipv4(app, location)
     if address is None:
         return None
@@ -430,7 +434,7 @@ def load_xui(app: App, client: Any, location: PanelLocation) -> Optional[PanelSn
         try:
             return client.snapshot(location, address, app.env.host.hostname())
         except PanelError as exc:
-            if not app.ask_retry(t("s2.title"), error_text(exc, location.api)):
+            if not app.ask_retry(t("s2.title"), error_text(exc, origin(location.api))):
                 return None
 
 
