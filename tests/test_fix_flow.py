@@ -1,7 +1,7 @@
 """«Исправление» end to end on the demo fleet (tech.md §6 S7-S9, §11, K4)."""
 
 import pytest
-from helpers import login_keys, make_app, seen
+from helpers import login_keys, make_app, plan_rows, seen
 
 from kerberos.copy import t
 from kerberos.demo.fleet import build_nodes
@@ -14,9 +14,10 @@ TO_PLAN = login_keys() + ["enter", "enter"] + ["enter"] * 5 + ["esc"] + ["enter"
 TO_PLAN += ["enter", "enter", "enter"]
 APPLY = ["enter", "enter"]  # S7 → consent → accept
 # Marked by default on the demo fleet: nl-1: 7, nl-2: 3, de-1: 1, fi-1: 3 on the nodes, then
-# sub.template and sub.ping_type in the panel; the journal also gets sub.templates.
-ALL_ITEMS = 16
-ALL_CHANGES = 17
+# sub.template, sub.ping_type, xhttp.padding (fi-1) and xhttp.uplink_get («FI CDN») in the
+# panel; the journal also gets sub.templates.
+ALL_ITEMS = 18
+ALL_CHANGES = 19
 ROLLBACK_LOGIN = ["enter", "enter", "enter"] + list("admin") + ["enter"] + list("pw") + ["enter"]
 
 
@@ -185,5 +186,7 @@ def test_s9_snapshot_and_s7_rows():
     assert_snapshot("s9", text.replace(run["runId"], "<run>"))
     s7 = next(f for f in term.frames if t("plan.title") in f.splitlines()[0])
     assert t("fix.mptcp.guard.label") in s7
-    # Not marked: ssh.port (4 nodes), self-steal waiting for a domain (4), host.fingerprint (low)
-    assert t("plan.selected", n=ALL_ITEMS, total=ALL_ITEMS + 9) in s7
+    # Not marked: ssh.port (4 nodes), self-steal waiting for a domain (4), host.fingerprint
+    # (low), watch.install (by choice, 2 nodes), cdn.edge_only waiting for its nets.
+    assert t("plan.selected", n=ALL_ITEMS, total=ALL_ITEMS + 12) in s7
+    assert len(plan_rows()) == ALL_ITEMS + 12

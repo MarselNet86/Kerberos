@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 from collections.abc import Sequence
+from functools import cache
 from pathlib import Path
 from typing import Optional
 
@@ -81,3 +82,30 @@ def make_app(
     env.prober.auth = auth_methods_of(list(env.transport.nodes.values()))
     env.whois = build_whois()
     return App(env), term
+
+
+@cache
+def plan_rows() -> tuple[tuple[str, str], ...]:
+    """S7 rows of the demo fleet as (who, fixId) in screen order, as TO_PLAN reaches it.
+
+    `who` is the node name for node targets, else host, template or panel. Reserve
+    rows appear only after `r`, so they are not here.
+    """
+    from demo_input import demo_input
+
+    from kerberos.checks import run_checks
+    from kerberos.fixes.plan import build_plan
+
+    _env, data = demo_input()
+    admin = {"mode": "mine", "keys": ["ssh-ed25519 AAAA admin@laptop"]}
+    names = {n.node.uuid: n.node.name for n in data.nodes}
+    rows = []
+    for item in build_plan(run_checks(data), data, admin, {}):
+        kind, _, ref = item.target.partition(":")
+        rows.append((names.get(ref, ref) if kind == "node" else kind, item.fix_id))
+    return tuple(rows)
+
+
+def row_of(who: str, fix_id: str) -> int:
+    """Index of a row of S7: how many times to press ↓ from the top."""
+    return plan_rows().index((who, fix_id))
