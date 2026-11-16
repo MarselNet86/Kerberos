@@ -13,6 +13,7 @@ from kerberos.app import App, Env
 from kerberos.clock import FakeClock
 from kerberos.demo.fleet import build_host, build_nodes, build_panel
 from kerberos.demo.nodes import auth_methods_of, build_prober, build_whois
+from kerberos.demo.xui import attach_xui
 from kerberos.host import FakeHost
 from kerberos.mask import Masker
 from kerberos.nodes.fake import FakeNode, FakeTransport
@@ -70,6 +71,7 @@ def make_app(
     host: Optional[FakeHost] = None,
     nodes: Optional[list[FakeNode]] = None,
     state: Optional[State] = None,
+    panel_kind: Optional[str] = "remnawave",
 ) -> tuple[App, FakeTerminal]:
     clock = FakeClock()
     term = FakeTerminal(keys, width=width, height=height, on_idle=clock.advance)
@@ -81,6 +83,9 @@ def make_app(
     env.prober = build_prober(env.panel_transport, list(env.transport.nodes.values()))
     env.prober.auth = auth_methods_of(list(env.transport.nodes.values()))
     env.whois = build_whois()
+    # Scenarios of Remnawave skip the question of S2; tests of the choice pass None.
+    env.panel_kind = panel_kind
+    attach_xui(env)
     return App(env), term
 
 

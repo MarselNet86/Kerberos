@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import ipaddress
+from typing import Optional
 
 from kerberos.nodes.fake import FakeNode
 from kerberos.nodes.fake_fixes import give_fixes
@@ -150,12 +151,13 @@ def give_agent(node: FakeNode) -> None:
     give_fixes(node)
 
 
-def auth_methods_of(nodes: list[FakeNode]):
+def auth_methods_of(nodes: list[FakeNode], aliases: Optional[dict] = None):
     """What each demo node's SSH offers a stranger, from its current facts."""
     by_address = {n.address: n for n in nodes}
+    aliases = aliases or {}
 
     def methods(ip: str, port: int):
-        node = by_address.get(ip)
+        node = by_address.get(aliases.get(ip, ip))
         if node is None:
             return None
         ssh = node.state["facts"]["ssh"]
@@ -195,12 +197,23 @@ class DemoProber(FakeProber):
     stub of the node's domain, the foreign site otherwise.
     """
 
-    def __init__(self, panel=None, nodes=None, **kwargs) -> None:
+    def __init__(self, panel=None, nodes=None, xui=None, aliases=None, **kwargs) -> None:
         super().__init__(**kwargs)
         self.panel = panel
         self.by_address = {n.address: n for n in nodes or []}
+        self.xui = xui  # the 3x-ui server of the demo (§7.6)
+        self.aliases = dict(aliases or {})  # public address -> address of the fake node
+
+    def node_at(self, ip: str):
+        return self.by_address.get(self.aliases.get(ip, ip))
 
     def _reality(self, ip: str) -> dict:
+        if ip in self.aliases and self.xui is not None:
+            for item in self.xui.inbounds:
+                stream = self.xui.stream(item["id"])
+                if item["enable"] and stream.get("security") == "reality":
+                    return stream.get("realitySettings") or {}
+            return {}
         if self.panel is None:
             return {}
         node = next((n for n in self.panel.nodes if n["address"] == ip), None)
@@ -215,20 +228,17 @@ class DemoProber(FakeProber):
         return {}
 
     def _own_site(self, ip: str) -> str:
-        node = self.by_address.get(ip)
+        node = self.node_at(ip)
         reality = self._reality(ip)
         site = node.state.get("site") if node else None
-        if (
-            site
-            and reality.get("dest") == "127.0.0.1:8445"
-            and site in reality.get("serverNames", [])
-        ):
+        dest = reality.get("target") or reality.get("dest")
+        if site and dest == "127.0.0.1:8445" and site in reality.get("serverNames", []):
             return site
         return ""
 
     def tls_names(self, ip: str, port: int = 443, sni=None) -> TlsResult:
         self.calls.append(("tls", ip, port, sni))
-        if ip in self.by_address and port == 443:
+        if self.node_at(ip) is not None and port == 443:
             site = self._own_site(ip)
             return (
                 TlsResult(True, [site])
@@ -256,7 +266,7 @@ class DemoProber(FakeProber):
         if ip in self.by_address and port == 8443:
             self.calls.append(("http", ip, port, host, path))
             return self._origin(self.by_address[ip], PANEL_ADDRESS, path)
-        if ip in self.by_address and port == 443 and path == "/":
+        if self.node_at(ip) is not None and port == 443 and path == "/":
             self.calls.append(("http", ip, port, host, path))
             ok = self._own_site(ip) == host
             return (
