@@ -73,6 +73,50 @@ def dns_state(app: App, session: Session, item: PlanItem) -> None:
         item.selected = True
 
 
+def pair_ready(items: list[PlanItem], pair: PlanItem) -> bool:
+    """A reserve pair runs only when both nodes move to their domains in this run."""
+    wanted = {pair.node_uuid, pair.params["reserve"]}
+    ready = {i.node_uuid for i in items if i.fix_id == "self_steal" and i.selected
+             and i.params.get("dns") == "ok"}  # fmt: skip
+    return wanted <= ready
+
+
+def choose_reserve(app: App, session: Session, items: list[PlanItem], main: PlanItem) -> None:
+    """§6 S7: «Резервная нода» of a main node: another node of this run, or none."""
+    from kerberos.fixes.plan import reserve_item
+    from kerberos.ui.widgets import Menu
+
+    name = app.session_name(main.node_uuid)
+    others = [i for i in items if i.fix_id == "self_steal" and i is not main
+              and not i.params.get("reserve")
+              and i.params.get("reserveOf") in (None, main.node_uuid)]  # fmt: skip
+    options = [("none", t("plan.reserve.none"), "")]
+    options += [(i.node_uuid, app.mask(app.session_name(i.node_uuid)), "") for i in others]
+    menu = Menu(options)
+
+    def handle(key: str) -> Optional[str]:
+        return "" if key == "esc" else menu.handle(key)
+
+    body = Group(Text(t("plan.reserve", node=app.mask(name)), style="bold"),
+                 Text(t("plan.reserve.hint", node=app.mask(name)), style="muted"), Text(""),
+                 menu)  # fmt: skip
+    keys = (("↑↓", t("keys.select")), ("Enter", t("keys.next")), ("Esc", t("keys.back")))
+    choice = app.interact(t("plan.title"), body, keys, handle)
+    if choice == "":
+        return
+    for item in items:
+        if item.params.get("reserveOf") == main.node_uuid:
+            item.params.pop("reserveOf", None)
+    main.params.pop("reserve", None)
+    items[:] = [i for i in items if not (i.fix_id == "reserve" and i.node_uuid == main.node_uuid)]
+    if choice == "none":
+        return
+    spare = next(i for i in items if i.node_uuid == choice and i.fix_id == "self_steal")
+    main.params["reserve"] = spare.node_uuid
+    spare.params["reserveOf"] = main.node_uuid
+    items.append(reserve_item(main, spare))
+
+
 def ask_domain(app: App, session: Session, item: PlanItem) -> None:
     node = session.snapshot.node(item.node_uuid or "")
     field = TextInput(
@@ -107,16 +151,23 @@ def fix_label(app: App, item: Any) -> str:
     fix_id = item.fix_id if isinstance(item, PlanItem) else item["fixId"]
     params = item.params if isinstance(item, PlanItem) else item["params"]
     ports = ", ".join(params.get("ports", []))
+    spare = params.get("reserve")
     label = t(f"fix.{fix_id}.label", ports=ports, port=params.get("port", ""),
-              domain=params.get("domain") or "…")  # fmt: skip
+              domain=params.get("domain") or "…",
+              reserve=app.session_name(spare) if spare else "")  # fmt: skip
     return app.mask(label)
 
 
 def node_name(session: Session, target: str, params: Optional[dict] = None) -> str:
-    """The node a change belongs to; panel changes of self-steal carry it in params."""
+    """Who a change belongs to: a node, a host, a template or the panel."""
+    params = params or {}
     kind, _, ref = target.partition(":")
-    if kind != "node" and params and params.get("node"):
+    if kind != "node" and params.get("node"):
         kind, ref = "node", params["node"]
+    if kind == "host":
+        return t("target.host", name=params.get("remark") or ref[:8])
+    if kind == "template":
+        return t("target.template", name=params.get("name") or ref[:8])
     node = session.snapshot.node(ref) if kind == "node" else None
     return node.name if node else t("target.panel")
 
@@ -155,15 +206,23 @@ def step_plan(app: App, session: Session) -> Any:
                 if state == "ok":
                     note = t("plan.domain.ok", domain=app.mask(item.params["domain"]))
                 elif state == "wait":
-                    note = t("plan.domain.wait", record=app.mask(item.params.get("record", "")))
+                    note = t("plan.domain.waiting")
                 else:
                     note = t("plan.domain.none")
             elif not note and warning_of(item):
                 note = t("plan.has_warning")
             risk = Text(f"● {t('risk.' + item.risk)}", style=f"risk.{item.risk}"
                         if item.risk != "info" else "muted")  # fmt: skip
-            result.append([app.mask(node_name(session, item.target)), fix_label(app, item), risk,
-                           note])  # fmt: skip
+            if item.fix_id == "self_steal" and item.params.get("reserve"):
+                note += " · " + t(
+                    "plan.reserve.with", node=app.session_name(item.params["reserve"])
+                )
+            if item.fix_id == "self_steal" and item.params.get("reserveOf"):
+                note += " · " + t(
+                    "plan.reserve.of", node=app.session_name(item.params["reserveOf"])
+                )
+            result.append([app.mask(node_name(session, item.target, item.params)),
+                           fix_label(app, item), risk, note])  # fmt: skip
         return result
 
     def body(_w: int, height: int) -> RenderableType:
@@ -175,6 +234,11 @@ def step_plan(app: App, session: Session) -> Any:
         tail: list[RenderableType] = [
             Text(t("plan.selected", n=len(checklist.selected), total=len(items)), style="muted")
         ]
+        for item in items:
+            if item.fix_id == "self_steal" and item.params.get("dns") == "wait":
+                # The record to make, in full: the table column is too narrow for it.
+                tail.append(Text(t("plan.domain.wait", record=app.mask(item.params["record"])),
+                                 style="risk.medium"))  # fmt: skip
         if any(i.fix_id == "self_steal" for i in items):
             auto = session.data.get("auto_finalize", False)
             tail.append(Text(t("plan.finalize.auto" if auto else "plan.finalize.manual"),
@@ -210,6 +274,11 @@ def step_plan(app: App, session: Session) -> Any:
         if hotkey(key) == "f":
             session.data["auto_finalize"] = not session.data.get("auto_finalize", False)
             return None
+        if hotkey(key) == "r" and items[checklist.cursor].fix_id == "self_steal":
+            choose_reserve(app, session, items, items[checklist.cursor])
+            checklist.rows = rows()
+            checklist.selected = {i for i, item in enumerate(items) if item.selected}
+            return None
         result = checklist.handle(key)
         if hotkey(key) == "a":
             # «Все» marks what can run now: self-steal waits for its domain and DNS.
@@ -227,6 +296,10 @@ def step_plan(app: App, session: Session) -> Any:
                 ):
                     state["error"] = t("plan.need_domain")
                     return None
+            for item in items:
+                if item.fix_id == "reserve" and item.selected and not pair_ready(items, item):
+                    state["error"] = t("plan.need_reserve")
+                    return None
             return "consent" if checklist.selected else None
         return None
 
@@ -235,6 +308,7 @@ def step_plan(app: App, session: Session) -> Any:
         (t("keys.space"), t("keys.toggle")),
         ("a", t("keys.all")),
         ("d", t("keys.domain")),
+        ("r", t("keys.reserve")),
         ("Enter", t("keys.next")),
         ("Esc", t("keys.back")),
     )
@@ -293,6 +367,7 @@ def step_apply(app: App, session: Session) -> Any:
                                     style="risk.high"))  # fmt: skip
 
     engine = Engine(app, session, chosen, on_event)
+    engine.ask_diff = lambda diff: ask_overwrite(app, diff)
     session.data["engine"] = engine
     app.busy = True
 
@@ -324,8 +399,30 @@ def step_apply(app: App, session: Session) -> Any:
     return NEXT
 
 
+def ask_overwrite(app: App, diff: str) -> bool:
+    """§10.9: a KERBEROS template was edited in the panel: show how, ask before writing."""
+    show_pager(app, t("tpl.diff.intro") + "\n\n" + app.mask(diff), t("s8.title"))
+    body = Group(Notice("warning", t("tpl.diff.question")),
+                 Text(f"{t('quit.yes')}    {t('quit.no')}", style="muted"))  # fmt: skip
+    app.draw(t("s8.title"), body)
+    return app.term.read_key() == "enter"
+
+
+def refresh_snapshot(app: App, session: Session) -> None:
+    """Panel changes land in the score after: read the panel again."""
+    if session.panel is None or session.location is None:
+        return
+    try:
+        snapshot = session.panel.snapshot(session.location.version, session.location.panel_domain)
+    except Exception:  # noqa: BLE001 - the score after then uses what KERBEROS knows
+        return
+    session.snapshot = snapshot
+    session.data["input"].snapshot = snapshot
+
+
 def finish_run(app: App, session: Session, engine: Engine) -> None:
     run = session.data["run"]
+    refresh_snapshot(app, session)
     data = session.data["input"]
     after = run_checks(data)
     session.data["findings_after"] = after

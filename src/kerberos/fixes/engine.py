@@ -43,6 +43,16 @@ class Engine:
         self.cancelled = False
         self.failed = 0
         self.on_event = on_event or (lambda *args: None)
+        self.ask_diff: Callable[[str], bool] = lambda _diff: True
+        self._panel_fixes = None
+
+    @property
+    def panel_fixes(self) -> Any:
+        if self._panel_fixes is None:
+            from kerberos.fixes.panel_fixes import PanelFixes
+
+            self._panel_fixes = PanelFixes(self)
+        return self._panel_fixes
 
     # -- driving -------------------------------------------------------------
     @property
@@ -99,6 +109,14 @@ class Engine:
 
     # -- one change ------------------------------------------------------------
     def apply(self, item: PlanItem) -> None:
+        from kerberos.fixes.panel_fixes import PANEL_ITEMS
+
+        if item.fix_id in PANEL_ITEMS:
+            try:
+                self.panel_fixes.run(item)
+            except Exception:  # noqa: BLE001 - a failed panel step is counted, not fatal
+                self.failed += 1
+            return
         if item.fix_id == "self_steal":
             from kerberos.fixes.self_steal import SelfSteal
 

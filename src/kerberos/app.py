@@ -89,6 +89,13 @@ class App:
     def mask(self, value: str) -> str:
         return self.env.masker(value)
 
+    def session_name(self, node_uuid: Optional[str]) -> str:
+        """The name of a node of the current panel snapshot."""
+        session = getattr(self, "session", None)
+        snapshot = session.snapshot if session is not None else None
+        node = snapshot.node(node_uuid) if snapshot and node_uuid else None
+        return node.name if node else (node_uuid or "")[:8]
+
     # -- frame and loop ------------------------------------------------
     def flags(self) -> list[str]:
         flags = []
@@ -225,6 +232,7 @@ class App:
     def run_mode(self, mode: str) -> Optional[int]:
         """Walk the screens of a mode. None: the person went back to S1."""
         session = Session(mode)
+        self.session = session
         steps = self.steps(session)
         index = 0
         try:
