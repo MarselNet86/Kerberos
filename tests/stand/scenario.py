@@ -74,6 +74,49 @@ def listen(port: int) -> socket.socket:
     return server
 
 
+WATCH_LOG = "/var/log/kerberos-watch.log"
+STAND_KEY = "/tmp/kerberos-stand-key"
+EDGE_SITE = "/etc/nginx/sites-enabled/kerberos-stand-cdn"
+EDGE_CONF = "/etc/nginx/conf.d/kerberos-edges.conf"
+EDGE_TEXT = """server {
+    listen 127.0.0.1:8098;
+    location /stand-tunnel {
+        return 200;
+    }
+    location = /cdn-check {
+        return 204;
+    }
+}
+"""
+
+
+def edge_filter() -> None:
+    """cdn.edge_only on a plain nginx site of the stand: nginx must take the filter."""
+    env = dict(os.environ, DEBIAN_FRONTEND="noninteractive")
+    if shutil.which("nginx") is None:
+        subprocess.run(["apt-get", "install", "-y", "-qq", "nginx"], env=env, check=False,
+                       capture_output=True)  # fmt: skip
+    if shutil.which("nginx") is None:
+        report("cdn.edge_only: nginx installed", False)
+        return
+    with open(EDGE_SITE, "w") as fh:
+        fh.write(EDGE_TEXT)
+    subprocess.run(["systemctl", "reload-or-restart", "nginx"], check=False)
+
+    def guarded(_facts: dict) -> bool:
+        return os.path.exists(EDGE_CONF) and "@kerberos_not_edge" in open(EDGE_SITE).read()
+
+    def clean(_facts: dict) -> bool:
+        return not os.path.exists(EDGE_CONF) and open(EDGE_SITE).read() == EDGE_TEXT
+
+    try:
+        cycle("cdn.edge_only", {"paths": ["/stand-tunnel"], "nets": ["192.0.2.0/24"]},
+              guarded, clean)  # fmt: skip
+    finally:
+        os.remove(EDGE_SITE)
+        subprocess.run(["systemctl", "reload", "nginx"], check=False)
+
+
 def main() -> int:
     if os.geteuid() != 0:
         print("run as root on a stand VM")
@@ -103,6 +146,19 @@ def main() -> int:
     finally:
         server.close()
 
+    # K8: the watch, and the CDN filter on a stand site of its own.
+    cycle("watch.install", {},
+          lambda f: f["watch"]["installed"],
+          lambda f: f["watch"]["installed"] == before["watch"]["installed"])  # fmt: skip
+    change = str(uuid.uuid4())
+    agent("apply", "watch.install", change)
+    watch = subprocess.run(["/usr/local/sbin/kerberos-watch"], capture_output=True, check=False)
+    lines = (open(WATCH_LOG).read().splitlines() if os.path.exists(WATCH_LOG) else []) or [""]
+    report("watch writes one line of counts", watch.returncode == 0 and " conn=" in lines[-1],
+           watch.stderr.decode()[-300:])  # fmt: skip
+    agent("rollback", change)
+    edge_filter()
+
     if before["nodeApi"]["port"] and before["remnanode"].get("network") == "host":
         cycle("node_api.panel_only", {"port": before["nodeApi"]["port"], "panelIp": PANEL},
               lambda f: f["nodeApi"]["panelOnly"],
@@ -126,6 +182,14 @@ def main() -> int:
               lambda f: f["remnanode"]["letsencryptMounted"],
               lambda f: f["remnanode"]["letsencryptMounted"]
               == before["remnanode"]["letsencryptMounted"])  # fmt: skip
+
+    # §8.5: the person's own key reaches the node: a throwaway key of this stand VM.
+    subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "stand@kerberos",
+                    "-f", STAND_KEY], check=True)  # fmt: skip
+    key = open(STAND_KEY + ".pub").read().strip()
+    cycle("access.admin_keys", {"keys": [key]},
+          lambda f: f["ssh"]["adminKeys"] == before["ssh"]["adminKeys"] + 1,
+          lambda f: f["ssh"]["adminKeys"] == before["ssh"]["adminKeys"])  # fmt: skip
 
     old = {k["fingerprint"] for k in before["hostKeys"]}
     cycle("hostkeys.regenerate", {},
