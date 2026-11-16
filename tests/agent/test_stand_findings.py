@@ -78,9 +78,10 @@ def test_socket_restarts_reset_the_start_limit(node, recorder):
     assert code == 0, answer
     call(node, ["confirm", change])
     call(node, ["rollback", change])
+    call(node, ["confirm", change])
     calls = recorder.calls
     restarts = [i for i, c in enumerate(calls) if c == ["systemctl", "restart", "ssh.socket"]]
-    assert len(restarts) == 3, "apply, confirm and rollback each restart the socket"
+    assert len(restarts) == 4, "apply, confirm and both phases of the rollback restart it"
     for i in restarts:
         assert calls[i - 1] == ["systemctl", "reset-failed", "ssh.socket", "ssh.service"]
 

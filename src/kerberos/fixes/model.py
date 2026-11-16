@@ -12,6 +12,14 @@ ChangeState = Literal[
 
 TOPICS: tuple[str, ...] = ("hosting", "sni", "scanning", "dpi", "routing", "reserves")
 WEIGHTS = {"high": 10, "medium": 5, "low": 2, "info": 0}
+# A change whose automatic rollback failed keeps the state it reached and gets this error;
+# details.failure holds why it failed, details.rollbackError why it did not go back.
+ROLLBACK_FAILED = "rollback_failed"
+
+
+def is_applied(change: dict) -> bool:
+    """The change worked: not one that failed and could not be rolled back."""
+    return change["state"] in ("applied", "confirmed") and change.get("error") != ROLLBACK_FAILED
 
 
 class Finding(TypedDict):

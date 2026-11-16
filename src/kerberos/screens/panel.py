@@ -43,7 +43,11 @@ def keys_next() -> tuple:
     )
 
 
-def error_text(exc: PanelError, api: str = "") -> str:
+UNREACHABLE = {"remnawave": "panel.err.unreachable", "3x-ui": "panel.xui.err.unreachable"}
+
+
+def error_text(exc: PanelError, api: str = "", kind: str = "") -> str:
+    """What went wrong and what to do; `kind` names the panel to check (§7.5, §7.6)."""
     if exc.code == "unauthorized":
         return t("panel.err.token")
     if exc.code == "forbidden":
@@ -53,7 +57,7 @@ def error_text(exc: PanelError, api: str = "") -> str:
     if exc.code == "timeout":
         return t("panel.err.timeout", operation=exc.operation)
     if exc.code == "unreachable":
-        return t("panel.err.unreachable", api=api)
+        return t(UNREACHABLE.get(kind, "panel.err.unreachable.any"), api=api)
     if exc.code == "no_response":
         return t("panel.err.no_response", operation=exc.operation)
     if exc.code == "bad_request":
@@ -62,8 +66,12 @@ def error_text(exc: PanelError, api: str = "") -> str:
 
 
 def found_lines(app: App, location: PanelLocation) -> list[RenderableType]:
-    lines: list[RenderableType] = [Text(t("panel.found", version=location.version), style="bold")]
-    lines.append(Text(t("panel.api", api=app.mask(location.api)), style="muted"))
+    if location.version == "?":
+        # Typed by hand (or found without a version): no «Нашёл Remnawave ?».
+        lines = [Text(t("panel.manual", api=app.mask(location.api)), style="bold")]
+    else:
+        lines = [Text(t("panel.found", version=location.version), style="bold"),
+                 Text(t("panel.api", api=app.mask(location.api)), style="muted")]  # fmt: skip
     if location.panel_domain:
         lines.append(Text(t("panel.domain", domain=app.mask(location.panel_domain)), style="muted"))
     return lines
@@ -93,7 +101,7 @@ def connect(app: App, client: PanelClient, location: PanelLocation) -> Optional[
         try:
             return client.password_enabled()
         except PanelError as exc:
-            if not app.ask_retry(t("s2.title"), error_text(exc, location.api)):
+            if not app.ask_retry(t("s2.title"), error_text(exc, location.api, location.kind)):
                 return None
 
 
@@ -145,7 +153,7 @@ def login_form(app: App, client: PanelClient, location: PanelLocation) -> bool:
                 state["error"] = t("panel.err.login")
             elif exc.code == "forbidden":
                 state["error"] = t("panel.err.password_off")
-            elif not app.ask_retry(t("s2.title"), error_text(exc, location.api)):
+            elif not app.ask_retry(t("s2.title"), error_text(exc, location.api, location.kind)):
                 return False
             state["focus"] = 1
 
@@ -184,7 +192,7 @@ def token_form(app: App, client: PanelClient, location: PanelLocation) -> bool:
             client.forget_token()
             if exc.code == "unauthorized":
                 state["error"] = t("panel.err.token")
-            elif not app.ask_retry(t("s2.title"), error_text(exc, location.api)):
+            elif not app.ask_retry(t("s2.title"), error_text(exc, location.api, location.kind)):
                 return False
 
 
@@ -194,7 +202,7 @@ def load(app: App, client: PanelClient, location: PanelLocation) -> Optional[Pan
         try:
             return client.snapshot(location.version, location.panel_domain)
         except PanelError as exc:
-            if not app.ask_retry(t("s2.title"), error_text(exc, location.api)):
+            if not app.ask_retry(t("s2.title"), error_text(exc, location.api, location.kind)):
                 return None
 
 
@@ -314,9 +322,12 @@ def ask_xui_url(app: App) -> Optional[str]:
 
 def xui_lines(app: App, location: PanelLocation) -> list[RenderableType]:
     """Where the panel is, without its secret path: that path is a password of sorts."""
-    lines: list[RenderableType] = [
-        Text(t("panel.xui.found", version=location.version), style="bold")
-    ]
+    if location.version != "?":
+        head = t("panel.xui.found", version=location.version)
+    else:
+        # Found here without a version, or typed by hand (no settings were read).
+        head = t("panel.xui.found.unknown") if location.info else t("panel.xui.manual")
+    lines: list[RenderableType] = [Text(head, style="bold")]
     if location.info.get("port"):
         lines.append(Text(t("panel.xui.port", port=location.info["port"]), style="muted"))
     if location.panel_domain:
@@ -325,6 +336,8 @@ def xui_lines(app: App, location: PanelLocation) -> list[RenderableType]:
 
 
 def xui_login_form(app: App, client: Any, location: PanelLocation) -> bool:
+    from kerberos.panel.xui import origin
+
     fields = [TextInput(t("panel.xui.login")), TextInput(t("panel.password"), secret=True)]
     if location.info.get("twoFactor"):
         fields.append(TextInput(t("panel.xui.code"), secret=True))
@@ -378,7 +391,7 @@ def xui_login_form(app: App, client: Any, location: PanelLocation) -> bool:
                 state["error"] = t("panel.xui.err.login")
             elif exc.code == "forbidden":
                 state["error"] = t("panel.xui.err.forbidden")
-            elif not app.ask_retry(t("s2.title"), error_text(exc, location.api)):
+            elif not app.ask_retry(t("s2.title"), error_text(exc, origin(location.api))):
                 return False
             state["focus"] = 1
 
@@ -422,6 +435,8 @@ def public_ipv4(app: App, location: PanelLocation) -> Optional[str]:
 
 
 def load_xui(app: App, client: Any, location: PanelLocation) -> Optional[PanelSnapshot]:
+    from kerberos.panel.xui import origin
+
     address = public_ipv4(app, location)
     if address is None:
         return None
@@ -430,7 +445,7 @@ def load_xui(app: App, client: Any, location: PanelLocation) -> Optional[PanelSn
         try:
             return client.snapshot(location, address, app.env.host.hostname())
         except PanelError as exc:
-            if not app.ask_retry(t("s2.title"), error_text(exc, location.api)):
+            if not app.ask_retry(t("s2.title"), error_text(exc, origin(location.api))):
                 return None
 
 

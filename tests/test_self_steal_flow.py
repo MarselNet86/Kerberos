@@ -91,8 +91,8 @@ def test_self_steal_moves_the_node_to_its_domain():
 
 def test_dns_must_match_before_applying():
     panel, nodes = fleet()
-    keys = domain_keys(NL1_SELF_STEAL, "late.example.com") + ["space", "enter", "esc", "esc",
-                                                                "q", "enter"]  # fmt: skip
+    keys = domain_keys(NL1_SELF_STEAL, "late.example.com") + ["space", "enter", "esc", "q",
+                                                                "enter"]  # fmt: skip
     app, term, _code = run_fix(keys, panel, nodes)
     assert seen(term, t("plan.domain.wait", record="A late.example.com → 203.0.113.10"))
     assert seen(term, t("plan.domain.waiting"))
@@ -218,9 +218,15 @@ def test_finalization_after_a_day_and_twice_changes_nothing():
 
 
 def test_unattended_finalization_with_the_saved_token():
+    from kerberos.demo.fleet import build_host
+    from kerberos.host import CommandResult
+
     panel, nodes = fleet()
-    keys = domain_keys(NL1_SELF_STEAL, "nl-1.example.com") + ["f"] + APPLY
-    app, term, _code = run_fix(keys, panel, nodes)
+    host = build_host()
+    host.on(["systemd-run"], CommandResult(0))  # the timer is set: the token is kept for it
+    keys = TO_PLAN + domain_keys(NL1_SELF_STEAL, "nl-1.example.com") + ["f"] + APPLY
+    app, term = make_app(keys, panel=panel, nodes=list(nodes.values()), height=46, host=host)
+    app.run("fix")
     store = store_of(app)
     run = store.runs()[0]
     token_file = store.path(run["runId"]) / "finalize.token"

@@ -2,14 +2,16 @@
 
 Keys from §15 are the mandatory minimum; tasks add their own keys additively.
 `t(key, **params)` formats a text; an unknown key is a bug and raises KeyError.
+A number takes the Russian form of the word after it: `{n:нода|ноды|нод}` gives
+«1 нода», «3 ноды», «5 нод» (`plural`).
 """
 
 from __future__ import annotations
 
 TEXT: dict[str, str] = {
     # §15 mandatory minimum
-    "app.tagline": "Защита VPN-серверов на Remnawave",
-    "mode.check": "Проверка: ничего не меняет",
+    "app.tagline": "Защита VPN-серверов на Remnawave и 3x-ui",
+    "mode.check": "Проверка: настройки серверов не меняет",
     "mode.fix": "Исправление: план, разрешение, изменения",
     "mode.rollback": "Откат прошлого запуска",
     "panel.found": "Нашёл Remnawave {version} на этом сервере",
@@ -35,10 +37,20 @@ TEXT: dict[str, str] = {
         "Будут созданы копии хостов с новым SNI, старые хосты выключатся (не удалятся). "
         "Сутки нода принимает и старое имя, чтобы клиенты успели обновить подписку."
     ),
+    "fix.xui_steal.warning": (
+        "KERBEROS выпустит сертификат на ваш домен, поднимет сайт и переключит Reality-инбаунды "
+        "3x-ui на этот домен. Ключи и клиенты не меняются. Сутки сервер принимает и старое "
+        "имя, потом клиентам со старой ссылкой нужно обновить подписку."
+    ),
     "fix.ssh_port.warning": (
         "SSH переедет на порт {port}. Старый порт закроется после проверки нового. "
         "Если у хостера свой фаервол, откройте в нём порт {port}, иначе KERBEROS вернёт "
         "всё через три минуты."
+    ),
+    "fix.ssh_port.warning.many": (
+        "SSH переедет на новые порты: {ports}. Старые порты закроются после проверки новых. "
+        "Если у хостера свой фаервол, откройте в нём эти порты, иначе KERBEROS вернёт всё "
+        "через три минуты."
     ),
     "fix.key_only.warning": "Вход по паролю выключится. Входить можно будет только ключом.",
     "plan.reserve": "Резервная нода для {node}",
@@ -53,6 +65,7 @@ TEXT: dict[str, str] = {
         "Клиенты переподключатся за секунды."
     ),
     "apply.rolled_back": "Не применилось, откатил: {reason}",
+    "apply.rollback_failed": "Не применилось и не откатилось: {reason}. Проверьте вручную",
     "apply.outside": (
         "SSH слушает новый порт {port}. Проверьте вход с вашего компьютера в новом окне "
         "терминала: {command}. KERBEROS работает на этом же сервере и фаервол хостера "
@@ -60,7 +73,7 @@ TEXT: dict[str, str] = {
     ),
     "apply.outside.keys": "Enter: вошёл, порт оставить    Esc: не вышло, вернуть старый",
     "done.title": "Готово",
-    "done.rollback": "Откатить: {command}",
+    "done.rollback": "Откатить командой:",
     # K0: shell, menu, keys
     "app.version": "версия {version}",
     "mode.reports": "Отчёты прошлых запусков",
@@ -77,7 +90,13 @@ TEXT: dict[str, str] = {
     "keys.help": "помощь",
     "keys.quit": "выход",
     "keys.scroll": "прокрутка",
+    "keys.skip": "пропустить",
+    "keys.skip_node": "пропустить ноду",
     "keys.space": "Пробел",
+    "keys.fix": "исправить",
+    "keys.site": "сайт",
+    "keys.all_but_port": "все, кроме порта SSH",
+    "quit.title": "Выход",
     "quit.confirm": "Выйти из KERBEROS?",
     "quit.confirm_busy": "Идут изменения. Выйти, когда текущее изменение закончится?",
     "quit.yes": "Enter: выйти",
@@ -95,6 +114,34 @@ TEXT: dict[str, str] = {
         "q          выход"
     ),
     "help.close": "Любая клавиша: закрыть",
+    "help.s6.check": (
+        "Пробел     подробности находки\n"
+        "PgUp PgDn  листать по экрану, Home End: в начало и в конец\n"
+        "f          исправить найденное: сразу к плану исправления\n"
+        "Esc        назад, без новой проверки"
+    ),
+    "help.s6": (
+        "Пробел     подробности находки\n"
+        "PgUp PgDn  листать по экрану, Home End: в начало и в конец\n"
+        "Enter      к плану исправления\n"
+        "Esc        назад, без новой проверки"
+    ),
+    "help.s7": (
+        "d          домен для строки «Свой домен»\n"
+        "r          резервная нода для неё\n"
+        "g          другой сайт-заглушка\n"
+        "e          сети CDN для фильтра\n"
+        "f          убрать старые имена автоматически через сутки\n"
+        "a          отметить все, кроме порта SSH; ещё раз: снять"
+    ),
+    "help.s7.xui": (
+        "d          домен для строки «Свой домен»\n"
+        "g          другой сайт-заглушка\n"
+        "a          отметить все, кроме порта SSH; ещё раз: снять"
+    ),
+    "help.s9": (
+        "↑ ↓        листать список изменений\nPgUp PgDn  по экрану, Home End: в начало и в конец"
+    ),
     "notice.info": "Инфо",
     "notice.warning": "Внимание",
     "notice.error": "Ошибка",
@@ -106,6 +153,7 @@ TEXT: dict[str, str] = {
     "risk.low": "низкий",
     "risk.info": "инфо",
     "score.before_after": "было {before}, стало {score}",
+    "score.was": "было {before}",
     "score.red": "Слабая защита",
     "score.yellow": "Защита есть, но не полная",
     "score.green": "Хорошая защита",
@@ -123,6 +171,8 @@ TEXT: dict[str, str] = {
         "серверов 3x-ui запустите KERBEROS на каждом."
     ),
     "panel.xui.found": "Нашёл 3x-ui {version} на этом сервере",
+    "panel.xui.found.unknown": "Нашёл 3x-ui на этом сервере",
+    "panel.xui.manual": "Панель 3x-ui по указанному адресу",
     "panel.xui.port": "Панель на порту {port}",
     "panel.xui.not_found": "3x-ui на этом сервере не нашёл. Укажите адрес панели.",
     "panel.xui.url_label": "Адрес панели 3x-ui с секретным путём",
@@ -146,6 +196,7 @@ TEXT: dict[str, str] = {
     "panel.kind.remnawave": "Remnawave",
     "panel.kind.3x-ui": "3x-ui",
     "panel.not_found": "Remnawave на этом сервере не нашёл. Укажите адрес API панели.",
+    "panel.manual": "Панель Remnawave по адресу {api}",
     "panel.api_label": "Адрес API панели",
     "panel.api_hint": "Например, http://127.0.0.1:3000/api",
     "panel.api_invalid": "нужен адрес вида http://127.0.0.1:3000/api",
@@ -162,9 +213,23 @@ TEXT: dict[str, str] = {
     "panel.err.token": "Токен не подходит",
     "panel.err.password_off": "Вход по паролю в панели выключен",
     "panel.err.forbidden": "У токена нет прав: {operation}",
-    "panel.err.server": "Панель отвечает ошибкой {status}: {operation}",
+    "panel.err.server": (
+        "Панель отвечает ошибкой {status}. Обычно она перезапускается: подождите минуту "
+        "и нажмите Enter."
+    ),
     "panel.err.timeout": "Панель не отвечает: {operation}",
-    "panel.err.unreachable": "Панель не принимает соединения: {api}",
+    "panel.err.unreachable": (
+        "Панель не принимает соединения по адресу {api}. Проверьте, что контейнер "
+        "remnawave запущен, и нажмите Enter."
+    ),
+    "panel.xui.err.unreachable": (
+        "Панель не принимает соединения по адресу {api}. Проверьте, что служба x-ui "
+        "запущена, и нажмите Enter."
+    ),
+    "panel.err.unreachable.any": (
+        "Панель не принимает соединения по адресу {api}. Проверьте, что она запущена, "
+        "и нажмите Enter."
+    ),
     "panel.err.no_response": (
         "Панель не ответила на {operation}. Объект мог создаться, "
         "поэтому KERBEROS не повторяет запрос."
@@ -192,7 +257,19 @@ TEXT: dict[str, str] = {
     "nodes.need_one": "Отметьте хотя бы одну ноду",
     # K2: S4 access to the nodes (§8)
     "access.title": "Доступ к нодам",
+    "access.title.local": "Доступ к этому серверу",
+    "access.intro": (
+        "Чтобы проверить ноды изнутри, KERBEROS поставит на каждую свой агент (один файл) "
+        "и ключ, который работает только с этого сервера. Настройки SSH, фаервола и VPN "
+        "«Проверка» не меняет."
+    ),
+    "access.intro.local": (
+        "Чтобы проверить этот сервер изнутри, KERBEROS поставит на него свой агент "
+        "(один файл) и ключ, который работает только отсюда. Настройки SSH, фаервола и VPN "
+        "«Проверка» не меняет."
+    ),
     "access.col.node": "Нода",
+    "access.col.server": "Сервер",
     "access.col.address": "Адрес",
     "access.col.status": "Доступ",
     "access.col.type": "Тип",
@@ -208,10 +285,19 @@ TEXT: dict[str, str] = {
     "access.yes": "Да, это мой сервер",
     "access.no": "Нет, пропустить ноду",
     "access.skip": "Пропустить ноду",
-    "access.hostkey_changed": (
-        "Ключ сервера {node} изменился. KERBEROS не будет к нему подключаться, "
-        "пока вы не подтвердите новый ключ"
+    # The command stands on a line of its own: a wrap inside it would break a copy.
+    "access.hostkey_hint": (
+        "Сверить можно в консоли хостера:\nssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub"
     ),
+    "access.hostkey_same": (
+        "Такой же ключ у {nodes}: так бывает у серверов из одного образа хостера."
+    ),
+    "access.hostkey_changed": (
+        "Ключ сервера {node} изменился. Так бывает после переустановки сервера, но так же "
+        "выглядит перехват соединения. Подтверждайте, только если переустанавливали сервер "
+        "или меняли ключи."
+    ),
+    "access.hostkey_old": "Был: {fingerprint}",
     "access.hostkey_new": "Новый ключ: {fingerprint}",
     "access.accept_new": "Подтвердить новый ключ",
     "access.trying_keys": "Пробую войти ключами root сервера панели…",
@@ -222,7 +308,11 @@ TEXT: dict[str, str] = {
     "access.verify": "Проверяю вход ключом KERBEROS новым соединением…",
     "access.checking_agent": "Проверяю агента на {node}…",
     "access.updating": "Обновляю агента на {node}…",
-    "access.summary": "Доступ есть у {ok} из {total} нод",
+    "access.summary": "Доступ есть у {ok} из {total:ноды|нод|нод}",
+    "access.summary.local": "Доступ к этому серверу есть",
+    "access.summary.local.none": (
+        "Доступа к этому серверу нет: KERBEROS проверит его только со стороны панели"
+    ),
     "access.panel_only": "Ноды без доступа проверяются только со стороны панели.",
     "access.reason.unreachable": "не отвечает по SSH",
     "access.reason.login": "не удалось войти",
@@ -233,9 +323,10 @@ TEXT: dict[str, str] = {
     "access.reason.keygen": "не удалось создать ключ KERBEROS на сервере панели",
     "access.reason.failed": "ошибка установки: {detail}",
     "access.local.installing": "Ставлю агента KERBEROS на этот сервер…",
-    "access.admin.chosen.local": (
-        "Ключ администратора: ваши ключи уже на этом сервере; без них вход по паролю останется"
+    "access.admin.local.some": (
+        "На этом сервере есть ваши ключи ({n}): вход по паролю можно выключить."
     ),
+    "access.admin.local.none": "Ваших ключей на этом сервере нет: вход по паролю останется.",
     "access.reason.local_key": "не нашёл ключ этого сервера /etc/ssh/ssh_host_ed25519_key.pub",
     "access.admin.title": "Ключ администратора",
     "access.admin.mine": "Мои ключи с сервера панели ({n})",
@@ -269,7 +360,7 @@ TEXT: dict[str, str] = {
     "action.fix": "Исправит KERBEROS",
     "action.manual": "Вручную: {how}",
     "action.explain": "Объяснение: {how}",
-    "action.plan": "{how}",
+    "action.plan": "В плане исправления: {how}",
     "action.passed": "Пройдено",
     "action.partial": "Вручную: паддинг настроен частично, его правят руками",
     "check.fleet.same_asn.title": "Ноды одной страны у одного хостера (AS{asn})",
@@ -284,7 +375,7 @@ TEXT: dict[str, str] = {
     ),
     "check.fleet.one_zone.title": "Домены трёх и больше нод в одной зоне {zone}",
     "check.fleet.one_zone.threat": (
-        "Сертификаты попадают в публичные журналы CT, и по зоне находят все ноды разом"
+        "Сертификаты публикуются в открытых журналах, и по общей зоне находят все ноды разом"
     ),
     "check.fleet.one_zone.how": "разнесите домены по разным зонам или возьмите wildcard-сертификат",
     "check.host.ip_check.title": "Блокировку IP нельзя проверить из-за рубежа",
@@ -317,9 +408,7 @@ TEXT: dict[str, str] = {
     "check.kernel.mptcp.title": "В ядре включён MPTCP",
     "check.kernel.mptcp.threat": "Уязвимость CVE-2026-98432 даёт удалённый root через MPTCP",
     "check.node_api.public.title": "Порт API ноды открыт всем",
-    "check.node_api.public.threat": (
-        "По TLS с обязательным клиентским сертификатом сканер узнаёт ноду Remnawave"
-    ),
+    "check.node_api.public.threat": ("По ответу этого порта сканер узнаёт, что это нода Remnawave"),
     "check.ports.public.title": "Открыты лишние порты: {ports}",
     "check.ports.public.threat": "Голый VLESS или XHTTP опознают по ответу на мусорный запрос",
     "check.cdn.origin_direct.title": "Сервер за CDN отвечает туннелем напрямую по IP",
@@ -359,18 +448,22 @@ TEXT: dict[str, str] = {
     "check.xhttp.uplink_get.title": "XHTTP за CDN отправляет данные методом POST",
     "check.xhttp.uplink_get.threat": "Российские CDN режут POST: наблюдали ответ 405",
     "check.xhttp.post_size.title": (
-        "Маленький scMaxEachPostBytes у хоста за CDN ({scMaxEachPostBytes})"
+        "Хост за CDN шлёт данные слишком мелкими частями ({scMaxEachPostBytes} байт)"
     ),
     "check.xhttp.post_size.threat": "",
     "check.xhttp.post_size.how": (
         "запросов к CDN становится в разы больше, они упираются в лимит на соединение; "
         "держите не меньше 10 000"
     ),
-    "check.xhttp.extra_outer.title": "Параметры sc* XHTTP стоят вне extra",
-    "check.xhttp.extra_outer.threat": "Xray молча игнорирует их, когда задан extra",
+    "check.xhttp.extra_outer.title": (
+        "Часть настроек XHTTP записана не туда, и Xray их не применяет"
+    ),
+    "check.xhttp.extra_outer.threat": "Кажется, что настройки работают, а клиент ходит без них",
     "check.xhttp.extra_outer.how": "перенесите параметры sc* внутрь extra",
-    "check.host.fingerprint.title": "У хоста {host} пустой fingerprint",
-    "check.host.fingerprint.threat": "Клиент шлёт ClientHello, не похожий на браузер",
+    "check.host.fingerprint.title": "Хост {host} не маскирует клиента под браузер",
+    "check.host.fingerprint.threat": (
+        "Соединение клиента не похоже на браузер, и его проще отличить от обычного трафика"
+    ),
     "check.dpi.fragment.title": "Фрагментация ClientHello не нужна",
     "check.dpi.fragment.threat": "",
     "check.dpi.fragment.how": "со своим доменом SNI совпадает с IP: резать нечего",
@@ -383,12 +476,14 @@ TEXT: dict[str, str] = {
     "check.sub.probe_interval.threat": "Частые пробы заметны и тратят трафик",
     "check.exit.ru_traffic.title": "Через ноду ходят российские сайты ({ruShare})",
     "check.exit.ru_traffic.threat": "Доля российских доменов в трафике ноды выше 1 %",
-    "check.exit.ru_traffic.how": "исправится шаблоном подписки KERBEROS (sub.template)",
+    "check.exit.ru_traffic.how": (
+        "хосты перейдут на шаблон подписки KERBEROS, и российские сайты пойдут напрямую"
+    ),
     "check.reserve.missing.title": "У ноды нет скрытого резерва",
     "check.reserve.missing.threat": (
         "При блокировке клиенты останутся без связи, пока не обновят подписку"
     ),
-    "check.reserve.missing.how": "резервную ноду выбирают в плане исправления",
+    "check.reserve.missing.how": "выберите резервную ноду клавишей r у строки «Свой домен»",
     "check.reserve.same_asn.title": "Основа и резерв у одного хостера (AS{asn})",
     "check.reserve.same_asn.threat": "Блокировка хостера снимет и основу, и резерв",
     "check.reserve.same_asn.how": "держите резерв у другого хостера",
@@ -415,7 +510,10 @@ TEXT: dict[str, str] = {
     "s5.whois.no": "Нет, без whois",
     "s5.failed": "Сбор данных остановился: {error}",
     "s6.title": "Отчёт проверки",
-    "s6.summary": "Найдено: {problems}. Исправит KERBEROS: {auto}. Вручную: {manual}.",
+    "s6.summary": (
+        "Найдено: {problems}, из них с высоким риском: {high}.\n"
+        "Может исправить KERBEROS: {auto}. Вручную: {manual}."
+    ),
     "s6.none": "Проблем не найдено",
     "s6.details": "Пробел: подробности",
     "s6.end": "Enter: в меню",
@@ -427,7 +525,7 @@ TEXT: dict[str, str] = {
     "report.title.fix": "KERBEROS: отчёт исправления",
     "report.title.rollback": "KERBEROS: отчёт отката",
     "report.title.finalize": "KERBEROS: отчёт финализации",
-    "report.head": "Время: {time} · Режим: {mode} · Панель: Remnawave {version} · Нод: {nodes}",
+    "report.head": "Время: {time} · Режим: {mode} · Панель: {panel} {version} · Нод: {nodes}",
     "report.mode.check": "Проверка",
     "report.mode.fix": "Исправление",
     "report.mode.rollback": "Откат",
@@ -441,7 +539,9 @@ TEXT: dict[str, str] = {
     "report.rollback": "Откат",
     "report.empty": "Отчётов пока нет: запустите «Проверку» или «Исправление».",
     "reports.title": "Отчёты",
-    "reports.item": "{run} · {mode} · защищённость {score}",
+    "reports.item": "{when} · {mode} · защищённость {score} · {nodes}",
+    "reports.item.changes": "{when} · {mode} · изменений: {n} · {nodes}",
+    "run.when": "{date} {time} UTC",
     # K4: S7 plan, consent, S8 applying, S9 report, rollback
     "fix.access.admin_keys.label": "Добавить ваш ключ администратора",
     "fix.mptcp.guard.label": "Выключить MPTCP, отбрасывать IP-опции",
@@ -496,7 +596,7 @@ TEXT: dict[str, str] = {
         "подписку, не подключатся через XHTTP, пока не обновят её."
     ),
     "keys.edges": "сети CDN",
-    "plan.edges.none": "e: выберите сети CDN",
+    "plan.edges.none": "нужны сети CDN",
     "plan.edges.ok": "сетей CDN: {n} ✓",
     "plan.edges.title": "Откуда CDN ходит на {node}",
     "plan.edges.hint": (
@@ -522,15 +622,16 @@ TEXT: dict[str, str] = {
     ),
     "keys.domain": "домен",
     "plan.domain.label": "Домен для {node}",
-    "plan.domain.hint": "A-запись домена должна указывать на IP ноды",
+    "plan.domain.hint": "A-запись домена должна указывать на {ip}",
+    "plan.domain.hint.no_ip": "A-запись домена должна указывать на IP ноды",
     "plan.domain.invalid": "нужен домен вида node.example.com",
-    "plan.domain.none": "d: введите домен",
+    "plan.domain.none": "нужен домен",
     "plan.domain.wait": "Ждёт DNS: нужна запись {record}. Проверяю раз в 10 секунд.",
     "plan.domain.waiting": "ждёт DNS",
-    "plan.domain.ok": "домен {domain} ✓",
+    "plan.domain.ok": "DNS ✓",
     "plan.need_domain": (
-        "У отмеченного self-steal нет домена с верной A-записью: введите домен (d) "
-        "или снимите отметку"
+        "У отмеченной строки «Свой домен» нет домена с верной A-записью: нажмите d и введите "
+        "домен или снимите отметку"
     ),
     "plan.blocked.node_offline": "нода не подключена к панели",
     "plan.blocked.no_profile": "у ноды нет профиля",
@@ -541,14 +642,14 @@ TEXT: dict[str, str] = {
     "plan.finalize.auto": "Старые имена уберутся автоматически через сутки (f: вручную)",
     "plan.finalize.xui": (
         "Старые имена уберёт kerberos finalize через сутки. До этого 3x-ui даёт в новых ссылках "
-        "случайное имя из serverNames, после финализации клиентам нужно обновить подписку."
+        "то новое, то старое имя: после финализации клиентам со старым нужно обновить подписку."
     ),
     "fix.xui.reality.label": "Reality-инбаунды 3x-ui на домен {domain}",
     "error.no_reality": "в 3x-ui нет включённого Reality-инбаунда",
     "s9.hosts": (
         "Копий хостов: {created}, выключено старых: {disabled}. Копии стоят в конце списка."
     ),
-    "s9.finalize": "Через сутки уберите старые имена: {command}",
+    "s9.finalize": "Через сутки уберите старые имена командой:",
     "s9.finalize.auto": "Старые имена уберутся сами через сутки (таймер на сервере панели)",
     "error.port80_busy": "порт 80 занят не nginx",
     "error.certbot_failed": "сертификат не выпустился",
@@ -556,6 +657,9 @@ TEXT: dict[str, str] = {
     "error.check_failed": "проверка снаружи не увидела свой домен",
     "error.node_offline": "нода не подключилась к панели после смены профиля",
     "error.host_mismatch": "панель сохранила копию хоста не так, как её отправили",
+    "error.hostkey_mismatch": (
+        "сервер по-прежнему показывает старый ключ, новых ключей sshd не видит"
+    ),
     "error.changed_in_panel": "объект в панели изменён после KERBEROS",
     "error.no_panel": "нет доступа к панели",
     "error.no_snapshot": "нет снимка объекта до изменения",
@@ -564,35 +668,54 @@ TEXT: dict[str, str] = {
     "tpl.diff.intro": "Шаблон KERBEROS в панели правили руками. Чем он отличается от проверенного:",
     "tpl.diff.question": "Записать проверенный шаблон поверх ручных правок?",
     "rb.diff.question": "Откатить всё равно? Ручные правки пропадут.",
-    "mode.finalize": "Завершить self-steal: убрать старые имена",
-    "app.pending": "Есть незавершённое: убрать старое имя у {n} нод",
+    "mode.finalize": "Завершить переход на свой домен: убрать старые имена",
+    "app.pending": "Есть незавершённое: убрать старое имя у {n:ноды|нод|нод}",
     "fin.title": "Финализация",
-    "fin.none": "Завершать пока нечего: сутки ещё не прошли или self-steal не было.",
+    "fin.none": "Завершать пока нечего: сутки ещё не прошли или перехода на свой домен не было.",
     "fin.consent": (
-        "Старые имена уйдут из serverNames. Клиенты без новой подписки перестанут подключаться:"
+        "Старые имена уйдут из настроек Reality. Клиенты, которые за сутки не обновили "
+        "подписку, перестанут подключаться через эти ноды:"
     ),
+    "fin.consent.local": (
+        "Старые имена уйдут из настроек Reality. Клиентам, у которых в ссылке старое имя, "
+        "нужно будет обновить подписку:"
+    ),
+    "fin.item": "{node}: останется {domain}, уберётся {old}",
+    "fin.item.many": "{node}: останется {domain}, уберутся {old}",
+    "fin.item.only": "{node}: останется только {domain}",
     "fin.accept": "Убрать старые имена",
-    "fin.done": "Готово: старые имена убраны у {n} нод",
-    "fin.failed": "Не получилось у {n} нод: подробности в отчёте",
+    "fin.keys": "Enter: убрать · ↑↓: прокрутить · Esc: в меню",
+    "fin.done": "Готово: старые имена убраны у {n:ноды|нод|нод}",
+    "fin.failed": (
+        "Не получилось у {n:ноды|нод|нод}: {nodes}. Старые имена там остались; KERBEROS "
+        "напомнит о них при следующем запуске."
+    ),
     "error.port_closed": (
         "новый порт не открылся, похоже, его закрывает фаервол хостера: откройте порт "
         "в панели хостера; KERBEROS вернул старый"
     ),
     "error.port_busy": "этот порт уже занят на ноде",
-    "s9.ssh_port": "Новый порт SSH: {port}",
-    "s9.login": "Входить теперь: {command} или kerberos ssh {node}",
+    "s9.ssh_port": "Новый порт SSH на {node}: {port}",
+    "s9.login": "Входить теперь: {command}",
+    "s9.login.admin": "Входить теперь: {command} или kerberos ssh {node}",
     "report.ssh_port": "Новый порт SSH: {port}. Входить: {command}",
     "plan.col.node": "Нода",
     "plan.col.fix": "Исправление",
-    "plan.col.risk": "Риск",
+    "plan.col.risk": "Важность",
     "plan.col.note": "Заметка",
     "plan.blocked.no_admin_key": "нет ключа администратора: вход по паролю останется",
     "plan.blocked.bridge_network": "нода в сети Docker bridge: правило не сработает",
-    "plan.has_warning": "предупреждение",
+    "plan.has_warning": "внимание",
+    "plan.details.blocked": "Недоступно: {reason}",
+    "plan.details.warning": "Внимание: {text}",
+    "importance.high": "высокая",
+    "importance.medium": "средняя",
+    "importance.low": "низкая",
+    "importance.info": "по желанию",
     "plan.empty": "Автоматически исправлять нечего. Что сделать вручную, написано в отчёте.",
     "plan.selected": "Отмечено: {n} из {total}",
     "consent.intro": "Что изменится:",
-    "consent.keys": "Enter: разрешить. Любая другая клавиша: вернуться к плану",
+    "consent.keys": "Enter: разрешить · ↑↓: прокрутить · Esc: вернуться к плану",
     "s8.title": "Применение",
     "step.backup": "бэкап",
     "step.apply": "применение",
@@ -605,11 +728,19 @@ TEXT: dict[str, str] = {
     "apply.interrupt": (
         "Прервать? Текущее изменение KERBEROS доведёт до конца или откатит, новые не начнутся."
     ),
+    "apply.interrupt.keys": "Enter: прервать    Esc: продолжить",
     "apply.interrupted": "Прервано: новые изменения не начинались",
+    "apply.interrupted.title": "Прервано",
     "s9.hostkey": (
         "Новый ключ сервера: {fingerprint}. Кто входил на него раньше: ssh-keygen -R {address}"
     ),
     "s9.none": "Ничего не изменилось",
+    "s9.applied": "Применено: {ok} из {total}.",
+    "s9.failed": "Не применилось: {n}.",
+    "s9.rollback_failed": "Не откатилось: {n}, проверьте вручную.",
+    "s9.left": (
+        "Осталось: {problems}. Можно исправить следующим запуском: {auto}. Вручную: {manual}."
+    ),
     "state.planned": "в плане",
     "state.applying": "применялось",
     "state.applied": "применено",
@@ -617,7 +748,10 @@ TEXT: dict[str, str] = {
     "state.confirmed": "применено и подтверждено",
     "state.failed": "не применено",
     "state.rolled_back": "откачено",
-    "error.confirm_failed": "новое соединение не подтвердило доступ",
+    "error.confirm_failed": (
+        "новое соединение не подтвердило доступ, прежние настройки возвращены; "
+        "запустите «Исправление» ещё раз"
+    ),
     "error.recheck_failed": "после изменения проверка не прошла",
     "error.no_admin_key": "нет ключа администратора",
     "error.bridge_network": "нода в сети Docker bridge",
@@ -635,20 +769,41 @@ TEXT: dict[str, str] = {
     "error.auth": "ключ KERBEROS не подошёл",
     "error.hostkey_changed": "ключ сервера изменился",
     "error.failed": "сбой SSH",
+    "error.ssh_port": "это порт SSH: KERBEROS его не закрывает, иначе потеряется вход на ноду",
+    "error.panel_not_peer": (
+        "панель ходит к API ноды не с того адреса, с которого заходит KERBEROS: "
+        "правило отрезало бы панель от ноды"
+    ),
+    "error.rollback_skipped": (
+        "не откатывал: более позднее изменение на этой ноде не откатилось, "
+        "а это изменение может быть ему нужно"
+    ),
+    "rb.outside": (
+        "SSH снова слушает и старый порт {port}. Проверьте вход с вашего компьютера в новом "
+        "окне терминала: {command}. KERBEROS работает на этом же сервере и фаервол хостера "
+        "отсюда не видит. Без ответа за три минуты SSH останется на новом порту."
+    ),
+    "rb.outside.keys": "Enter: вошёл, вернуть старый порт    Esc: не вышло, оставить новый",
+    "rb.port_closed": (
+        "старый порт SSH не открылся, похоже, его закрывает фаервол хостера: откройте его "
+        "в панели хостера и повторите откат; SSH остался на новом порту"
+    ),
     "rb.title": "Откат",
     "rb.choose": "Какой запуск откатить?",
-    "rb.item": "{run} · изменений: {n}",
+    "rb.item": "{when} · {mode} · изменений: {n} · {nodes}",
     "rb.changes": "Что откатить",
     "rb.col.change": "Изменение",
     "rb.col.state": "Состояние",
     "rb.consent": "Откатятся изменения ({n}) в обратном порядке:",
     "rb.accept": "Откатить изменения",
+    "rb.keys": "Enter: откатить · ↑↓: прокрутить · Esc: к списку изменений",
     "rb.empty": "Откатывать нечего: нет запусков с действующими изменениями.",
     "rb.done": "Откачено: {ok} из {total}",
     "rb.failed": "Часть изменений не откатилась. Что проверить руками, написано в отчёте.",
     "report.changes": "Изменения",
     "report.change": "- {state} · {node} · {fix}",
     "report.change_error": "  - Причина: {reason}",
+    "report.rollback_failed": "не откатилось",
     "report.backups": "Бэкапы на нодах: /var/lib/kerberos/changes/<changeId>/",
     # CLI (§5.3)
     "cli.usage": "Использование: sudo ./kerberos [команда] [флаги]",
@@ -687,10 +842,39 @@ TEXT: dict[str, str] = {
     "cli.no_tty": "Запустите KERBEROS в терминале",
     "cli.version": "KERBEROS {version}",
     "cli.interrupted": "Прервано.",
+    "error.rollback_failed": "не откатилось и осталось на месте: нужна ручная проверка",
+    "error.internal_error": "внутренняя ошибка KERBEROS",
+    "error.pair_not_ready": "у одной из нод пары нет копий хостов на своём домене",
+    "error.reserve_chain": "нода не может быть резервом и основой одновременно",
+    "plan.reserve.is_reserve": "{node} уже резерв для {main}: у резерва не бывает своего резерва",
+    "plan.blocked.panel_peer": "панель подключается к ноде не с того адреса, что KERBEROS",
 }
+
+
+def plural(n: int, one: str, few: str, many: str) -> str:
+    """The form of a Russian word after the number `n`: 1 нода, 3 ноды, 5 нод, 11 нод."""
+    n = abs(n)
+    if n % 10 == 1 and n % 100 != 11:
+        return one
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return few
+    return many
+
+
+class _Count(int):
+    """A number that formats `{n:нода|ноды|нод}` as the number and the word after it."""
+
+    def __format__(self, spec: str) -> str:
+        if "|" not in spec:
+            return format(int(self), spec)
+        one, few, many = spec.split("|")
+        return f"{int(self)} {plural(int(self), one, few, many)}"
 
 
 def t(key: str, **params: object) -> str:
     """Return the text for `key` with `params` substituted."""
     text = TEXT[key]
-    return text.format(**params) if params else text
+    if not params:
+        return text
+    counted = {k: _Count(v) if type(v) is int else v for k, v in params.items()}
+    return text.format(**counted)

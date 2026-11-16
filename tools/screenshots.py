@@ -46,14 +46,17 @@ APPLY = ["enter", "enter", "enter"]  # S7 → consent → accept → S9 Enter
 
 
 def plan_keys(app: App, items: list[Any]) -> list[str]:
-    """In S7: all that can run, a domain for every self-steal, the confirmed CDN nets."""
+    """In S7: all that can run, the SSH ports (`a` leaves them to the person, §6), a
+    domain for every self-steal, the confirmed CDN nets."""
     keys, cursor = ["a"], 0
     for row, item in enumerate(items):
-        if item.fix_id not in ("self_steal", "cdn.edge_only"):
+        if item.fix_id not in ("ssh.port", "self_steal", "cdn.edge_only"):
             continue
         keys += ["down"] * (row - cursor)
         cursor = row
-        if item.fix_id == "self_steal":
+        if item.fix_id == "ssh.port":
+            keys.append("space")
+        elif item.fix_id == "self_steal":
             keys += ["d"] + typed(f"{app.session_name(item.node_uuid)}.example.com") + ["enter"]
         else:
             keys += ["e", "enter"]
@@ -105,6 +108,18 @@ def app_for(keys: list[str], height: int) -> tuple[App, ShotTerminal]:
 
 
 def main(out: Path = OUT) -> int:
+    from kerberos.screens import fix
+
+    # S9 shows the commands to roll back and finalize: with the path of an installed
+    # KERBEROS (§5.1), never of the checkout the screenshots are taken in.
+    checkout, fix.launcher = fix.launcher, lambda: "/opt/kerberos/kerberos"
+    try:
+        return shoot(out)
+    finally:
+        fix.launcher = checkout
+
+
+def shoot(out: Path) -> int:
     out.mkdir(parents=True, exist_ok=True)
     app, term = app_for(["q", "enter"], 30)
     app.run(None)

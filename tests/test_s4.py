@@ -8,6 +8,7 @@ from kerberos.nodes import bootstrap
 from kerberos.nodes.keys import PublicKey, demo_blob
 
 TO_S4 = login_keys() + ["enter", "enter"]
+INTRO = ["enter"]  # «Проверка»: S4 first says what it installs
 # nl-1, nl-2, de-1 (python: install), fi-1 confirm the host key; kz-1 is unreachable.
 ALL_NODES = ["enter", "enter", "enter", "enter", "enter", "esc"]
 QUIT = ["q", "enter"]
@@ -20,7 +21,7 @@ def strict_panel():
 
 
 def run_check(nodes=None, state=None, extra=ALL_NODES, panel=None):
-    keys = TO_S4 + extra + ["enter", "x"] + QUIT
+    keys = TO_S4 + INTRO + extra + ["enter", "x"] + QUIT
     app, term = make_app(keys, nodes=nodes, state=state, panel=panel or strict_panel())
     app.run("check")
     return app, term
@@ -64,7 +65,7 @@ def test_host_key_change_stops_commands_to_the_node():
     app, _ = run_check(nodes)
     state = app.env.state
     nodes[0].host_key = PublicKey("ssh-ed25519", demo_blob("reinstalled"))
-    keys = TO_S4 + ["esc", "esc"] + ["enter", "x"] + QUIT  # skip nl-1's new key; kz-1's port
+    keys = TO_S4 + INTRO + ["esc", "esc"] + ["enter", "x"] + QUIT  # skip nl-1's new key; kz-1
     app, term = make_app(keys, nodes=nodes, state=state, panel=strict_panel())
     start = len(app.env.transport.log)
     app.run("check")
@@ -79,7 +80,8 @@ def test_new_host_key_can_be_confirmed():
     app, _ = run_check(nodes)
     state = app.env.state
     nodes[0].host_key = PublicKey("ssh-ed25519", demo_blob("reinstalled"))
-    keys = TO_S4 + ["enter", "esc"] + ["enter", "x"] + QUIT
+    # «Пропустить ноду» is preselected for a changed key: ↑ to confirm it.
+    keys = TO_S4 + INTRO + ["up", "enter", "esc"] + ["enter", "x"] + QUIT
     app, term = make_app(keys, nodes=nodes, state=state, panel=strict_panel())
     app.run("check")
     assert state.pinned("203.0.113.10", 22) == demo_blob("reinstalled")
@@ -91,7 +93,10 @@ def test_known_nodes_skip_the_bootstrap():
     app, _ = run_check(nodes)
     state = app.env.state
     app, term = make_app(
-        TO_S4 + ["esc"] + ["enter", "x"] + QUIT, nodes=nodes, state=state, panel=strict_panel()
+        TO_S4 + INTRO + ["esc"] + ["enter", "x"] + QUIT,
+        nodes=nodes,
+        state=state,
+        panel=strict_panel(),
     )
     app.run("check")
     log = [cmd for addr, cmd in app.env.transport.log if addr == "203.0.113.10"]

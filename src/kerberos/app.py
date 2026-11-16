@@ -170,11 +170,14 @@ class App:
             Notice("warning", text),
             Text(f"{t('quit.yes')}    {t('quit.no')}", style="muted"),
         )
-        self.draw(t("keys.quit"), body)
+        self.draw(t("quit.title"), body)
         return self.term.read_key() == "enter"
 
     def show_help(self) -> None:
-        body = Group(Text(t("help.body")), Text(""), Text(t("help.close"), style="muted"))
+        # A screen with keys of its own (S6, S7, S9) puts them in `screen_help`.
+        own = getattr(self, "screen_help", "")
+        parts = [Text(own), Text("")] if own else []
+        body = Group(*parts, Text(t("help.body")), Text(""), Text(t("help.close"), style="muted"))
         self.draw(t("help.title"), body)
         self.term.read_key()
 
@@ -219,7 +222,10 @@ class App:
             self.notice("info", t("app.soon"))
             return EXIT_OK
         except QuitApp:
-            return EXIT_OK
+            # q on S9: the outcome of the changes was kept when S8 finished (§5.3).
+            session = getattr(self, "session", None)
+            quit_code = session.data.get("exit") if session is not None else None
+            return quit_code or EXIT_OK
 
     def steps(self, session: Session) -> list[Callable[[Session], Any]]:
         from kerberos.screens import access, check, nodes, panel
@@ -240,6 +246,7 @@ class App:
         try:
             while 0 <= index < len(steps):
                 result = steps[index](self, session)
+                steps = self.steps(session)  # S6 `f` turns «Проверка» into «Исправление»
                 if result == NEXT:
                     index += 1
                 elif result == BACK:
@@ -292,6 +299,7 @@ class App:
         from kerberos.fixes.finalize import due_items, finalize_items
         from kerberos.fixes.journal import RunStore
         from kerberos.flow import EXIT_PANEL
+        from kerberos.screens.fix import agree
         from kerberos.screens.panel import open_panel
         from kerberos.ui.widgets import Consent
 
@@ -300,57 +308,83 @@ class App:
         if not pairs:
             self.notice("info", t("fin.none"), t("fin.title"))
             return EXIT_OK
-        opened = open_panel(self, kind=pairs[0][0]["panel"].get("kind", "remnawave"))
+        kind = pairs[0][0]["panel"].get("kind", "remnawave")
+        opened = open_panel(self, kind=kind)
         if not isinstance(opened, tuple):
             return EXIT_PANEL if opened == EXIT_PANEL else EXIT_OK
-        lines: list = [Text(t("fin.consent"))]
-        for _run, item in pairs:
-            lines.append(Text(f"  {self.mask(item['nodeName'])}: {self.mask(item['domain'])}"))
-        self.draw(t("fin.title"), Consent(Group(*lines), t("fin.accept"), t("consent.keys")))
-        if not Consent.handle(self.term.read_key() or ""):
+        lines: list = [Text(t("fin.consent.local" if kind == "3x-ui" else "fin.consent"))]
+        lines += [Text("  " + self.finalize_line(run, item)) for run, item in pairs]
+        if not agree(self, t("fin.title"), Consent(Group(*lines), t("fin.accept"), t("fin.keys"))):
             return EXIT_OK
         failed = finalize_items(opened[1], store, pairs)
         if failed:
-            self.notice("error", t("fin.failed", n=len(failed)), t("fin.title"))
+            names = ", ".join(self.mask(item["nodeName"]) for item in failed)
+            self.notice("error", t("fin.failed", n=len(failed), nodes=names), t("fin.title"))
             return EXIT_PANEL
         self.notice("info", t("fin.done", n=len(pairs)), t("fin.title"))
         return EXIT_OK
 
+    def finalize_line(self, run: dict, item: dict) -> str:
+        """«nl-1: останется nl-1.example.com, уберётся www.example.net» (§10.4, step 6)."""
+        change = next((c for c in run["changes"] if c["changeId"] == item.get("changeId")), None)
+        old = (change or {}).get("details", {}).get("oldNames")
+        if isinstance(old, dict):  # 3x-ui: the names of every Reality inbound of the run
+            old = [name for names in old.values() for name in names]
+        names = list(dict.fromkeys(n for n in old or [] if n != item["domain"]))
+        node, domain = self.mask(item["nodeName"]), self.mask(item["domain"])
+        if not names:
+            return t("fin.item.only", node=node, domain=domain)
+        key = "fin.item" if len(names) == 1 else "fin.item.many"
+        return t(key, node=node, domain=domain, old=", ".join(self.mask(n) for n in names))
+
     def main_menu(self) -> int:
-        """S1: logo, one phrase about the product, the mode menu."""
+        """S1: logo, one phrase about the product, the mode menu.
+
+        On quit: the last non-zero exit code of the flows run from here (§5.3), so
+        `sudo ./kerberos` reports a partly failed fix or rollback like the commands do.
+        """
         items = [
             ("check", t("mode.check"), ""),
             ("fix", t("mode.fix"), ""),
             ("rollback", t("mode.rollback"), ""),
             ("reports", t("mode.reports"), ""),
         ]
-        while True:
-            due = self.due_finalization()
-            menu = Menu(([("finalize", t("mode.finalize"), "")] if due else []) + items)
-            body = self.s1_body(menu)
-            if due:
-                body = self.with_banner(body, t("app.pending", n=len(due)))
-            choice = self.interact("", body, keys_menu(), menu.handle)
-            if choice == "finalize":
-                self.finalize_flow()
-                continue
-            if choice in ("check", "fix"):
-                self.run_mode(choice)
-            elif choice == "reports":
-                from kerberos.screens.check import reports_menu
+        code = EXIT_OK
+        try:
+            while True:
+                due = self.due_finalization()
+                menu = Menu(([("finalize", t("mode.finalize"), "")] if due else []) + items)
+                body = self.s1_body(menu)
+                if due:
+                    body = self.with_banner(body, t("app.pending", n=len(due)))
+                choice = self.interact("", body, keys_menu(), menu.handle)
+                result = None
+                if choice == "finalize":
+                    result = self.finalize_flow()
+                elif choice in ("check", "fix"):
+                    result = self.run_mode(choice)
+                elif choice == "reports":
+                    from kerberos.screens.check import reports_menu
 
-                reports_menu(self)
-            elif choice == "rollback":
-                from kerberos.screens.rollback import rollback_flow
+                    reports_menu(self)
+                elif choice == "rollback":
+                    from kerberos.screens.rollback import rollback_flow
 
-                rollback_flow(self)
-            else:
-                self.notice("info", t("app.soon"))
+                    result = rollback_flow(self)
+                else:
+                    self.notice("info", t("app.soon"))
+                if isinstance(result, int) and result != EXIT_OK:
+                    code = result
+        except QuitApp:
+            # Quit inside a flow (q on S9): its outcome was kept when S8 finished.
+            session = getattr(self, "session", None)
+            quit_code = session.data.get("exit") if session is not None else None
+            return quit_code or code
 
     def show_report(self, run_id: Optional[str]) -> int:
         """`kerberos report [runId]` in a terminal: the report with scrolling."""
         from kerberos.fixes.journal import RunStore
-        from kerberos.screens.check import show_pager
+        from kerberos.screens.check import show_report_text
 
         store = RunStore(self.env.state, self.env.clock)
         runs = store.runs()
@@ -360,5 +394,5 @@ class App:
         if text is None:
             self.notice("info", t("report.empty"), t("reports.title"))
             return EXIT_USAGE
-        show_pager(self, self.mask(text), t("reports.title"))
+        show_report_text(self, text, t("reports.title"))
         return EXIT_OK

@@ -7,7 +7,9 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
+from rich import box
 from rich.console import Group, RenderableType
+from rich.panel import Panel
 from rich.text import Text
 
 from kerberos.checks import run_checks
@@ -15,11 +17,30 @@ from kerberos.checks.score import score
 from kerberos.copy import TEXT, t
 from kerberos.fixes.engine import Engine
 from kerberos.fixes.journal import RunStore, iso
-from kerberos.fixes.plan import PlanItem, build_plan, follow_admin_key
-from kerberos.flow import BACK, EXIT_INTERRUPTED, EXIT_OK, EXIT_PARTIAL, NEXT
-from kerberos.screens.check import report_header, show_pager, write_report
+from kerberos.fixes.model import is_applied
+from kerberos.fixes.plan import NEEDS_INPUT, PlanItem, build_plan, follow_admin_key
+from kerberos.flow import BACK, EXIT_OK, NEXT
+from kerberos.report.view import change_target, counts
+from kerberos.screens.check import (
+    COMPACT_BELOW,
+    report_header,
+    show_full_report,
+    show_pager,
+    write_report,
+)
 from kerberos.ui.keys import hotkey
-from kerberos.ui.widgets import Checklist, Consent, Notice, ProgressBoard, TextInput
+from kerberos.ui.palette import risk_style
+from kerberos.ui.widgets import (
+    Checklist,
+    Clamp,
+    Consent,
+    Hanging,
+    Notice,
+    Pager,
+    ProgressBoard,
+    Stack,
+    TextInput,
+)
 
 if TYPE_CHECKING:
     from kerberos.app import App, Session
@@ -27,14 +48,15 @@ if TYPE_CHECKING:
 STEP_KEYS = ("backup", "apply", "check", "confirm")
 
 
-def warning_of(item: PlanItem) -> Optional[str]:
+def warning_of(item: PlanItem, kind: str = "remnawave") -> Optional[str]:
     """Warnings of §15 shown before consent, word for word."""
     if item.fix_id == "ssh.key_only":
         return t("fix.key_only.warning")
     if item.fix_id == "ssh.port":
         return t("fix.ssh_port.warning", port=item.params.get("port"))
     if item.fix_id == "self_steal":
-        return t("fix.self_steal.warning")
+        # 3x-ui changes only target and serverNames of its Reality inbounds (§7.6).
+        return t("fix.xui_steal.warning") if kind == "3x-ui" else t("fix.self_steal.warning")
     if item.fix_id == "cdn.edge_only":
         return t("fix.edge_only.warning")
     if item.fix_id == "xhttp.padding":
@@ -43,8 +65,11 @@ def warning_of(item: PlanItem) -> Optional[str]:
 
 
 def extra_warnings(app: App, session: Session, item: PlanItem) -> list[str]:
-    """Self-steal also replaces the profile and may restart the node container."""
-    if item.fix_id != "self_steal":
+    """Self-steal also replaces the profile and may restart the node container.
+
+    On 3x-ui there is neither: the inbounds keep their config, the server its Xray.
+    """
+    if item.fix_id != "self_steal" or session.snapshot.kind == "3x-ui":
         return []
     texts = [t("fix.profile.warning")]
     node = session.data["input"].node_data(item.node_uuid or "")
@@ -52,6 +77,24 @@ def extra_warnings(app: App, session: Session, item: PlanItem) -> list[str]:
     if not (facts.get("remnanode") or {}).get("letsencryptMounted", True):
         texts.append(t("fix.mount.warning", node=app.mask(node.node.name)))
     return texts
+
+
+def consent_warnings(app: App, session: Session, chosen: list[PlanItem]) -> list[str]:
+    """The warnings of the chosen fixes, each once; one text for several new SSH ports."""
+    kind = session.snapshot.kind
+    ports = [i for i in chosen if i.fix_id == "ssh.port"]
+    warnings: list[str] = []
+    for item in chosen:
+        if item.fix_id == "ssh.port" and len(ports) > 1:
+            texts = [t("fix.ssh_port.warning.many", ports=", ".join(
+                f"{app.mask(app.session_name(p.node_uuid))}: {p.params.get('port')}"
+                for p in ports))]  # fmt: skip
+        else:
+            texts = [warning_of(item, kind), *extra_warnings(app, session, item)]
+        for text in texts:
+            if text and text not in warnings:
+                warnings.append(text)
+    return warnings
 
 
 DOMAIN_RE = re.compile(
@@ -92,6 +135,12 @@ def choose_reserve(app: App, session: Session, items: list[PlanItem], main: Plan
     from kerberos.ui.widgets import Menu
 
     name = app.session_name(main.node_uuid)
+    if main.params.get("reserveOf"):
+        # A reserve with its own reserve would be hidden and visible at once (§10.9).
+        app.notice("warning", t("plan.reserve.is_reserve", node=app.mask(name),
+                                main=app.mask(app.session_name(main.params["reserveOf"]))),
+                   t("plan.title"))  # fmt: skip
+        return
     others = [i for i in items if i.fix_id == "self_steal" and i is not main
               and not i.params.get("reserve")
               and i.params.get("reserveOf") in (None, main.node_uuid)]  # fmt: skip
@@ -171,9 +220,11 @@ def confirm_edges(app: App, session: Session, item: PlanItem) -> None:
 
 def ask_domain(app: App, session: Session, item: PlanItem) -> None:
     node = session.snapshot.node(item.node_uuid or "")
+    data = session.data["input"].node_data(item.node_uuid or "")
+    ipv4 = data.ipv4 if data else None
     field = TextInput(
         t("plan.domain.label", node=app.mask(node.name if node else "")),
-        hint=t("plan.domain.hint"),
+        hint=t("plan.domain.hint", ip=app.mask(ipv4)) if ipv4 else t("plan.domain.hint.no_ip"),
         validate=lambda v: None if DOMAIN_RE.match(v.strip().lower()) else t("plan.domain.invalid"),
         value=item.params.get("domain") or "",
     )
@@ -212,16 +263,8 @@ def fix_label(app: App, item: Any) -> str:
 
 def node_name(session: Session, target: str, params: Optional[dict] = None) -> str:
     """Who a change belongs to: a node, a host, a template or the panel."""
-    params = params or {}
-    kind, _, ref = target.partition(":")
-    if kind != "node" and params.get("node"):
-        kind, ref = "node", params["node"]
-    if kind == "host":
-        return t("target.host", name=params.get("remark") or ref[:8])
-    if kind == "template":
-        return t("target.template", name=params.get("name") or ref[:8])
-    node = session.snapshot.node(ref) if kind == "node" else None
-    return node.name if node else t("target.panel")
+    names = {n.uuid: n.name for n in session.snapshot.nodes}
+    return change_target(target, params or {}, names)
 
 
 def error_text(code: Optional[str]) -> str:
@@ -231,17 +274,20 @@ def error_text(code: Optional[str]) -> str:
 
 
 def site_preview(app: App, session: Session, item: PlanItem) -> Text:
-    """§10.4: what the stub site of the node will be, with its colours (g draws another)."""
+    """§10.4: what the stub site of the node will be, with its colours (g draws another).
+
+    Without colour the samples would be three equal blocks: they are left out.
+    """
     from kerberos.agent import site_spec
 
     spec = site_spec(item.params.get("siteSeed", 0))
     theme = spec["theme"]
     line = Text(t("plan.site", node=app.mask(app.session_name(item.node_uuid)),
                   title=spec["title"], kind=t(f"site.kind.{spec['kind']}")))  # fmt: skip
-    for key in ("background", "text", "accent"):
-        line.append("  ")
-        line.append("██", style=theme[key])
-        line.append(f" {theme[key]}", style="muted")
+    if app.term.color:
+        for key in ("background", "text", "accent"):
+            line.append(" ")
+            line.append("██", style=theme[key])
     line.append("  " + t("plan.site.again"), style="muted")
     return line
 
@@ -269,6 +315,59 @@ def waits_for_input(item: PlanItem) -> bool:
 
 
 # -- S7 -------------------------------------------------------------------------
+FIX_COLUMN = 1  # «Исправление»: the column that keeps its width in a narrow terminal
+FIX_COLUMN_MIN = 30
+DETAILS_LINES = 3
+
+
+def note_of(app: App, item: PlanItem) -> str:
+    """The «Заметка» of a row: why it is off, what it waits for, its reserve."""
+    if item.blocked:
+        return t(f"plan.blocked.{item.blocked}")
+    note = ""
+    if item.fix_id == "self_steal":
+        state = item.params.get("dns")
+        if state == "ok":
+            note = t("plan.domain.ok")
+        elif state == "wait":
+            note = t("plan.domain.waiting")
+        else:
+            note = t("plan.domain.none")
+        if item.params.get("reserve"):
+            note += " · " + t("plan.reserve.with", node=app.session_name(item.params["reserve"]))
+        if item.params.get("reserveOf"):
+            note += " · " + t("plan.reserve.of", node=app.session_name(item.params["reserveOf"]))
+    elif item.fix_id == "cdn.edge_only":
+        nets = item.params.get("nets")
+        note = t("plan.edges.ok", n=len(nets)) if nets else t("plan.edges.none")
+    elif warning_of(item):
+        note = t("plan.has_warning")
+    return app.mask(note)
+
+
+def plan_details(app: App, session: Session, item: PlanItem) -> RenderableType:
+    """Under the table: the current row in full, why it is off and its warning."""
+    name = app.mask(node_name(session, item.target, item.params))
+    head = Text(f"{name}: {fix_label(app, item)}", style="bold")
+    note = note_of(app, item)
+    if note and item.fix_id in NEEDS_INPUT and not item.blocked:
+        head.append(" · " + note, style="")  # the domain, its DNS, the reserve, the nets
+    lines: list[RenderableType] = [head]
+    if item.blocked:
+        lines.append(Text(t("plan.details.blocked", reason=note), style="risk.medium"))
+    else:
+        if item.fix_id == "self_steal" and item.params.get("dns") == "wait":
+            # The record to make, in full: the table column is too narrow for it.
+            lines.append(Text(t("plan.domain.wait", record=app.mask(item.params["record"])),
+                              style="risk.medium"))  # fmt: skip
+        if item.fix_id == "self_steal":
+            lines.append(site_preview(app, session, item))
+        warning = warning_of(item, session.snapshot.kind)
+        if warning:
+            lines.append(Text(t("plan.details.warning", text=warning), style="muted"))
+    return Clamp(Group(*lines), DETAILS_LINES, pad=True)
+
+
 def step_plan(app: App, session: Session) -> Any:
     data = session.data["input"]
     if "plan" not in session.data:
@@ -284,45 +383,28 @@ def step_plan(app: App, session: Session) -> Any:
     if not items:
         app.notice("info", t("plan.empty"), t("plan.title"))
         return NEXT
+    xui = session.snapshot.kind == "3x-ui"
     disabled = {i for i, item in enumerate(items) if item.blocked}
     checklist = Checklist([], [t("plan.col.node"), t("plan.col.fix"), t("plan.col.risk"),
                                t("plan.col.note")],  # fmt: skip
                           selected={i for i, item in enumerate(items) if item.selected},
-                          disabled=disabled)  # fmt: skip
+                          disabled=disabled, flexible=FIX_COLUMN, min_width=FIX_COLUMN_MIN,
+                          reach_disabled=True)  # fmt: skip
 
     def rows() -> list[list[Any]]:
         result = []
         for item in items:
-            note = t(f"plan.blocked.{item.blocked}") if item.blocked else ""
-            if not note and item.fix_id == "self_steal":
-                state = item.params.get("dns")
-                if state == "ok":
-                    note = t("plan.domain.ok", domain=app.mask(item.params["domain"]))
-                elif state == "wait":
-                    note = t("plan.domain.waiting")
-                else:
-                    note = t("plan.domain.none")
-            elif not note and item.fix_id == "cdn.edge_only":
-                nets = item.params.get("nets")
-                note = t("plan.edges.ok", n=len(nets)) if nets else t("plan.edges.none")
-            elif not note and warning_of(item):
-                note = t("plan.has_warning")
-            risk = Text(f"● {t('risk.' + item.risk)}", style=f"risk.{item.risk}"
-                        if item.risk != "info" else "muted")  # fmt: skip
-            if item.fix_id == "self_steal" and item.params.get("reserve"):
-                note += " · " + t(
-                    "plan.reserve.with", node=app.session_name(item.params["reserve"])
-                )
-            if item.fix_id == "self_steal" and item.params.get("reserveOf"):
-                note += " · " + t(
-                    "plan.reserve.of", node=app.session_name(item.params["reserveOf"])
-                )
+            importance = Text(t("importance." + item.risk), style=risk_style(item.risk))
             result.append([app.mask(node_name(session, item.target, item.params)),
-                           fix_label(app, item), risk, note])  # fmt: skip
+                           fix_label(app, item), importance, note_of(app, item)])  # fmt: skip
         return result
 
-    def body(_w: int, height: int) -> RenderableType:
+    def current() -> Optional[PlanItem]:
+        return items[checklist.cursor] if items else None
+
+    def body(_w: int, _height: int) -> RenderableType:
         checklist.rows = rows()
+        checklist.disabled = {i for i, item in enumerate(items) if item.blocked}
         for i, item in enumerate(items):
             item.selected = i in checklist.selected
         follow_admin_key(items)
@@ -330,24 +412,20 @@ def step_plan(app: App, session: Session) -> Any:
         tail: list[RenderableType] = [
             Text(t("plan.selected", n=len(checklist.selected), total=len(items)), style="muted")
         ]
-        for item in items:
-            if item.fix_id == "self_steal" and item.params.get("dns") == "wait":
-                # The record to make, in full: the table column is too narrow for it.
-                tail.append(Text(t("plan.domain.wait", record=app.mask(item.params["record"])),
-                                 style="risk.medium"))  # fmt: skip
-        current = items[checklist.cursor] if items else None
-        if current is not None and current.fix_id == "self_steal" and not current.blocked:
-            tail.append(site_preview(app, session, current))
-        if any(i.fix_id == "self_steal" for i in items):
+        row = current()
+        if row is not None:
+            # One row at a time: records of several waiting domains would push the
+            # table off a low screen; the column «Заметка» says which rows wait.
+            tail.append(plan_details(app, session, row))
+        if any(i.fix_id == "self_steal" and i.selected for i in items):
             auto = session.data.get("auto_finalize", False)
             key = "plan.finalize.auto" if auto else "plan.finalize.manual"
-            if session.snapshot.kind == "3x-ui":
+            if xui:
                 key = "plan.finalize.xui"  # no timer: 3x-ui gives KERBEROS no token for it
             tail.append(Text(t(key), style="muted"))
         if state["error"]:
             tail.append(Notice("warning", state["error"]))
-        checklist.viewport = max(4, height - 4 - len(tail))
-        return Group(Text(t("plan.title"), style="bold"), checklist, *tail)
+        return Stack(Text(t("plan.title"), style="bold"), checklist, *tail, flex=1)
 
     state: dict = {"error": None, "next_dns": app.env.clock.monotonic() + 10}
 
@@ -362,38 +440,49 @@ def step_plan(app: App, session: Session) -> Any:
                         checklist.selected.add(items.index(item))
         return None
 
+    def mark_all() -> None:
+        """`a`: everything that can run now, except the SSH port (§6: the person marks it);
+        pressed again, it takes back what it marked."""
+        waiting = {i for i, item in enumerate(items) if waits_for_input(item)}
+        marked = {i for i, item in enumerate(items)
+                  if not (item.blocked or i in waiting or item.fix_id == "ssh.port")}  # fmt: skip
+        if marked <= checklist.selected:
+            checklist.selected -= marked
+        else:
+            checklist.selected |= marked
+        checklist.selected -= waiting
+
     def handle(key: str) -> Optional[str]:
         state["error"] = None
         if key == "esc":
             return BACK
-        if hotkey(key) == "d" and items[checklist.cursor].fix_id == "self_steal":
-            item = items[checklist.cursor]
+        item = current()
+        free = item is not None and not item.blocked
+        if hotkey(key) == "d" and free and item.fix_id == "self_steal":
             ask_domain(app, session, item)
             if item.selected:
                 checklist.selected.add(checklist.cursor)
             return None
-        if hotkey(key) == "e" and items[checklist.cursor].fix_id == "cdn.edge_only":
-            item = items[checklist.cursor]
+        if hotkey(key) == "e" and free and item.fix_id == "cdn.edge_only":
             confirm_edges(app, session, item)
             if item.selected:
                 checklist.selected.add(checklist.cursor)
             return None
-        if hotkey(key) == "g" and items[checklist.cursor].fix_id == "self_steal":
-            new_site(session, items[checklist.cursor])
+        if hotkey(key) == "g" and free and item.fix_id == "self_steal":
+            new_site(session, item)
             return None
-        if hotkey(key) == "f" and session.snapshot.kind != "3x-ui":
+        if hotkey(key) == "f" and not xui:
             session.data["auto_finalize"] = not session.data.get("auto_finalize", False)
             return None
-        if hotkey(key) == "r" and items[checklist.cursor].fix_id == "self_steal":
-            choose_reserve(app, session, items, items[checklist.cursor])
+        if hotkey(key) == "r" and free and item.fix_id == "self_steal" and not xui:
+            choose_reserve(app, session, items, item)
             checklist.rows = rows()
             checklist.selected = {i for i, item in enumerate(items) if item.selected}
             return None
-        result = checklist.handle(key)
         if hotkey(key) == "a":
-            # «Все» marks what can run now: self-steal waits for its domain and DNS,
-            # the CDN filter for its confirmed nets.
-            checklist.selected -= {i for i, item in enumerate(items) if waits_for_input(item)}
+            mark_all()
+            return None
+        result = checklist.handle(key)
         if result == "done":
             for i, item in enumerate(items):
                 if i in checklist.selected and waits_for_input(item):
@@ -408,24 +497,41 @@ def step_plan(app: App, session: Session) -> Any:
             return "consent" if checklist.selected else None
         return None
 
-    keys = (
-        ("↑↓", t("keys.select")),
-        (t("keys.space"), t("keys.toggle")),
-        ("a", t("keys.all")),
-        ("d", t("keys.domain")),
-        ("r", t("keys.reserve")),
-        ("e", t("keys.edges")),
-        ("Enter", t("keys.next")),
-        ("Esc", t("keys.back")),
-    )
-    while True:
-        if app.interact(t("plan.title"), body, keys, handle, timeout=1, tick=tick) == BACK:
-            return BACK
-        for i, item in enumerate(items):
-            item.selected = i in checklist.selected
-        follow_admin_key(items)
-        if consent(app, session, items):
-            return NEXT
+    def keys() -> list[tuple[str, str]]:
+        """The footer follows the current row: its own keys first, the rest in `?`."""
+        item = current()
+        hints: list[tuple[str, str]] = []
+        if item is not None and not item.blocked and item.fix_id == "self_steal":
+            hints.append(("d", t("keys.domain")))
+            if not xui:
+                hints.append(("r", t("keys.reserve")))
+            hints.append(("g", t("keys.site")))
+        elif item is not None and not item.blocked and item.fix_id == "cdn.edge_only":
+            hints.append(("e", t("keys.edges")))
+        hints.append((t("keys.space"), t("keys.toggle")))
+        if len(hints) == 1:
+            hints.append(("a", t("keys.all_but_port")))
+        return hints + [("Enter", t("keys.next")), ("Esc", t("keys.back")),
+                        ("?", t("keys.help"))]  # fmt: skip
+
+    app.screen_help = t("help.s7.xui" if xui else "help.s7")
+    try:
+        while True:
+            if app.interact(t("plan.title"), body, keys, handle, timeout=1, tick=tick) == BACK:
+                return BACK
+            for i, item in enumerate(items):
+                item.selected = i in checklist.selected
+            follow_admin_key(items)
+            if consent(app, session, items):
+                return NEXT
+    finally:
+        app.screen_help = ""
+
+
+def agree(app: App, title: str, widget: Consent) -> bool:
+    """A consent screen (S7, rollback, finalization): Enter agrees, ↑ ↓ PgUp PgDn Home
+    End scroll, any other key goes back."""
+    return bool(app.interact(title, widget, (), widget.handle, typing=True))
 
 
 def consent(app: App, session: Session, items: list[PlanItem]) -> bool:
@@ -438,18 +544,10 @@ def consent(app: App, session: Session, items: list[PlanItem]) -> bool:
             fix_label(app, item)
         )
     for name, labels in by_node.items():
-        lines.append(Text(f"  {app.mask(name)}: " + "; ".join(labels)))
-    warnings = []
-    for item in chosen:
-        for text in [warning_of(item), *extra_warnings(app, session, item)]:
-            if text and text not in warnings:
-                warnings.append(text)
-    for text in warnings:
+        lines.append(Hanging(f"  {app.mask(name)}: " + "; ".join(labels), indent=4))
+    for text in consent_warnings(app, session, chosen):
         lines.append(Notice("warning", text))
-    widget = Consent(Group(*lines), t("consent.accept"), t("consent.keys"))
-    app.term.draw(app.frame(t("consent.title"), widget, ()))
-    key = app.term.read_key()
-    return Consent.handle(key or "")
+    return agree(app, t("consent.title"), Consent(Group(*lines), t("consent.accept")))
 
 
 # -- S8 -------------------------------------------------------------------------
@@ -471,12 +569,17 @@ def step_apply(app: App, session: Session) -> Any:
             board.start(name, fix_label(app, item))
         board.set(name, t(f"step.{step}"), state)
         if state in ("failed", "rolled_back"):
-            board.finish(name, Text(t("apply.rolled_back", reason=error_text(note) or note),
-                                    style="risk.high"))  # fmt: skip
+            # A change that could not be undone either says so, never «откатил».
+            text = (error_text(note) if note == "rollback_failed"
+                    else t("apply.rolled_back", reason=error_text(note) or note))  # fmt: skip
+            board.finish(name, Text(text, style="risk.high"))
 
     engine = Engine(app, session, chosen, on_event)
     engine.ask_diff = lambda diff: ask_overwrite(app, diff)
     engine.ask_outside = lambda port, command: ask_outside(app, port, command)
+    from kerberos.screens.rollback import ask_old_port
+
+    engine.ask_old_port = lambda port, command: ask_old_port(app, port, command)
     session.data["engine"] = engine
     app.busy = True
 
@@ -488,7 +591,7 @@ def step_apply(app: App, session: Session) -> Any:
 
     def interrupt() -> Optional[str]:
         body = Group(Notice("warning", t("apply.interrupt")),
-                     Text(f"{t('quit.yes')}    {t('quit.no')}", style="muted"))  # fmt: skip
+                     Text(t("apply.interrupt.keys"), style="muted"))  # fmt: skip
         app.draw(t("s8.title"), body)
         if app.term.read_key() == "enter":
             engine.cancel()
@@ -527,10 +630,15 @@ def ask_overwrite(app: App, diff: str) -> bool:
 
 def refresh_snapshot(app: App, session: Session) -> None:
     """Panel changes land in the score after: read the panel again."""
-    if session.panel is None or session.location is None:
+    if session.panel is None or session.location is None or session.snapshot is None:
         return
     try:
-        snapshot = session.panel.snapshot(session.location.version, session.location.panel_domain)
+        if session.snapshot.kind == "3x-ui":
+            node = session.snapshot.nodes[0]  # §7.6: the one node is this server
+            snapshot = session.panel.snapshot(session.location, node.address, node.name)
+        else:
+            snapshot = session.panel.snapshot(session.location.version,
+                                              session.location.panel_domain)  # fmt: skip
     except Exception:  # noqa: BLE001 - the score after then uses what KERBEROS knows
         return
     session.snapshot = snapshot
@@ -549,49 +657,116 @@ def finish_run(app: App, session: Session, engine: Engine) -> None:
     run["finishedAt"] = iso(app.env.clock)
     store = RunStore(app.env.state, app.env.clock)
     store.save(run)
-    applied = sum(1 for c in run["changes"] if c["state"] in ("applied", "confirmed"))
-    store.log(run, f"fix: {applied} applied, {engine.failed} failed, score {run['scoreAfter']}")
+    applied = sum(1 for c in run["changes"] if is_applied(c))
+    store.log(run, f"fix: {applied} applied, {engine.failed} failed, {engine.rollback_failed} "
+                   f"not rolled back, score {run['scoreAfter']}")  # fmt: skip
+    session.data["exit"] = engine.exit_code  # kept if the person quits on S9
     write_report(app, run)
 
 
 # -- S9 -------------------------------------------------------------------------
+def rollback_failed(change: dict) -> bool:
+    """The change did not apply and its undo failed too: it may still be on the node."""
+    return change.get("error") == "rollback_failed"
+
+
+def applied(change: dict) -> bool:
+    return change["state"] in ("applied", "confirmed") and not rollback_failed(change)
+
+
 def change_lines(app: App, session: Session, run: dict) -> list[RenderableType]:
     lines: list[RenderableType] = []
     for change in run["changes"]:
         name = app.mask(node_name(session, change["target"], change["params"]))
         label = fix_label(app, change)
-        if change["state"] in ("applied", "confirmed"):
-            lines.append(Text(f"✓ {name}: {label}", style="ok"))
+        if rollback_failed(change):
+            reason = error_text(change["details"].get("failure"))
+            lines.append(Hanging(f"✗ {name}: {label}. " + t("apply.rollback_failed", reason=reason),
+                                 style="risk.high"))  # fmt: skip
+        elif applied(change):
+            lines.append(Hanging(f"✓ {name}: {label}", style="ok"))
         else:
             reason = error_text(change.get("error"))
-            lines.append(Text(f"↺ {name}: {label}. " + t("apply.rolled_back", reason=reason),
-                              style="risk.high"))  # fmt: skip
-        node = session.snapshot.node(change["params"].get("node")
-                                     or change["target"].partition(":")[2])  # fmt: skip
+            lines.append(Hanging(f"↺ {name}: {label}. " + t("apply.rolled_back", reason=reason),
+                                 style="risk.high"))  # fmt: skip
         site = change["details"].get("site")
-        if change["fixId"] == "self_steal.site" and change["state"] == "applied" and site:
-            lines.append(Text("  " + t("s9.site", title=site["title"],
-                                         kind=t(f"site.kind.{site['kind']}"),
-                                         background=site["background"],
-                                         accent=site["accent"]), style="muted"))  # fmt: skip
-        if change["fixId"] == "self_steal.hosts" and change["state"] == "applied":
-            lines.append(Text("  " + t("s9.hosts", created=len(change["details"]["created"]),
-                                         disabled=len(change["details"]["disabled"])),
-                              style="muted"))  # fmt: skip
-        if change["fixId"] == "ssh.port" and change["state"] == "confirmed" and node:
-            port = change["details"].get("newPort")
-            command = f"ssh -p {port} root@{app.mask(node.address)}"
-            lines.append(Text("  " + t("s9.ssh_port", port=port), style="accent"))
-            lines.append(Text("  " + t("s9.login", command=command, node=app.mask(node.name)),
-                              style="muted"))  # fmt: skip
-        for key in change["details"].get("hostKeys", []) if change["state"] in (
-            "applied", "confirmed") else []:  # fmt: skip
+        if change["fixId"] == "self_steal.site" and applied(change) and site:
+            lines.append(Hanging("  " + t("s9.site", title=site["title"],
+                                          kind=t(f"site.kind.{site['kind']}"),
+                                          background=site["background"],
+                                          accent=site["accent"]), indent=4,
+                                 style="muted"))  # fmt: skip
+        if change["fixId"] == "self_steal.hosts" and applied(change):
+            lines.append(Hanging("  " + t("s9.hosts", created=len(change["details"]["created"]),
+                                          disabled=len(change["details"]["disabled"])),
+                                 indent=4, style="muted"))  # fmt: skip
+        for key in change["details"].get("hostKeys", []) if applied(change) else []:
             if key.get("type") == "ED25519":
                 node = session.snapshot.node(change["target"].partition(":")[2])
-                lines.append(Text("  " + t("s9.hostkey", fingerprint=key["fingerprint"],
-                                             address=app.mask(node.address if node else "")),
-                                  style="muted"))  # fmt: skip
+                lines.append(Hanging("  " + t("s9.hostkey", fingerprint=key["fingerprint"],
+                                              address=app.mask(node.address if node else "")),
+                                     indent=4, style="muted"))  # fmt: skip
     return lines
+
+
+def apply_summary(run: dict, findings: list) -> list[RenderableType]:
+    """How the run went, then what is left: «Исправит KERBEROS» would read as a promise."""
+    changes = run["changes"]
+    ok = sum(1 for c in changes if applied(c))
+    stuck = sum(1 for c in changes if rollback_failed(c))
+    failed = len(changes) - ok - stuck
+    line = Text(t("s9.applied", ok=ok, total=len(changes)), style="ok" if ok == len(changes)
+                else "bold")  # fmt: skip
+    if failed:
+        line.append(" " + t("s9.failed", n=failed), style="risk.high")
+    if stuck:
+        line.append(" " + t("s9.rollback_failed", n=stuck), style="risk.high")
+    numbers = counts(findings)
+    if numbers["problems"]:
+        left = Text(t("s9.left", **numbers), style="bold")
+    else:
+        left = Text(f"✓ {t('s6.none')}", style="ok")
+    return [line, left]
+
+
+def new_ports(
+    app: App, session: Session, run: dict, compact: bool = False
+) -> Optional[RenderableType]:
+    """§10.3: the new SSH port stands out, with how to log in now; in a low terminal
+    without the frame, which would take two lines from the list."""
+    admin = app.env.state is not None and app.env.state.admin_key.exists()
+    lines: list[RenderableType] = []
+    for change in run["changes"]:
+        if change["fixId"] != "ssh.port" or change["state"] != "confirmed":
+            continue
+        if rollback_failed(change):
+            continue
+        node = session.snapshot.node(change["target"].partition(":")[2])
+        if node is None:
+            continue
+        port = change["details"].get("newPort")
+        name = app.mask(node.name)
+        command = f"ssh -p {port} root@{app.mask(node.address)}"
+        lines.append(Text(t("s9.ssh_port", node=name, port=port), style="accent"))
+        # `kerberos ssh` works only with the administrator key on this server (§8.5).
+        key = "s9.login.admin" if admin else "s9.login"
+        lines.append(Text(t(key, command=command, node=name), style="bold"))
+    if not lines:
+        return None
+    if compact:
+        return Group(*lines)
+    return Panel(Group(*lines), box=box.HEAVY, border_style="accent", expand=False)
+
+
+def command_lines(label: str, command: str) -> list[RenderableType]:
+    """A command to copy: on a line of its own, so the label never pushes it to a
+    break (it folds only when longer than the whole screen)."""
+    return [Text(label, style="bold"), Text(command, overflow="fold")]
+
+
+# S9 pins more than S6 (the new SSH ports, two commands): its score shrinks to a line
+# sooner, so the list of changes keeps room on a 30-line terminal too.
+S9_COMPACT_BELOW = COMPACT_BELOW + 8
 
 
 def step_done(app: App, session: Session) -> Any:
@@ -600,39 +775,54 @@ def step_done(app: App, session: Session) -> Any:
     path = str(RunStore(app.env.state, app.env.clock).path(run["runId"]) / "report.md")
     without = [n["name"] for n in run["nodes"] if n["access"] != "ok"]
     after = session.data.get("findings_after", session.data["findings"])
+    cancelled = engine is not None and engine.cancelled
+    title = t("apply.interrupted.title") if cancelled else t("done.title")
+    listing = Pager("")
 
-    def body(_w: int, _h: int) -> RenderableType:
-        parts: list[RenderableType] = [
+    def body(_w: int, height: int) -> RenderableType:
+        compact = height < S9_COMPACT_BELOW
+        top: list[RenderableType] = [
             report_header(app, after, run.get("scoreAfter") or run["scoreBefore"],
-                          run["scoreBefore"], without, path),
-            Text(""),
+                          run["scoreBefore"], without, path,
+                          summary=apply_summary(run, after), compact=compact),
         ]  # fmt: skip
-        if engine is not None and engine.cancelled:
-            parts.append(Notice("warning", t("apply.interrupted")))
+        if cancelled:
+            top.append(Notice("warning", t("apply.interrupted")))
+        ports = new_ports(app, session, run, compact)
+        if ports is not None:
+            top.append(ports)
+        if not compact:
+            top.append(Text(""))
         lines = change_lines(app, session, run)
-        parts += lines or [Text(t("s9.none"), style="muted")]
+        listing.text = Group(*(lines or [Text(t("s9.none"), style="muted")]))
+        bottom: list[RenderableType] = []
         if run.get("pending"):
-            key = "s9.finalize.auto" if session.data.get("auto_finalize") else "s9.finalize"
-            parts += [Text(""), Text(t(key, n=len(run["pending"]),
-                                       command=f"sudo {launcher()} finalize {run['runId']}"),
-                                     style="accent")]  # fmt: skip
+            # «Automatically» only when the timer is really set (§10.4 step 6).
+            if run.get("finalizeTimer"):
+                bottom += [Text(t("s9.finalize.auto"), style="accent")]
+            else:
+                command = f"sudo {launcher()} finalize {run['runId']}"
+                bottom += command_lines(t("s9.finalize"), command)
         if run["changes"]:
-            parts += [Text(""), Text(t("done.rollback", command=rollback_command(run["runId"])),
-                                     style="bold")]  # fmt: skip
-        return Group(*parts)
+            bottom += command_lines(t("done.rollback"), rollback_command(run["runId"]))
+        if bottom and not compact:
+            bottom.insert(0, Text(""))
+        return Stack(*top, listing, *bottom, flex=len(top))
 
     def handle(key: str) -> Optional[str]:
         if key in ("enter", "esc"):
             return "done"
         if hotkey(key) == "s":
-            text = RunStore(app.env.state, app.env.clock).report_text(run["runId"]) or ""
-            show_pager(app, text, t("done.title"))
+            show_full_report(app, run["runId"], title)
+            return None
+        listing.handle(key)
         return None
 
-    keys = (("s", t("keys.full_report")), ("Enter", t("keys.menu")), ("q", t("keys.quit")))
-    app.interact(t("done.title"), body, keys, handle)
-    if engine is not None and engine.cancelled:
-        return EXIT_INTERRUPTED
-    if engine is not None and engine.failed:
-        return EXIT_PARTIAL
-    return EXIT_OK
+    keys = (("↑↓ PgDn", t("keys.scroll")), ("s", t("keys.full_report")),
+            ("Enter", t("keys.menu")), ("?", t("keys.help")))  # fmt: skip
+    app.screen_help = t("help.s9")
+    try:
+        app.interact(title, body, keys, handle)
+    finally:
+        app.screen_help = ""
+    return engine.exit_code if engine is not None else EXIT_OK

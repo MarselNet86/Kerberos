@@ -14,6 +14,7 @@ from kerberos.copy import t
 COMMANDS = ("check", "fix", "rollback", "report", "finalize", "ssh")
 WITH_OPTIONAL_RUN = ("rollback", "report", "finalize")
 WITHOUT_TTY = ("report", "finalize")
+FINALIZE_LOCK_WAIT = 600  # seconds the timer waits for a KERBEROS open in a terminal
 
 
 @dataclass
@@ -157,15 +158,25 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
 
 def finalize_unattended(opts: Options, state=None) -> int:
-    """`kerberos finalize` from the systemd timer: no terminal, the saved token."""
+    """`kerberos finalize` from the systemd timer: no terminal, the saved token.
+
+    It takes the lock like every KERBEROS: run.json of the run may be open in a
+    rollback right now. A run in the terminal is waited for, a while.
+    """
     from kerberos.clock import SystemClock
     from kerberos.fixes.finalize import unattended
     from kerberos.fixes.journal import RunStore
     from kerberos.panel.client import urllib_transport
-    from kerberos.state import State
+    from kerberos.state import Locked, State
 
     clock = SystemClock()
-    return unattended(RunStore(state or State(), clock), urllib_transport, clock, opts.arg)
+    state = state or State()
+    try:
+        with state.lock(wait=FINALIZE_LOCK_WAIT):
+            return unattended(RunStore(state, clock), urllib_transport, clock, opts.arg)
+    except Locked:
+        print(t("lock.busy"), file=sys.stderr)
+        return 2
 
 
 def print_report(opts: Options, state=None) -> int:

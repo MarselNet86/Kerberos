@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import re
 from typing import Callable, Optional
 
 from kerberos.copy import TEXT, t
 from kerberos.fixes.model import TOPICS, Run
-from kerberos.report.view import action, details, fill, problems, target_label
+from kerberos.report.view import action, change_target, details, fill, problems, target_label
 
 
 def render(run: Run, mask: Optional[Callable[[str], str]] = None) -> str:
@@ -18,6 +19,7 @@ def render(run: Run, mask: Optional[Callable[[str], str]] = None) -> str:
             "report.head",
             time=run["startedAt"].replace("T", " ").replace("Z", " UTC"),
             mode=t(f"report.mode.{run['mode']}"),
+            panel=t("panel.kind." + run["panel"].get("kind", "remnawave")),
             version=run["panel"].get("version", "?"),
             nodes=len(run["nodes"]),
         )
@@ -54,19 +56,13 @@ def render(run: Run, mask: Optional[Callable[[str], str]] = None) -> str:
         lines += ["", f"## {t('report.changes')}", ""]
         for change in run["changes"]:
             ports = ", ".join(change["params"].get("ports", []))
+            # Undo failed too: the change may still be in place, whatever its state says.
+            stuck = change.get("error") == "rollback_failed"
             lines.append(
                 t(
                     "report.change",
-                    state=t(f"state.{change['state']}"),
-                    node=target_label(
-                        {
-                            "target": f"node:{change['params']['node']}"
-                            if change["params"].get("node")
-                            else change["target"],
-                            "evidence": {},
-                        },
-                        names,
-                    ),
+                    state=t("report.rollback_failed") if stuck else t(f"state.{change['state']}"),
+                    node=change_target(change["target"], change["params"], names),
                     fix=t(
                         f"fix.{change['fixId']}.label",
                         ports=ports,
@@ -76,15 +72,20 @@ def render(run: Run, mask: Optional[Callable[[str], str]] = None) -> str:
                     ),
                 )
             )
-            if change.get("error"):
+            if stuck:
+                failure = change["details"].get("failure") or ""
+                reason = TEXT.get(f"error.{failure}", failure)
+                lines.append("  - " + t("apply.rollback_failed", reason=reason))
+            elif change.get("error"):
                 reason = TEXT.get(f"error.{change['error']}", change["error"])
                 lines.append(t("report.change_error", reason=reason))
             site = change["details"].get("site")
-            if change["fixId"] == "self_steal.site" and change["state"] == "applied" and site:
+            if (change["fixId"] == "self_steal.site" and change["state"] == "applied" and site
+                    and not stuck):  # fmt: skip
                 kind = t(f"site.kind.{site['kind']}")
                 colors = {"background": site["background"], "accent": site["accent"]}
                 lines.append("  - " + t("report.site", title=site["title"], kind=kind, **colors))
-            if change["fixId"] == "ssh.port" and change["state"] == "confirmed":
+            if change["fixId"] == "ssh.port" and change["state"] == "confirmed" and not stuck:
                 node = next((n for n in run["nodes"]
                              if change["target"] == f"node:{n['uuid']}"), None)  # fmt: skip
                 port = change["details"].get("newPort")
@@ -102,3 +103,44 @@ def render(run: Run, mask: Optional[Callable[[str], str]] = None) -> str:
 
         lines += ["", f"## {t('report.rollback')}", "", "`" + rollback_command(run["runId"]) + "`"]
     return mask("\n".join(lines) + "\n")
+
+
+_BOLD = re.compile(r"\*\*(.+?)\*\*")
+_CODE = re.compile(r"`([^`]*)`")
+
+
+def _table(rows: list[str]) -> list[str]:
+    """A Markdown table as aligned columns; the |---| line goes away."""
+    cells = [[c.strip() for c in row.strip().strip("|").split("|")] for row in rows
+             if not set(row.strip()) <= set("|-: ")]  # fmt: skip
+    if not cells:
+        return []
+    widths = [max(len(r[i]) for r in cells if i < len(r)) for i in range(max(map(len, cells)))]
+    return ["  ".join(c.ljust(widths[i]) for i, c in enumerate(r)).rstrip() for r in cells]
+
+
+def plain(text: str) -> str:
+    """report.md for the screen: headings underlined, tables aligned, no Markdown signs."""
+    out: list[str] = []
+    table: list[str] = []
+    for raw in text.split("\n"):
+        if raw.startswith("|"):
+            table.append(raw)
+            continue
+        if table:
+            out += _table(table)
+            table = []
+        line = _CODE.sub(r"\1", _BOLD.sub(r"\1", raw))
+        if line.startswith("## "):
+            out += [line[3:], "─" * len(line[3:])]
+        elif line.startswith("# "):
+            out += [line[2:], "═" * len(line[2:])]
+        elif line.startswith("  - "):
+            out.append("    " + line[4:])
+        elif line.startswith("- "):
+            out.append(line[2:] if line.startswith("- ● ") else "• " + line[2:])
+        else:
+            out.append(line)
+    if table:
+        out += _table(table)
+    return "\n".join(out)

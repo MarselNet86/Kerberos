@@ -12,6 +12,7 @@ from __future__ import annotations
 import copy
 import random
 import string
+from collections.abc import Iterable
 from typing import Any, Optional
 
 PADDING_KEYS = (
@@ -80,10 +81,16 @@ def add_padding(config: dict, tags: list[str], rng: random.Random) -> tuple[dict
     return config, written
 
 
-def remove_padding(config: dict, written: dict) -> tuple[dict, list[str]]:
-    """Padding KERBEROS wrote taken out again; tags whose padding was changed since."""
+def remove_padding(
+    config: dict, written: dict, force: Iterable[str] = ()
+) -> tuple[dict, list[str]]:
+    """Padding KERBEROS wrote taken out again; tags whose padding was changed since.
+
+    Changed padding stays, unless its tag is in `force` (the person agreed to remove it).
+    """
     config = copy.deepcopy(config)
     changed = []
+    forced = set(force)
     for inbound in config.get("inbounds") or []:
         if not isinstance(inbound, dict) or inbound.get("tag") not in written:
             continue
@@ -92,7 +99,7 @@ def remove_padding(config: dict, written: dict) -> tuple[dict, list[str]]:
         current = padding_of(extra)
         if not current:
             continue
-        if current != written[inbound["tag"]]:
+        if current != written[inbound["tag"]] and inbound["tag"] not in forced:
             changed.append(inbound["tag"])
             continue
         rest = without_padding(extra)

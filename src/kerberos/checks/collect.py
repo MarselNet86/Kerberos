@@ -196,7 +196,24 @@ class Collector:
             address = first_v4(self.resolve_into(data, domain))
             if address:
                 data.panel_page = self.env.prober.http(address, 443, domain, "/")
+        masker = getattr(self.env, "masker", None)
+        if masker is not None:
+            # Names only the nodes know (their sites, certificates) are masked like the panel's.
+            masker.register(*node_names(data))
         return data
+
+
+def node_names(data: CheckInput) -> list[str]:
+    """Domains learnt from the nodes: nginx server names, certbot and TLS certificate names."""
+    names: list[str] = []
+    for item in data.nodes:
+        facts = item.facts or {}
+        for site in (facts.get("nginx") or {}).get("sites", []):
+            names += [n for n in site.get("serverNames", []) if isinstance(n, str)]
+        names += [c.get("domain") for c in (facts.get("certbot") or {}).get("certs", [])]
+    for tls in data.tls.values():
+        names += list(tls.names)
+    return [n for n in dict.fromkeys(names) if isinstance(n, str) and n and not is_ip(n)]
 
 
 def collect_in_background(env: Any, snapshot: PanelSnapshot, selected: list[str], access: dict,

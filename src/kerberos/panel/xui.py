@@ -20,6 +20,7 @@ import ssl
 import urllib.error
 import urllib.request
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 from kerberos import __version__
 from kerberos.clock import Clock
@@ -188,6 +189,12 @@ class XuiClient:
     def snapshot(self, location: Any, address: str, name: str) -> Any:
         return xui_model.snapshot(location.version, self.inbounds(), address, name,
                                   location.info, location.panel_domain, self.online())  # fmt: skip
+
+
+def origin(url: str) -> str:
+    """scheme://host:port of the panel: its base path is a secret (§7.6) and never shown."""
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}" if parts.scheme and parts.netloc else ""
 
 
 def item_node(raw: Any) -> bool:

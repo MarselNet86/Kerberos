@@ -77,7 +77,12 @@ def test_socket_activation_listens_on_both_then_only_the_new_port(socket_node, r
     assert code == 0 and answer["state"] == "confirmed"
     dropin = read(socket_node, agent.SOCKET_DROPIN)
     assert "24622" in dropin and ":22\n" not in dropin
+    # A confirmed port goes back in two phases too: both ports, then the old one only.
     code, answer = call(socket_node, ["rollback", change])
+    assert code == 0 and answer["state"] == "rollback_pending"
+    dropin = read(socket_node, agent.SOCKET_DROPIN)
+    assert "ListenStream=0.0.0.0:22" in dropin and "ListenStream=0.0.0.0:24622" in dropin
+    code, answer = call(socket_node, ["confirm", change])
     assert answer["state"] == "rolled_back" and read(socket_node, agent.SOCKET_DROPIN) is None
 
 
@@ -90,7 +95,10 @@ def test_config_ports_ufw_and_the_main_file(config_node, recorder):
     call(config_node, ["confirm", change])
     assert read(config_node, agent.SSHD_CONF) == "PasswordAuthentication no\nPort 24622\n"
     assert "# Port 22" in read(config_node, agent.SSHD_MAIN)
-    call(config_node, ["rollback", change])
+    code, answer = call(config_node, ["rollback", change])
+    assert answer["state"] == "rollback_pending"
+    assert read(config_node, agent.SSHD_CONF) == "PasswordAuthentication no\nPort 22\nPort 24622\n"
+    call(config_node, ["confirm", change])
     assert read(config_node, agent.SSHD_CONF) == "PasswordAuthentication no\n"
     assert read(config_node, agent.SSHD_MAIN).endswith("\nPort 22\n")
     assert ["ufw", "delete", "allow", "24622/tcp"] in recorder.calls
