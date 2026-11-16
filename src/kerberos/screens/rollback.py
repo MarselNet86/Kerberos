@@ -109,60 +109,15 @@ def agent_rollback(app: App, target: Target, change: dict) -> tuple:
 
 
 def port_rollback(app: App, run: dict, target: Target, change: dict) -> tuple:
-    """§9.3 (K13): a confirmed SSH port goes back the way it came. The agent listens on
-    the old and the new port with its undo timer; a new connection to the old port
-    proves it before the new port closes. On 3x-ui the person proves it from outside."""
-    from kerberos.fixes.engine import CONFIRM_RETRY, CONFIRM_WINDOW, LOCAL_ADDRESS
+    """§9.3 (K13): a confirmed SSH port goes back the way it came (nodes/ssh_port.py)."""
+    from kerberos.nodes.ssh_port import roll_back_port
 
-    transport, state = app.env.transport, app.env.state
-    change_id = change["changeId"]
-    try:
-        answer = transport.agent(target, f"rollback {change_id}")
-    except TransportError as exc:
-        return exc.kind, False
-    except NodeAgentError as exc:
-        return exc.code, False  # the first phase did not come up: still the new port
-    if answer.get("state") != "rollback_pending":
-        return None, True  # an agent from before K13 restores at once
-    details = answer.get("details") or change["details"]
-    old = int((details.get("oldPorts") or change["details"].get("oldPorts") or [22])[0])
-    blob = state.pinned(target.address, target.port)
-    if blob:
-        state.pin(target.address, old, "ssh-ed25519", blob)
-    old_target = Target(target.uuid, target.name, target.address, old)
-    result = "port_closed"
-    if target.address == LOCAL_ADDRESS:
-        address = (node_of(run, f"node:{target.uuid}") or {}).get("address", "")
-        if ask_old_port(app, old, f"ssh -p {old} root@{address}"):
-            result = confirm_old_port(app, old_target, change_id, 0, 0)
-    else:
-        result = confirm_old_port(app, old_target, change_id, CONFIRM_WINDOW, CONFIRM_RETRY)
-    if result == "ok":
-        return None, True
-    if result == "command_failed":
-        return result, True
-    try:  # back to the confirmed port now; the agent's timer would do it in three minutes
-        transport.agent(target, f"undo {change_id}", fresh=True)
-    except (NodeAgentError, TransportError):
-        pass
-    return result, False
+    address = (node_of(run, f"node:{target.uuid}") or {}).get("address", "")
 
+    def ask(port: int) -> bool:
+        return ask_old_port(app, port, f"ssh -p {port} root@{address}")
 
-def confirm_old_port(app: App, target: Target, change_id: str, window: float, retry: float) -> str:
-    clock = app.env.clock
-    deadline = clock.monotonic() + window
-    while True:
-        try:
-            answer = app.env.transport.agent(target, f"confirm {change_id}", fresh=True)
-        except NodeAgentError as exc:
-            return exc.code
-        except TransportError:
-            if clock.monotonic() + retry >= deadline:
-                return "port_closed"
-            clock.sleep(retry)
-            continue
-        # noop: the timer brought the confirmed port back before the confirm came.
-        return "ok" if answer.get("state") == "rolled_back" else "port_closed"
+    return roll_back_port(app.env, target, change, ask)
 
 
 def ask_old_port(app: App, port: int, command: str) -> bool:

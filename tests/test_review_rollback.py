@@ -303,3 +303,59 @@ def test_local_ssh_port_from_ss_when_sshd_t_fails():
     host.on(["ss"], CommandResult(0, 'tcp LISTEN 0 128 0.0.0.0:2222 0.0.0.0:* '
                                      'users:(("sshd",pid=8,fd=3))\n'))  # fmt: skip
     assert local_ssh_port(host) == 2222
+
+
+# -- 3. the protocol of nodes/ssh_port.py, for the engine too -------------------------------
+class StubTransport:
+    def __init__(self, rollback, confirm):
+        self.answers = {"rollback": rollback, "confirm": confirm, "undo": {"state": "confirmed"}}
+        self.calls = []
+
+    def agent(self, target, command, payload=None, **kwargs):
+        name = command.split()[0]
+        self.calls.append((name, target.port, kwargs.get("fresh", False)))
+        answer = self.answers[name]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+
+def stub_env(rollback, confirm):
+    from types import SimpleNamespace
+
+    from kerberos.clock import FakeClock
+
+    class Pins:
+        def pinned(self, address, port):
+            return "AAAA"
+
+        def pin(self, *args):
+            pass
+
+    return SimpleNamespace(transport=StubTransport(rollback, confirm), state=Pins(),
+                           clock=FakeClock())  # fmt: skip
+
+
+PENDING = {"state": "rollback_pending", "details": {"oldPorts": [22], "newPort": 24622}}
+CHANGE = {"changeId": "0f8b6c1e-2b1c-4b5e-9a3e-1c2d3e4f5a6b", "details": {"oldPorts": [22]}}
+
+
+@pytest.mark.parametrize("rollback, confirm, result, calls", [
+    ({"state": "rolled_back"}, None, (None, True), ["rollback"]),  # an agent before K13
+    (PENDING, {"state": "rolled_back"}, (None, True), ["rollback", "confirm"]),
+    (PENDING, NodeAgentError("command_failed", "x"), ("command_failed", True),
+     ["rollback", "confirm"]),
+    (PENDING, NodeAgentError("backup_damaged", "x"), ("backup_damaged", False),
+     ["rollback", "confirm", "undo"]),
+    (PENDING, {"state": "noop"}, ("port_closed", False), ["rollback", "confirm", "undo"]),
+    (NodeAgentError("sshd_test_failed", "x"), None, ("sshd_test_failed", False), ["rollback"]),
+])  # fmt: skip
+def test_port_rollback_protocol(rollback, confirm, result, calls):
+    from kerberos.nodes.ssh_port import roll_back_port
+    from kerberos.nodes.transport import Target
+
+    env = stub_env(rollback, confirm)
+    assert roll_back_port(env, Target("u", "nl-1", NL1, 24622), CHANGE) == result
+    assert [c[0] for c in env.transport.calls] == calls
+    if "confirm" in calls:
+        assert ("confirm", 22, True) in env.transport.calls, "a new connection to the old port"
