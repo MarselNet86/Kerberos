@@ -308,7 +308,7 @@ def give_fixes(node: FakeNode, model: dict = MODEL) -> None:
             return _answer(change_id, changes[change_id], "noop")
         if fix_id not in model:
             raise NodeAgentError("not_implemented", fix_id)
-        if any(c["state"] == "pending_confirm" for c in changes.values()):
+        if any(c["state"] in ("pending_confirm", "rollback_pending") for c in changes.values()):
             raise NodeAgentError("change_conflict", "a change waits for confirmation")
         failures = n.state.get("fail", {})
         if fix_id in failures:
