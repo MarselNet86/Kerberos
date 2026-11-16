@@ -24,7 +24,7 @@ from kerberos.flow import BACK, NEXT
 from kerberos.report import markdown
 from kerberos.report.view import counts, finding_items
 from kerberos.ui.keys import hotkey
-from kerberos.ui.widgets import STEP_VIEW, FindingList, Menu, Notice, Pager, ScoreBadge
+from kerberos.ui.widgets import STEP_VIEW, FindingList, Menu, Notice, Pager, ScoreBadge, Stack
 
 if TYPE_CHECKING:
     from kerberos.app import App, Session
@@ -79,6 +79,9 @@ def progress_table(app: App, session: Session, progress: Any) -> Table:
 
 
 def step_collect(app: App, session: Session) -> Any:
+    if session.data.pop("back_from_report", False):
+        # Esc on S6 goes back past the collection: nothing is asked or read again.
+        return BACK
     whois = False
     candidates = [n for n in session.snapshot.nodes if n.uuid in session.selected]
     if len(candidates) >= 2:
@@ -164,32 +167,63 @@ def show_pager(app: App, text: str, title: str) -> None:
         pager.handle(key)
         return None
 
-    keys = (("↑↓", t("keys.scroll")), ("Esc", t("keys.back")))
+    keys = (("↑↓ PgDn", t("keys.scroll")), ("Esc", t("keys.back")))
     app.interact(title, body, keys, handle, typing=True)
 
 
-def sized(listing: FindingList, height: int) -> FindingList:
-    listing.viewport = max(3, height)
-    return listing
+def show_report_text(app: App, text: str, title: str) -> None:
+    """The report on the screen: without the Markdown signs, masked as the screen is."""
+    show_pager(app, app.mask(markdown.plain(text)), title)
+
+
+def show_full_report(app: App, run_id: str, title: str) -> None:
+    """`s` on S6 and S9: report.md of the run, with scrolling."""
+    show_report_text(app, RunStore(app.env.state, app.env.clock).report_text(run_id) or "", title)
+
+
+# Below this body height (a terminal under 30 lines) the score is one line: the large
+# digits would leave too little room for what was found.
+COMPACT_BELOW = 26
+
+
+def check_summary(findings: list) -> list[RenderableType]:
+    numbers = counts(findings)
+    if numbers["problems"]:
+        return [Text(t("s6.summary", **numbers), style="bold")]
+    return [Text(f"✓ {t('s6.none')}", style="ok")]
 
 
 def report_header(app: App, findings: list, value: int, before: Optional[int],
-                  without: list, path: str) -> RenderableType:  # fmt: skip
-    """Score on the left; what was found, nodes without access and the file on the right."""
-    numbers = counts(findings)
-    lines: list[RenderableType] = []
-    if numbers["problems"]:
-        lines.append(Text(t("s6.summary", **numbers), style="bold"))
-    else:
-        lines.append(Text(f"✓ {t('s6.none')}", style="ok"))
+                  without: list, path: str, *, summary: Optional[list] = None,
+                  compact: bool = False) -> RenderableType:  # fmt: skip
+    """Score with what was found and the nodes without access; the file on its own line,
+    so the path is never cut (§12.1)."""
+    lines: list[RenderableType] = list(summary if summary is not None else check_summary(findings))
     if without:
         lines.append(Text(t("s6.no_access", nodes=app.mask(", ".join(without))), style="muted"))
-    lines += [Text(""), Text(t("report.saved", path=app.mask(path)), style="muted")]
+    saved = Text(t("report.saved", path=app.mask(path)), style="muted")
+    if compact:
+        return Group(ScoreBadge(value, before, compact=True), *lines, saved)
     grid = Table.grid(padding=(0, 2))
     grid.add_column(no_wrap=True)
     grid.add_column(ratio=1)
     grid.add_row(ScoreBadge(value, before), Group(*lines))
-    return grid
+    return Group(grid, saved)
+
+
+def to_fix(app: App, session: Session) -> Any:
+    """S6 `f` in «Проверка»: «Исправление» on the same data. The administrator key is
+    asked as S4 asks it in «Исправление»; a new run of mode fix gets the findings."""
+    from kerberos.screens.access import AccessScreen
+
+    if session.snapshot.kind == "3x-ui":
+        session.data.setdefault("admin", {"mode": "local", "keys": []})
+    elif "admin" not in session.data:
+        session.data["admin"] = AccessScreen(app, session).ask_admin()
+    session.mode = "fix"
+    session.data.pop("run", None)
+    save_check_run(app, session)
+    return NEXT
 
 
 def step_report(app: App, session: Session) -> Any:
@@ -200,32 +234,40 @@ def step_report(app: App, session: Session) -> Any:
     listing = FindingList(items)
     path = str(RunStore(app.env.state, app.env.clock).path(run["runId"]) / "report.md")
     without = [n["name"] for n in run["nodes"] if n["access"] != "ok"]
+    checking = session.mode == "check"
 
     def body(_w: int, height: int) -> RenderableType:
         listing.items = finding_items(findings, names, app.mask)
-        return Group(report_header(app, findings, session.data["score"], None, without, path),
-                     Text(""), sized(listing, height - 9))  # fmt: skip
+        head = report_header(app, findings, session.data["score"], None, without, path,
+                             compact=height < COMPACT_BELOW)  # fmt: skip
+        return Stack(head, Text(""), listing, flex=2)
 
     def handle(key: str) -> Optional[str]:
         if key == "enter":
             return NEXT
         if key == "esc":
+            session.data["back_from_report"] = True
             return BACK
         if hotkey(key) == "s":
-            text = RunStore(app.env.state, app.env.clock).report_text(run["runId"]) or ""
-            show_pager(app, text, t("s6.title"))
+            show_full_report(app, run["runId"], t("s6.title"))
             return None
+        if hotkey(key) == "f" and checking:
+            return to_fix(app, session)
         listing.handle(key)
         return None
 
-    keys = (
-        ("↑↓", t("keys.select")),
-        (t("keys.space"), t("keys.details")),
-        ("s", t("keys.full_report")),
-        ("Enter", t("keys.menu") if session.mode == "check" else t("keys.next")),
-        ("q", t("keys.quit")),
-    )
-    return app.interact(t("s6.title"), body, keys, handle)
+    keys: list[tuple[str, str]] = [(t("keys.space"), t("keys.details")),
+                                   ("s", t("keys.full_report"))]  # fmt: skip
+    if checking:
+        keys += [("f", t("keys.fix")), ("Enter", t("keys.menu"))]
+    else:
+        keys += [("Enter", t("keys.next")), ("Esc", t("keys.back"))]
+    keys.append(("?", t("keys.help")))
+    app.screen_help = t("help.s6.check" if checking else "help.s6")
+    try:
+        return app.interact(t("s6.title"), body, keys, handle)
+    finally:
+        app.screen_help = ""
 
 
 def reports_menu(app: App) -> None:
@@ -252,8 +294,7 @@ def reports_menu(app: App) -> None:
         choice = app.interact(t("reports.title"), menu, keys, handle)
         if choice == "back":
             return
-        text = store.report_text(choice) or ""
-        show_pager(app, app.mask(text), t("reports.title"))
+        show_report_text(app, store.report_text(choice) or "", t("reports.title"))
 
 
 def no_report_notice() -> Notice:

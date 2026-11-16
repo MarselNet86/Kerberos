@@ -35,9 +35,13 @@ from kerberos.ui.palette import (
 )
 
 Body = Union[RenderableType, Callable[[int, int], RenderableType]]
-KeyHints = Sequence[tuple[str, str]]
+# Keys of the footer; a callable gives them per frame (S7: the keys of the current row).
+KeyHints = Union[Sequence[tuple[str, str]], Callable[[], Sequence[tuple[str, str]]]]
 
 POINTER = "›"
+# Without colour the reverse video of the cursor is lost: a bar marks its place.
+CURSOR_BAR = "▏"
+SCROLL_KEYS = ("up", "down", "pgup", "pgdn", "home", "end")
 
 
 def text(value: Union[str, Text], style: str = "") -> Text:
@@ -79,7 +83,8 @@ class Screen:
             Text(" · ".join(self.flags), style="muted"),
         )
         footer = Text(no_wrap=True, overflow="ellipsis")
-        for i, (glyph, label) in enumerate(self.keys):
+        keys = self.keys() if callable(self.keys) else self.keys
+        for i, (glyph, label) in enumerate(keys):
             if i:
                 footer.append("  ")
             footer.append(glyph, style="bold")
@@ -141,6 +146,99 @@ class Menu:
         return grid
 
 
+def _yield_lines(lines: Sequence[Sequence[Segment]]) -> RenderResult:
+    # Every line ends with a new line, as with Rich's own renderables: in a Group the
+    # next part starts on a line of its own.
+    for line in lines:
+        yield from line
+        yield Segment.line()
+
+
+class Stack:
+    """Parts one under another; the flexible part gets the lines the others leave.
+
+    The other parts keep their whole height (wrapped to the width): what must be
+    seen, a button, a command, a summary, stays on the screen, and the
+    flexible part (a list, a long text) scrolls in the rest. When even the fixed
+    parts do not fit, the parts above the flexible one give way first: the
+    bottom ones (the consent button) stay.
+    """
+
+    def __init__(self, *parts: RenderableType, flex: int = -1) -> None:
+        self.parts = list(parts)
+        self.flex = flex % len(self.parts) if self.parts else 0
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        height = options.height
+        if height is None or not self.parts:
+            yield Group(*self.parts)
+            return
+        natural = options.update(height=None)
+        top = [line for part in self.parts[: self.flex]
+               for line in console.render_lines(part, natural, pad=False)]  # fmt: skip
+        bottom = [line for part in self.parts[self.flex + 1 :]
+                  for line in console.render_lines(part, natural, pad=False)]  # fmt: skip
+        rest = height - len(top) - len(bottom)
+        if rest < 0:
+            top = top[: max(0, len(top) + rest)]
+            rest = 0
+        middle: list[list[Segment]] = []
+        if rest:
+            flexible = options.update(height=rest)
+            middle = console.render_lines(self.parts[self.flex], flexible, pad=False)[:rest]
+        yield from _yield_lines([*top, *middle, *bottom][:height])
+
+
+class Clamp:
+    """At most `lines` lines of a renderable, the last one cut with «…»; `pad` keeps
+    the height constant, so the parts around it do not jump as its text changes."""
+
+    def __init__(self, renderable: RenderableType, lines: int, pad: bool = False) -> None:
+        self.renderable = renderable
+        self.lines = lines
+        self.pad = pad
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        rendered = console.render_lines(self.renderable, options.update(height=None), pad=False)
+        if len(rendered) > self.lines:
+            rendered = rendered[: self.lines]
+            last = list(rendered[-1])
+            if Segment.get_line_length(last) > options.max_width - 1:
+                last = Segment.adjust_line_length(last, options.max_width - 1)
+            while last and not last[-1].text.rstrip():
+                last.pop()
+            if last:
+                last[-1] = Segment(last[-1].text.rstrip(), last[-1].style)
+            rendered[-1] = [*last, Segment("…", last[-1].style if last else None)]
+        if self.pad:
+            rendered += [[] for _ in range(self.lines - len(rendered))]
+        yield from _yield_lines(rendered)
+
+
+def hang(console: Console, line: Text, width: int, indent: int) -> list[Text]:
+    """`line` wrapped to `width`; continuation lines start `indent` cells in, under
+    the text and not at the edge of the screen."""
+    wrapped = list(line.wrap(console, width))
+    if len(wrapped) <= 1:
+        return wrapped
+    rest = line[len(wrapped[0].plain) :]
+    rest = rest[len(rest.plain) - len(rest.plain.lstrip(" ")) :]
+    tail = [Text(" " * indent).append_text(part)
+            for part in rest.wrap(console, max(10, width - indent))]  # fmt: skip
+    return [wrapped[0], *tail]
+
+
+class Hanging:
+    """A line whose wrapped continuation keeps an indent, so long items stay readable."""
+
+    def __init__(self, value: Union[str, Text], indent: int = 2, style: str = "") -> None:
+        self.text = text(value, style)
+        self.indent = indent
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        yield from hang(console, self.text, options.max_width, self.indent)
+
+
 def _scroll(offset: int, cursor: int, visible: int) -> int:
     if cursor < offset:
         return cursor
@@ -149,10 +247,34 @@ def _scroll(offset: int, cursor: int, visible: int) -> int:
     return offset
 
 
+MARK_WIDTH = 5  # "› [✓]"
+
+
+def fit_widths(natural: Sequence[int], floors: Sequence[int], available: int) -> list[int]:
+    """Column widths that fit `available`: every column starts at its floor and they
+    grow one cell at a time, in turn, up to their natural width, so no single long
+    column eats the others."""
+    widths = [min(f, n) for f, n in zip(floors, natural)]
+    remaining = available - sum(widths)
+    while remaining > 0:
+        growing = [i for i, w in enumerate(widths) if w < natural[i]]
+        if not growing:
+            break
+        for i in growing:
+            if remaining == 0:
+                break
+            widths[i] += 1
+            remaining -= 1
+    return widths
+
+
 class Checklist:
     """Table with marks (S3, S7): Space marks, `a` marks all, Enter goes on.
 
-    Disabled rows are muted, never get a mark and the cursor skips them.
+    Disabled rows are muted and never get a mark; the cursor skips them unless
+    `reach_disabled` (S7: the details under the table explain why a row is off).
+    `flexible` names the column that gets the width the others leave (at least
+    `min_width`); without it the longest column does.
     """
 
     def __init__(
@@ -161,11 +283,18 @@ class Checklist:
         columns: Sequence[str],
         selected: Optional[set[int]] = None,
         disabled: Optional[set[int]] = None,
+        *,
+        flexible: Optional[int] = None,
+        min_width: int = 0,
+        reach_disabled: bool = False,
     ) -> None:
         self.rows = [list(r) for r in rows]
         self.columns = list(columns)
         self.disabled = set(disabled or ())
         self.selected = set(selected or ()) - self.disabled
+        self.flexible = flexible
+        self.min_width = min_width
+        self.reach_disabled = reach_disabled
         enabled = self.enabled
         self.cursor = enabled[0] if enabled else 0
         self.viewport: Optional[int] = None
@@ -176,14 +305,14 @@ class Checklist:
         return [i for i in range(len(self.rows)) if i not in self.disabled]
 
     def _move(self, step: int) -> None:
-        enabled = self.enabled
-        if not enabled:
+        reachable = list(range(len(self.rows))) if self.reach_disabled else self.enabled
+        if not reachable:
             return
-        if self.cursor not in enabled:
-            self.cursor = enabled[0]
+        if self.cursor not in reachable:
+            self.cursor = reachable[0]
             return
-        idx = enabled.index(self.cursor) + step
-        self.cursor = enabled[max(0, min(len(enabled) - 1, idx))]
+        idx = reachable.index(self.cursor) + step
+        self.cursor = reachable[max(0, min(len(reachable) - 1, idx))]
 
     def handle(self, key: str) -> Optional[str]:
         if key == "up":
@@ -200,27 +329,52 @@ class Checklist:
             return "done"
         return None
 
+    def _named_widths(self, width: int, longest: list[int]) -> list[int]:
+        """Widths of the data columns when the caller named the flexible one.
+
+        The table then pads cells on the right only: between two columns go the
+        padding and the separator, 2 cells; the mark column is 5 wide.
+        """
+        available = width - MARK_WIDTH - 2 * len(self.columns)
+        floors = [
+            self.min_width if i == self.flexible else min(longest[i], max(len(c), 6))
+            for i, c in enumerate(self.columns)
+        ]
+        return fit_widths(longest, floors, available)
+
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         height = self.viewport or options.height or len(self.rows) + 3
         visible = max(1, height - 3)
         self._offset = _scroll(self._offset, self.cursor, visible)
-        table = Table(box=box.SIMPLE_HEAD, expand=True, show_edge=False, pad_edge=False)
-        table.add_column("", no_wrap=True, width=5)
+        # A narrow terminal (S7) needs every cell: with a named flexible column the
+        # cells are padded on the right only.
+        padding = (0, 1, 0, 0) if self.flexible is not None else (0, 1)
+        table = Table(box=box.SIMPLE_HEAD, expand=True, show_edge=False, pad_edge=False,
+                      padding=padding)  # fmt: skip
+        table.add_column("", no_wrap=True, width=MARK_WIDTH)
         longest = [
-            max([len(text(row[i]).plain) for row in self.rows if i < len(row)] + [len(column)])
+            max([text(row[i]).cell_len for row in self.rows if i < len(row)] + [len(column)])
             for i, column in enumerate(self.columns)
         ]
-        # The widest column takes what is left and is cut with an ellipsis; the
-        # others keep their width, so marks and names never shrink to "…".
-        flexible = longest.index(max(longest)) if longest else -1
-        for index, column in enumerate(self.columns):
-            table.add_column(column, no_wrap=True, overflow="ellipsis", header_style="muted",
-                             ratio=1 if index == flexible else None)  # fmt: skip
+        if self.flexible is not None:
+            widths = self._named_widths(options.max_width, longest)
+            for index, column in enumerate(self.columns):
+                flex = index == self.flexible
+                table.add_column(column, no_wrap=True, overflow="ellipsis", header_style="muted",
+                                 width=widths[index], ratio=1 if flex else None)  # fmt: skip
+        else:
+            # The widest column takes what is left and is cut with an ellipsis; the
+            # others keep their width, so marks and names never shrink to "…".
+            flexible = longest.index(max(longest)) if longest else -1
+            for index, column in enumerate(self.columns):
+                table.add_column(column, no_wrap=True, overflow="ellipsis", header_style="muted",
+                                 ratio=1 if index == flexible else None)  # fmt: skip
         for i in range(self._offset, min(len(self.rows), self._offset + visible)):
             off = i in self.disabled
             mark = " - " if off else ("[✓]" if i in self.selected else "[ ]")
-            pointer = POINTER if i == self.cursor and not off else " "
-            style = "muted" if off else ("accent" if i == self.cursor else "")
+            current = i == self.cursor and (self.reach_disabled or not off)
+            pointer = POINTER if current else " "
+            style = "muted" if off else ("accent" if current else "")
             cells = [text(c) for c in self.rows[i]]
             table.add_row(Text(f"{pointer} {mark}"), *cells, style=style)
         yield table
@@ -278,13 +432,18 @@ class TextInput:
         self.error = None
         return None
 
-    def __rich__(self) -> RenderableType:
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        yield self.render(color=not (console.no_color or console.color_system is None))
+
+    def render(self, color: bool = True) -> RenderableType:
         shown = "•" * len(self.value) if self.secret else self.value
-        if self.focused:
+        if self.focused and color:
             line = Text(POINTER + " ", style="accent")
             line.append(shown[: self.pos])
             line.append(shown[self.pos] if self.pos < len(shown) else " ", style="reverse")
             line.append(shown[self.pos + 1 :])
+        elif self.focused:
+            line = Text(POINTER + " " + shown[: self.pos] + CURSOR_BAR + shown[self.pos :])
         else:
             line = Text("  " + shown)
         label_style = "bold" if self.focused else "muted"
@@ -302,29 +461,41 @@ class TextInput:
 
 
 class Consent:
-    """Consent screen of S7: only Enter on the accept button agrees."""
+    """Consent screen of S7, of rollback and of finalization: only Enter agrees.
 
-    def __init__(self, summary: RenderableType, accept_label: str, keys_hint: str = "") -> None:
+    The summary scrolls (↑ ↓, PgUp, PgDn, Home, End); the button and the hint
+    stay pinned under it, so every warning can be read and the way to agree or
+    to go back is always on the screen. Any other key goes back.
+    """
+
+    def __init__(
+        self, summary: RenderableType, accept_label: str, keys: Optional[str] = None
+    ) -> None:
         self.summary = summary
         self.accept_label = accept_label
-        self.keys_hint = keys_hint
+        self.keys = t("consent.keys") if keys is None else keys
+        self.pager = Pager(summary)
 
-    @staticmethod
-    def handle(key: str) -> bool:
-        """True: accepted. Any other key returns to the plan."""
-        return key == "enter"
+    def handle(self, key: str) -> Optional[bool]:
+        """True: accepted; False: back; None: the summary scrolled."""
+        if key == "enter":
+            return True
+        if key in SCROLL_KEYS:
+            self.pager.handle(key)
+            return None
+        return False
 
-    def __rich__(self) -> RenderableType:
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         button = Panel(
             Text(f"{SYMBOL_OK} {self.accept_label}", style="ok"),
             box=box.HEAVY,
             border_style="ok",
             expand=False,
         )
-        parts: list[RenderableType] = [self.summary, Text(""), button]
-        if self.keys_hint:
-            parts.append(Text(self.keys_hint, style="muted"))
-        return Group(*parts)
+        # Called, not yielded: Rich renders a yielded renderable without the height,
+        # and the button is pinned to the bottom of exactly this height.
+        stack = Stack(self.pager, Text(""), button, Text(self.keys, style="muted"), flex=0)
+        yield from stack.__rich_console__(console, options)
 
 
 STEP_VIEW = {
@@ -392,11 +563,29 @@ class ProgressBoard:
 
 
 class ScoreBadge:
-    """Large score with the colour of §12.2 and a word, so it reads without colour."""
+    """Large score with the colour of §12.2 and a word, so it reads without colour.
 
-    def __init__(self, score: int, before: Optional[int] = None) -> None:
+    `compact`: one line for low terminals, where the large digits would leave
+    no room for what was found.
+    """
+
+    def __init__(self, score: int, before: Optional[int] = None, compact: bool = False) -> None:
         self.score = max(0, min(100, score))
         self.before = before
+        self.compact = compact
+
+    def line(self) -> Text:
+        style = score_style(self.score)
+        line = Text(t("report.score", score=self.score), style="bold")
+        if self.before is not None:
+            line.append(", " + t("score.was", before=self.before), style="bold")
+        line.append(" · ")
+        filled = self.score // 10
+        line.append("█" * filled, style=style)
+        line.append("░" * (10 - filled), style="muted")
+        line.append(" · ")
+        line.append(self.level(), style=style)
+        return line
 
     def level(self) -> str:
         if self.score >= 85:
@@ -406,6 +595,8 @@ class ScoreBadge:
         return t("score.red")
 
     def __rich__(self) -> RenderableType:
+        if self.compact:
+            return self.line()
         style = score_style(self.score)
         digits = Text("\n".join(big_number(self.score)), style=style)
         filled = self.score // 5
@@ -439,7 +630,13 @@ class FindingItem:
 
 
 class FindingList:
-    """Findings grouped by topic; Space opens the details of one (Enter goes on)."""
+    """Findings grouped by topic; Space opens the details of one (Enter goes on).
+
+    ↑ ↓ move by one finding, PgUp and PgDn by a screenful, Home and End to the
+    first and the last. Wrapped lines keep their indent.
+    """
+
+    INDENT = 4
 
     def __init__(self, items: Sequence[FindingItem], group_by: str = "group") -> None:
         self.items = list(items)
@@ -448,19 +645,25 @@ class FindingList:
         self.expanded: set[int] = set()
         self.viewport: Optional[int] = None
         self._offset = 0
+        self._page = 1  # findings that fit on the screen, from the last frame
 
     def handle(self, key: str) -> Optional[str]:
         if not self.items:
             return None
-        if key == "up":
-            self.cursor = max(0, self.cursor - 1)
-        elif key == "down":
-            self.cursor = min(len(self.items) - 1, self.cursor + 1)
+        last = len(self.items) - 1
+        moves = {"up": -1, "down": 1, "pgup": -self._page, "pgdn": self._page}
+        if key in moves:
+            self.cursor = max(0, min(last, self.cursor + moves[key]))
+        elif key == "home":
+            self.cursor = 0
+        elif key == "end":
+            self.cursor = last
         elif key == "space":
             self.expanded ^= {self.cursor}
         return None
 
-    def _block(self, i: int, item: FindingItem) -> list[Text]:
+    def _block(self, i: int, item: FindingItem) -> list[tuple[Text, int]]:
+        """Lines of one finding with the indent of their continuation."""
         current = i == self.cursor
         style = "ok" if item.passed else risk_style(item.risk)
         symbol = SYMBOL_OK if item.passed else SYMBOL_RISK
@@ -469,14 +672,15 @@ class FindingList:
         head.append(f"{t('risk.' + item.risk):<8} ", style=style)
         head.append(f"{item.target}  ", style="bold")
         head.append(item.title, style="accent" if current else "")
-        lines = [head]
+        indent = " " * self.INDENT
+        lines = [(head, self.INDENT)]
         if item.threat:
-            lines.append(Text("    " + item.threat, style="muted"))
+            lines.append((Text(indent + item.threat, style="muted"), self.INDENT))
         if item.action:
-            lines.append(Text("    " + item.action, style=item.action_style))
+            lines.append((Text(indent + item.action, style=item.action_style), self.INDENT))
         if i in self.expanded and item.details:
             for detail in item.details.split("\n"):
-                lines.append(Text("      " + detail, style="muted"))
+                lines.append((Text(indent + "  " + detail, style="muted"), self.INDENT + 2))
         return lines
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
@@ -494,8 +698,8 @@ class FindingList:
                 rendered.append(Text(key, style="bold"))
                 group = key
             start_of[i] = len(rendered)
-            for line in self._block(i, item):
-                rendered.extend(line.wrap(console, width))
+            for line, indent in self._block(i, item):
+                rendered.extend(hang(console, line, width, indent))
             end_of[i] = len(rendered)
         if self.items:
             start, end = start_of[self.cursor], end_of[self.cursor]
@@ -503,6 +707,9 @@ class FindingList:
                 self._offset = max(0, start - 1)
             elif end > self._offset + height:
                 self._offset = end - height
+            bottom = self._offset + height
+            shown = [i for i in start_of if start_of[i] >= self._offset and end_of[i] <= bottom]
+            self._page = max(1, len(shown) - 1)
         yield from rendered[self._offset : self._offset + height]
 
 
@@ -530,10 +737,12 @@ class Notice:
 
 
 class Pager:
-    """Scrolling of a long text (full report on `s`)."""
+    """Scrolling of a long text or of any renderable (full report on `s`, the
+    consent summary, the list of changes on S9). The position line shows only
+    when there is more than fits."""
 
-    def __init__(self, text_value: str) -> None:
-        self.text = text_value
+    def __init__(self, content: Union[str, RenderableType]) -> None:
+        self.text = content
         self.offset = 0
         self.viewport: Optional[int] = None
         self._page = 1
@@ -551,17 +760,18 @@ class Pager:
         return None
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
-        width = options.max_width
         height = self.viewport or options.height or 20
-        lines: list[Text] = []
-        for raw in self.text.split("\n"):
-            wrapped = Text(raw).wrap(console, width)
-            lines.extend(wrapped if len(wrapped) else [Text("")])
-        self._page = max(1, height - 1)
+        content = Text(self.text) if isinstance(self.text, str) else self.text
+        lines = console.render_lines(content, options.update(height=None), pad=False)
         self._total = len(lines)
+        overflow = self._total > height
+        self._page = max(1, height - 1) if overflow else height
         self.offset = max(0, min(self.offset, max(0, self._total - self._page)))
-        yield from lines[self.offset : self.offset + self._page]
-        end = min(self._total, self.offset + self._page)
-        yield Text(
-            t("pager.position", start=self.offset + 1, end=end, total=self._total), style="muted"
-        )
+        shown = lines[self.offset : self.offset + self._page]
+        if overflow:
+            end = min(self._total, self.offset + self._page)
+            position = Text(t("pager.position", start=self.offset + 1, end=end, total=self._total),
+                            style="muted", no_wrap=True, overflow="ellipsis")  # fmt: skip
+            shown = [*shown, *console.render_lines(position, options.update(height=None),
+                                                   pad=False)[:1]]  # fmt: skip
+        yield from _yield_lines(shown)

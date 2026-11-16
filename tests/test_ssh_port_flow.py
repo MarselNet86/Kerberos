@@ -2,7 +2,7 @@
 
 import random
 
-from helpers import login_keys, make_app, seen
+from helpers import login_keys, make_app, row_of, seen
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -14,7 +14,16 @@ from kerberos.flow import EXIT_OK, EXIT_PARTIAL
 
 TO_PLAN = login_keys() + ["enter", "enter"] + ["enter"] * 5 + ["esc"] + ["enter", "enter"]
 TO_PLAN += ["enter", "enter", "enter"]
-ALL_AND_APPLY = ["a", "enter", "enter"]  # mark everything, consent, accept
+
+
+def all_and_ports(*names):
+    """`a` marks everything but the SSH ports (§6): those the person marks by hand."""
+    keys, cursor = ["a"], 0
+    for name in names:
+        row = row_of(name, "ssh.port")
+        keys += ["down"] * (row - cursor) + ["space"]
+        cursor = row
+    return keys + ["enter", "enter"]  # consent, accept
 
 
 def run_fix(extra, nodes):
@@ -29,7 +38,7 @@ def port_changes(app):
 
 def test_new_port_after_login_on_it_old_one_closed():
     nodes = {n.name: n for n in build_nodes()}
-    app, term, code = run_fix(ALL_AND_APPLY + ["enter"], nodes)
+    app, term, code = run_fix(all_and_ports("nl-1") + ["enter"], nodes)
     assert code == EXIT_OK
     change = next(c for c in port_changes(app) if c["target"].endswith(
         next(u for u, r in app.env.state.nodes().items() if r.name == "nl-1")))  # fmt: skip
@@ -46,7 +55,7 @@ def test_new_port_after_login_on_it_old_one_closed():
     ]
     assert confirms == [f"confirm {change['changeId']} (fresh)"]
     assert seen(term, t("fix.ssh_port.warning", port=port))
-    assert seen(term, t("s9.ssh_port", port=port))
+    assert seen(term, t("s9.ssh_port", node="nl-1", port=port))
     report = RunStore(app.env.state, app.env.clock).report_text(
         RunStore(app.env.state, app.env.clock).runs()[0]["runId"]
     )
@@ -56,7 +65,7 @@ def test_new_port_after_login_on_it_old_one_closed():
 def test_port_closed_by_the_hoster_is_rolled_back():
     nodes = {n.name: n for n in build_nodes()}
     nodes["fi-1"].state["hoster_firewall"] = True
-    app, term, code = run_fix(ALL_AND_APPLY + ["enter"], nodes)
+    app, term, code = run_fix(all_and_ports("fi-1") + ["enter"], nodes)
     assert code == EXIT_PARTIAL
     fi = next(c for c in port_changes(app) if c["error"])
     assert fi["state"] == "rolled_back" and fi["error"] == "port_closed"
@@ -68,7 +77,7 @@ def test_port_closed_by_the_hoster_is_rolled_back():
 
 def test_rollback_returns_the_old_port():
     nodes = {n.name: n for n in build_nodes()}
-    app, _term, _code = run_fix(ALL_AND_APPLY + ["enter"], nodes)
+    app, _term, _code = run_fix(all_and_ports("nl-1") + ["enter"], nodes)
     app.env.terminal.feed(
         "enter", "enter", "enter", *list("admin"), "enter", *list("pw"), "enter", "x"
     )

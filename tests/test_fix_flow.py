@@ -2,6 +2,7 @@
 
 import pytest
 from helpers import login_keys, make_app, plan_rows, seen
+from test_review_screens import short_state
 
 from kerberos.copy import t
 from kerberos.demo.fleet import build_nodes
@@ -52,7 +53,7 @@ def test_full_fix_applies_rechecks_and_reports():
 
 
 def test_nothing_changes_before_consent():
-    keys = APPLY[:1] + ["x", "esc", "esc", "q", "enter"]
+    keys = APPLY[:1] + ["x", "esc", "q", "enter"]  # consent → plan → S6 → quit
     app, term, _code = fix_run(keys)
     agent_calls = [cmd for _a, cmd in app.env.transport.log if cmd.startswith("apply")]
     assert agent_calls == [] and app.env.panel_transport.mutations == []
@@ -60,7 +61,7 @@ def test_nothing_changes_before_consent():
 
 
 def test_consent_shows_the_warning_of_section_15():
-    app, term, _code = fix_run(APPLY[:1] + ["x", "esc", "esc", "q", "enter"])
+    app, term, _code = fix_run(APPLY[:1] + ["x", "esc", "q", "enter"])
     assert seen(term, t("fix.key_only.warning"))
 
 
@@ -177,7 +178,7 @@ def test_s9_snapshot_and_s7_rows(monkeypatch):
 
     # Where the repository is checked out must not wrap the rollback line.
     monkeypatch.setattr("kerberos.screens.fix.launcher", lambda: "/opt/kerberos/kerberos")
-    app, term, _code = fix_run(APPLY + ["enter"], height=40)
+    app, term, _code = fix_run(APPLY + ["enter"], height=40, state=short_state())
     run = last_run(app)
     s9 = next(
         f for f in term.frames if f.splitlines()[0].startswith("/// kerberos  " + t("done.title"))

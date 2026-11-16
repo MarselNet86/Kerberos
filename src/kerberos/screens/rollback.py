@@ -20,7 +20,7 @@ from kerberos.fixes.panel_changes import PANEL_FIXES, undo
 from kerberos.flow import EXIT_OK, EXIT_PANEL, EXIT_ROLLBACK_FAILED
 from kerberos.nodes.transport import NodeAgentError, Target, TransportError
 from kerberos.screens.check import write_report
-from kerberos.screens.fix import error_text
+from kerberos.screens.fix import agree, error_text
 from kerberos.ui.widgets import Checklist, Consent, Menu, Notice
 
 if TYPE_CHECKING:
@@ -165,9 +165,7 @@ def rollback_flow(app: App, run_id: Optional[str] = None) -> int:
         chosen = [changes[i] for i in sorted(checklist.selected)]
         summary = Group(Text(t("rb.consent", n=len(chosen))),
                         *[Text("  " + label(app, run, c)) for c in chosen])  # fmt: skip
-        app.term.draw(app.frame(t("rb.title"), Consent(summary, t("rb.accept"),
-                                                       t("consent.keys")), ()))  # fmt: skip
-        if Consent.handle(app.term.read_key() or ""):
+        if agree(app, t("rb.title"), Consent(summary, t("rb.accept"), t("rb.keys"))):
             break
     client = None
     if any(c["fixId"] in PANEL_FIXES for c in chosen):

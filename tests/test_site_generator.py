@@ -95,7 +95,7 @@ def test_demo_draws_the_same_sites():
     seeds = []
     for _ in range(2):
         row = steal_row("nl-1")
-        app, _term = make_app(TO_PLAN + ["down"] * row + ["esc", "esc", "q", "enter"], height=46)
+        app, _term = make_app(TO_PLAN + ["down"] * row + ["esc", "q", "enter"], height=46)
         app.run("fix")
         plan = app.session.data["plan"]
         seeds.append(next(i.params["siteSeed"] for i in plan if i.fix_id == "self_steal"))

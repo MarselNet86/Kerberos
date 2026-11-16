@@ -20,7 +20,7 @@ CDN_ROW = row_of("fi-1", "cdn.edge_only")
 TEMPLATE_ROW = row_of("template", "sub.template")
 WATCH_ROW = row_of("nl-1", "watch.install")
 CONFIRM_EDGES = ["down"] * CDN_ROW + ["e", "enter"]  # the list of nets, all marked, confirmed
-LEAVE = ["esc", "esc", "q", "enter"]
+LEAVE = ["esc", "q", "enter"]  # S7 → S6 → quit
 
 
 def run_fix(extra, panel=None, nodes=None, state=None):
@@ -105,7 +105,8 @@ def test_realip_blocks_the_filter():
 
 def test_a_skips_the_filter_and_enter_asks_for_nets():
     app, term, _code, _panel, _nodes = run_fix(["a"] + LEAVE)
-    marked = len(app.session.data["plan"]) - 5  # four self-steals and the CDN filter wait
+    # Four self-steals and the CDN filter wait for input; `a` leaves the four SSH ports.
+    marked = len(app.session.data["plan"]) - 9
     assert seen(term, t("plan.selected", n=marked, total=len(app.session.data["plan"])))
     app2, term2, _code, _p, _n = run_fix(["down"] * CDN_ROW + ["space", "enter"] + LEAVE)
     assert seen(term2, t("plan.need_edges"))

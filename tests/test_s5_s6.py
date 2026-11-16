@@ -5,6 +5,7 @@ import re
 import stat
 
 from helpers import assert_snapshot, login_keys, make_app, seen
+from test_review_screens import short_state
 
 from kerberos.__main__ import Options, print_report
 from kerberos.copy import t
@@ -18,9 +19,9 @@ WHOIS_YES = ["enter"]
 READ_ONLY = {"version", "facts", "watch", "site-check", "edge-sources"}
 
 
-def check_run(extra=(), height=34, mask=False):
+def check_run(extra=(), height=34, mask=False, state=None):
     keys = TO_S5 + WHOIS_YES + list(extra) + ["enter", "x"] * 0 + ["q", "enter"]
-    app, term = make_app(keys, height=height, mask=mask)
+    app, term = make_app(keys, height=height, mask=mask, state=state)
     app.run("check")
     return app, term
 
@@ -30,7 +31,7 @@ def s6_frames(term):
 
 
 def test_s6_shows_score_findings_and_saved_report():
-    app, term = check_run()
+    app, term = check_run(state=short_state())
     frame = s6_frames(term)[0]
     runs = RunStore(app.env.state, app.env.clock).runs()
     assert len(runs) == 1 and runs[0]["mode"] == "check"

@@ -105,6 +105,18 @@ def app_for(keys: list[str], height: int) -> tuple[App, ShotTerminal]:
 
 
 def main(out: Path = OUT) -> int:
+    from kerberos.screens import fix
+
+    # S9 shows the commands to roll back and finalize: with the path of an installed
+    # KERBEROS (§5.1), never of the checkout the screenshots are taken in.
+    checkout, fix.launcher = fix.launcher, lambda: "/opt/kerberos/kerberos"
+    try:
+        return shoot(out)
+    finally:
+        fix.launcher = checkout
+
+
+def shoot(out: Path) -> int:
     out.mkdir(parents=True, exist_ok=True)
     app, term = app_for(["q", "enter"], 30)
     app.run(None)

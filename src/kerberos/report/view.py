@@ -69,6 +69,20 @@ def target_label(finding: Finding, node_names: dict) -> str:
     return t(f"target.{kind}") if f"target.{kind}" in TEXT else target
 
 
+def change_target(target: str, params: dict, node_names: dict) -> str:
+    """Who a change belongs to: a node, a host, a template or the panel, by name."""
+    kind, _, ref = target.partition(":")
+    if kind != "node" and params.get("node"):
+        kind, ref = "node", params["node"]
+    if kind == "host":
+        return t("target.host", name=params.get("remark") or ref[:8])
+    if kind == "template":
+        return t("target.template", name=params.get("name") or ref[:8])
+    if kind == "node":
+        return node_names.get(ref, ref[:8])
+    return t("target.panel")
+
+
 def ordered(findings: list[Finding]) -> list[Finding]:
     return sorted(
         findings,
@@ -106,4 +120,6 @@ def finding_items(
 def counts(findings: list[Finding]) -> dict:
     failing = [f for f in findings if not f["ok"] and f["risk"] != "info"]
     auto = [f for f in failing if spec(f["checkId"]).kind == "fix" and f["fixId"]]
-    return {"problems": len(failing), "auto": len(auto), "manual": len(failing) - len(auto)}
+    high = [f for f in failing if f["risk"] == "high"]
+    return {"problems": len(failing), "high": len(high), "auto": len(auto),
+            "manual": len(failing) - len(auto)}  # fmt: skip

@@ -174,7 +174,10 @@ class App:
         return self.term.read_key() == "enter"
 
     def show_help(self) -> None:
-        body = Group(Text(t("help.body")), Text(""), Text(t("help.close"), style="muted"))
+        # A screen with keys of its own (S6, S7, S9) puts them in `screen_help`.
+        own = getattr(self, "screen_help", "")
+        parts = [Text(own), Text("")] if own else []
+        body = Group(*parts, Text(t("help.body")), Text(""), Text(t("help.close"), style="muted"))
         self.draw(t("help.title"), body)
         self.term.read_key()
 
@@ -240,6 +243,7 @@ class App:
         try:
             while 0 <= index < len(steps):
                 result = steps[index](self, session)
+                steps = self.steps(session)  # S6 `f` turns «Проверка» into «Исправление»
                 if result == NEXT:
                     index += 1
                 elif result == BACK:
@@ -292,6 +296,7 @@ class App:
         from kerberos.fixes.finalize import due_items, finalize_items
         from kerberos.fixes.journal import RunStore
         from kerberos.flow import EXIT_PANEL
+        from kerberos.screens.fix import agree
         from kerberos.screens.panel import open_panel
         from kerberos.ui.widgets import Consent
 
@@ -306,8 +311,7 @@ class App:
         lines: list = [Text(t("fin.consent"))]
         for _run, item in pairs:
             lines.append(Text(f"  {self.mask(item['nodeName'])}: {self.mask(item['domain'])}"))
-        self.draw(t("fin.title"), Consent(Group(*lines), t("fin.accept"), t("consent.keys")))
-        if not Consent.handle(self.term.read_key() or ""):
+        if not agree(self, t("fin.title"), Consent(Group(*lines), t("fin.accept"), t("fin.keys"))):
             return EXIT_OK
         failed = finalize_items(opened[1], store, pairs)
         if failed:
@@ -350,7 +354,7 @@ class App:
     def show_report(self, run_id: Optional[str]) -> int:
         """`kerberos report [runId]` in a terminal: the report with scrolling."""
         from kerberos.fixes.journal import RunStore
-        from kerberos.screens.check import show_pager
+        from kerberos.screens.check import show_report_text
 
         store = RunStore(self.env.state, self.env.clock)
         runs = store.runs()
@@ -360,5 +364,5 @@ class App:
         if text is None:
             self.notice("info", t("report.empty"), t("reports.title"))
             return EXIT_USAGE
-        show_pager(self, self.mask(text), t("reports.title"))
+        show_report_text(self, text, t("reports.title"))
         return EXIT_OK

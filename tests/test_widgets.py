@@ -91,8 +91,9 @@ def test_secret_input_never_shows_characters():
 
 def test_consent_accepts_only_enter():
     consent = Consent(Text("plan"), t("consent.accept"))
-    assert Consent.handle("enter") is True
-    assert Consent.handle("y") is False and Consent.handle("space") is False
+    assert consent.handle("enter") is True
+    assert consent.handle("y") is False and consent.handle("space") is False
+    assert consent.handle("down") is None, "the arrows scroll, they never go back"
     assert t("consent.accept") in render(consent)
 
 
