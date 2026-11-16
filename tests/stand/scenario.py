@@ -46,8 +46,12 @@ def report(name: str, ok: bool, detail: str = "") -> None:
     print(f"{'ok  ' if ok else 'FAIL'}  {name}" + (f": {detail}" if detail and not ok else ""))
 
 
-def cycle(fix_id: str, params: dict, applied, restored, confirm: bool = False) -> None:
-    """Apply, check, roll back, check, apply again, roll back."""
+def cycle(fix_id: str, params: dict, applied, restored, confirm: bool = False,
+          describe=None) -> None:  # fmt: skip
+    """Apply, check, roll back, check, apply again, roll back.
+
+    `describe` turns facts into the detail printed when a check fails.
+    """
     for round_no in (1, 2):
         change = str(uuid.uuid4())
         code, answer = agent("apply", fix_id, change, payload=params)
@@ -57,13 +61,15 @@ def cycle(fix_id: str, params: dict, applied, restored, confirm: bool = False) -
         if confirm:
             code, answer = agent("confirm", change)
             report(f"{fix_id} confirm #{round_no}", answer.get("state") == "confirmed")
-        report(f"{fix_id} effect #{round_no}", applied(facts()))
+        now = facts()
+        report(f"{fix_id} effect #{round_no}", applied(now), describe(now) if describe else "")
         code, again = agent("apply", fix_id, change, payload=params)
         report(f"{fix_id} same changeId is noop", again.get("state") == "noop")
         code, answer = agent("rollback", change)
         report(f"{fix_id} rollback #{round_no}", answer.get("state") == "rolled_back",
                json.dumps(answer))  # fmt: skip
-        report(f"{fix_id} restored #{round_no}", restored(facts()))
+        now = facts()
+        report(f"{fix_id} restored #{round_no}", restored(now), describe(now) if describe else "")
 
 
 def listen(port: int) -> socket.socket:
@@ -184,6 +190,9 @@ def main() -> int:
               == before["remnanode"]["letsencryptMounted"])  # fmt: skip
 
     # §8.5: the person's own key reaches the node: a throwaway key of this stand VM.
+    for leftover in (STAND_KEY, STAND_KEY + ".pub"):  # a run before left its key
+        if os.path.exists(leftover):
+            os.remove(leftover)
     subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "stand@kerberos",
                     "-f", STAND_KEY], check=True)  # fmt: skip
     key = open(STAND_KEY + ".pub").read().strip()
@@ -195,7 +204,9 @@ def main() -> int:
     old = {k["fingerprint"] for k in facts()["hostKeys"]}
     cycle("hostkeys.regenerate", {},
           lambda f: not ({k["fingerprint"] for k in f["hostKeys"]} & old),
-          lambda f: {k["fingerprint"] for k in f["hostKeys"]} == old, confirm=True)  # fmt: skip
+          lambda f: {k["fingerprint"] for k in f["hostKeys"]} == old, confirm=True,
+          describe=lambda f: json.dumps(sorted(k["fingerprint"][-8:] for k in f["hostKeys"])
+                                        + ["was"] + sorted(o[-8:] for o in old)))  # fmt: skip
 
     port = next(p for p in range(24622, 32767)
                 if all(s["port"] != p for s in before["listening"]))  # fmt: skip
@@ -214,7 +225,9 @@ def main() -> int:
         timers = subprocess.run(["systemctl", "list-timers", "--all", "--no-pager"],
                                 capture_output=True, text=True).stdout  # fmt: skip
         report("undo timer is armed", f"kerberos-undo-{change}" in timers)
-        subprocess.run(["systemctl", "start", f"kerberos-undo-{change}.service"], check=False)
+        # --wait: the undo must finish before the late confirm, or the confirm may win.
+        subprocess.run(["systemctl", "--wait", "start", f"kerberos-undo-{change}.service"],
+                       check=False)  # fmt: skip
         code, answer = agent("confirm", change)
         report("timer rolled the change back", answer.get("error", {}).get("code")
                == "change_conflict")  # fmt: skip
