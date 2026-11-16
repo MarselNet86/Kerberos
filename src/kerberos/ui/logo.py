@@ -1,11 +1,9 @@
-"""Logo and large digits: block graphics, not texts, so they live outside copy.py."""
+"""Logo and large digits: brand marks and graphics, not texts, so they live outside copy.py."""
 
 from __future__ import annotations
 
-LOGO = (
-    "█▄▀ █▀▀ █▀█ ██▄ █▀▀ █▀█ █▀█ █▀",
-    "█ █ ██▄ █▀▄ █▄▀ ██▄ █▀▄ █▄█ ▄█",
-)
+# The brand mark, drawn with the `logo` palette token (red) in the header and on S1.
+LOGO = "/// kerberos"
 
 # Three rows per digit, three columns wide.
 DIGITS = {

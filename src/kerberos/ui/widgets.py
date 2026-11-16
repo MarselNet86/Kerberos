@@ -23,7 +23,7 @@ from rich.text import Text
 
 from kerberos.copy import t
 from kerberos.ui.keys import hotkey
-from kerberos.ui.logo import big_number
+from kerberos.ui.logo import LOGO, big_number
 from kerberos.ui.palette import (
     SYMBOL_FAIL,
     SYMBOL_OK,
@@ -75,7 +75,7 @@ class Screen:
         header.add_column(ratio=1, no_wrap=True, overflow="ellipsis")
         header.add_column(justify="right", no_wrap=True)
         header.add_row(
-            Text.assemble((t("app.name"), "accent"), "  ", (self.title, "bold")),
+            Text.assemble((LOGO, "logo"), "  ", (self.title, "bold")),
             Text(" · ".join(self.flags), style="muted"),
         )
         footer = Text(no_wrap=True, overflow="ellipsis")

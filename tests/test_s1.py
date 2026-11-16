@@ -46,6 +46,28 @@ def test_s1_ctrl_c_asks_before_leaving():
     assert t("quit.confirm") in term.frames[1]
 
 
+def test_logo_is_red_on_s1_and_in_the_header():
+    from kerberos.ui.logo import LOGO
+    from kerberos.ui.palette import PALETTE
+    from kerberos.ui.terminal import frame_text
+
+    assert LOGO == "/// kerberos"
+    assert PALETTE["logo"] == "bold red"
+    app, term = make_app(["q", "enter"], height=24)
+    app.run()
+    s1 = term.frames[0]
+    assert s1.splitlines()[0].startswith(LOGO)
+    assert any(line.strip() == LOGO for line in s1.splitlines()[2:6])
+    colored = frame_text(app.frame("", app.s1_body(_menu()), ()), 100, 24, color=True)
+    assert "\x1b[1;31m/// kerberos" in colored
+
+
+def _menu():
+    from kerberos.ui.widgets import Menu
+
+    return Menu([("check", t("mode.check"), "")])
+
+
 def test_s1_fits_80_columns():
     app, term = make_app(["q", "enter"], width=80, height=24)
     app.run()

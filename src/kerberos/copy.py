@@ -56,7 +56,7 @@ TEXT: dict[str, str] = {
     "done.title": "Готово",
     "done.rollback": "Откатить: {command}",
     # K0: shell, menu, keys
-    "app.name": "KERBEROS",
+    "app.version": "версия {version}",
     "mode.reports": "Отчёты прошлых запусков",
     "app.soon": "Этот раздел появится в следующей версии KERBEROS",
     "hdr.demo": "демо",
