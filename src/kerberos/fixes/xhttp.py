@@ -95,7 +95,11 @@ def remove_padding(config: dict, written: dict) -> tuple[dict, list[str]]:
         if current != written[inbound["tag"]]:
             changed.append(inbound["tag"])
             continue
-        settings["extra"] = without_padding(extra)
+        rest = without_padding(extra)
+        if rest:
+            settings["extra"] = rest
+        else:
+            settings.pop("extra", None)  # an empty extra means no extra
     return config, changed
 
 

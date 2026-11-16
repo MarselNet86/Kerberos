@@ -189,5 +189,6 @@ def undo_padding(client: PanelClient, change: dict,
     for uuid in details.get("hosts") or {}:
         host = hosts.get(uuid)
         if host is not None and xhttp.padding_of(host.xhttp_extra):
-            client.patch_host(uuid, {"xhttpExtraParams": xhttp.without_padding(host.xhttp_extra)})
+            rest = xhttp.without_padding(host.xhttp_extra)
+            client.patch_host(uuid, {"xhttpExtraParams": rest or None})
     return None
