@@ -65,7 +65,12 @@ def diff_text(written: Any, current: Any) -> str:
 
 def undo(client: PanelClient, change: dict,
          ask: Optional[Callable[[str], bool]] = None) -> Optional[str]:  # fmt: skip
-    """Roll one panel change back. None: done; otherwise the reason it was not."""
+    """Roll one panel change back. None: done; otherwise the reason it was not.
+
+    A change cut short ("applying") may have written only part: what is not in
+    the panel needs nothing. An object edited after KERBEROS wrote it is shown
+    with `ask` first (§10.5, §11.4); without `ask` it is left as it is.
+    """
     fix_id, details = change["fixId"], change["details"]
     try:
         if fix_id == "self_steal.hosts":
@@ -77,16 +82,10 @@ def undo(client: PanelClient, change: dict,
                     client.delete_host(uuid)
             return None
         if fix_id == "sub.templates":
-            # Templates KERBEROS created stay (the API has no delete); edited ones go back.
-            for uuid, info in (details.get("templates") or {}).items():
-                previous = load_snapshot(info.get("previousPath"))
-                if previous is not None and info.get("written"):
-                    client.patch_template(uuid, previous)
-            return None
+            return undo_templates(client, details, ask)
         if fix_id == "sub.template":
-            for uuid, template in (details.get("hosts") or {}).items():
-                client.patch_host(uuid, {"xrayJsonTemplateUuid": template})
-            return None
+            return undo_hosts(client, details, lambda h: h.template_uuid,
+                              lambda value: {"xrayJsonTemplateUuid": value}, ask)  # fmt: skip
         if fix_id == "sub.ping_type":
             if "previous" not in details:
                 return None  # failed before anything was written
@@ -107,13 +106,9 @@ def undo(client: PanelClient, change: dict,
             )
             return None
         if fix_id == "reserve":
-            for uuid, before in (details.get("hosts") or {}).items():
-                client.patch_host(uuid, before)
-            return None
+            return undo_hosts(client, details, reserve_fields, dict, ask)
         if fix_id == "self_steal.squads":
-            for uuid, inbounds in (details.get("squads") or {}).items():
-                client.patch_squad(uuid, inbounds)
-            return None
+            return undo_squads(client, details)
         if fix_id == "xui.reality":
             return undo_xui_reality(client, change, ask)
         if fix_id == "xhttp.uplink_get":
@@ -121,24 +116,106 @@ def undo(client: PanelClient, change: dict,
         if fix_id == "xhttp.padding":
             return undo_padding(client, change, ask)
         if fix_id == "self_steal.profile":
-            before = load_snapshot(change.get("before"))
-            if before is None:
-                return "no_snapshot"
-            uuid = details["profileUuid"]
-            current = next((p for p in client.profiles() if p.uuid == uuid), None)
-            if current is None:
-                return "gone"
-            if digest(current.config) != details.get("written") and details.get("written"):
-                # The written config lives in a 0600 snapshot, never in run.json:
-                # it holds the Reality private key.
-                written = load_snapshot(details.get("writtenPath"))
-                if ask is None or not ask(diff_text(written, current.config)):
-                    return "changed_in_panel"
-            client.patch_profile(uuid, before["config"])
-            return None
+            return undo_profile(client, change, ask)
     except PanelError as exc:
         return exc.code
     return "unknown_change"
+
+
+def reserve_fields(host: Any) -> dict:
+    return {"tags": list(host.tags), "isHidden": host.is_hidden,
+            "xrayJsonTemplateUuid": host.template_uuid}  # fmt: skip
+
+
+def undo_hosts(client: PanelClient, details: dict, read: Callable[[Any], Any],
+               write: Callable[[Any], dict],
+               ask: Optional[Callable[[str], bool]]) -> Optional[str]:  # fmt: skip
+    """Hosts back to details["hosts"]; a host changed since details["written"] is asked about.
+
+    Runs without "written" (journals before v18) put every host back as they did.
+    """
+    before = details.get("hosts") or {}
+    written = details.get("written")
+    if not before:
+        return None
+    current = {h.uuid: h for h in client.hosts()}
+    todo, mine, now = {}, {}, {}
+    for uuid, old in before.items():
+        host = current.get(uuid)
+        if host is None:
+            continue  # deleted since: nothing to put back
+        value = read(host)
+        if value == old:
+            continue  # never written (a change cut short) or already back
+        if written is not None and value != written.get(uuid):
+            name = f"{host.remark} ({uuid[:8]})"
+            mine[name], now[name] = written.get(uuid), value
+        todo[uuid] = old
+    if now and (ask is None or not ask(diff_text(mine, now))):
+        return "changed_in_panel"
+    for uuid, old in todo.items():
+        client.patch_host(uuid, write(old))
+    return None
+
+
+def undo_templates(client: PanelClient, details: dict,
+                   ask: Optional[Callable[[str], bool]]) -> Optional[str]:  # fmt: skip
+    """Templates KERBEROS created stay (the API has no delete); edited ones go back."""
+    todo, mine, now = {}, {}, {}
+    for uuid, info in (details.get("templates") or {}).items():
+        previous = load_snapshot(info.get("previousPath"))
+        if previous is None or not info.get("written"):
+            continue  # created by KERBEROS, or the person kept their own edits
+        current = client.template(uuid)
+        if current.json == previous:
+            continue  # never written, or already back
+        if digest(current.json) != info["written"]:
+            mine[current.name] = load_snapshot(info.get("writtenPath"))
+            now[current.name] = current.json
+        todo[uuid] = previous
+    if now and (ask is None or not ask(diff_text(mine, now))):
+        return "changed_in_panel"
+    for uuid, previous in todo.items():
+        client.patch_template(uuid, previous)
+    return None
+
+
+def undo_squads(client: PanelClient, details: dict) -> Optional[str]:
+    """Only the inbound KERBEROS added leaves each squad; what others added since stays."""
+    added = details.get("added")
+    squads = {s.uuid: s for s in client.squads()} if details.get("squads") else {}
+    for uuid, before in (details.get("squads") or {}).items():
+        squad = squads.get(uuid)
+        if squad is None:
+            continue  # deleted since: nothing to put back
+        if added is None:
+            client.patch_squad(uuid, before)  # a journal before v18 knows only the old list
+        elif added in squad.inbound_uuids:
+            client.patch_squad(uuid, [i for i in squad.inbound_uuids if i != added])
+    return None
+
+
+def undo_profile(client: PanelClient, change: dict,
+                 ask: Optional[Callable[[str], bool]]) -> Optional[str]:  # fmt: skip
+    details = change["details"]
+    before = load_snapshot(change.get("before"))
+    if before is None:
+        # The snapshot is saved before anything is written: without one, nothing was.
+        return "no_snapshot" if details.get("written") else None
+    uuid = details.get("profileUuid") or before.get("uuid")
+    current = next((p for p in client.profiles() if p.uuid == uuid), None)
+    if current is None:
+        return "gone"
+    if digest(current.config) == digest(before["config"]):
+        return None  # the PATCH never landed, or the profile is back already
+    if details.get("written") and digest(current.config) != details["written"]:
+        # The written config lives in a 0600 snapshot, never in run.json:
+        # it holds the Reality private key.
+        written = load_snapshot(details.get("writtenPath"))
+        if ask is None or not ask(diff_text(written, current.config)):
+            return "changed_in_panel"
+    client.patch_profile(uuid, before["config"])
+    return None
 
 
 def undo_uplink(client: PanelClient, change: dict) -> Optional[str]:
@@ -187,6 +264,9 @@ def undo_padding(client: PanelClient, change: dict,
                for tag in changed}  # fmt: skip
         if ask is None or not ask(diff_text(mine, now)):
             return "changed_in_panel"
+        # Approved: the edited padding goes from the server too, as it goes from every
+        # client below. Padding on one side only breaks the tunnel.
+        config, _changed = xhttp.remove_padding(profile.config, written, force=changed)
     if config != profile.config:
         client.patch_profile(profile.uuid, config)
     for uuid in details.get("hosts") or {}:
@@ -202,11 +282,12 @@ def undo_xui_reality(client: Any, change: dict,
     """3x-ui (§7.6): Reality of the inbounds back from the snapshot; asks when edited since."""
     before = load_snapshot(change.get("before"))
     if before is None:
-        return "no_snapshot"
+        # The snapshot is saved before anything is written: without one, nothing was.
+        return "no_snapshot" if change["details"].get("writtenPath") else None
     written = load_snapshot(change["details"].get("writtenPath")) or {}
-    edited = {}
+    edited, currents = {}, {}
     for ident, stream in before.items():
-        current = client.inbound(int(ident))["streamSettings"]
+        current = currents[ident] = client.inbound(int(ident))["streamSettings"]
         mine = written.get(ident)
         if mine is not None and current not in (mine, stream):
             edited[ident] = (mine, current)
@@ -216,5 +297,6 @@ def undo_xui_reality(client: Any, change: dict,
         if ask is None or not ask(diff_text(mine, now)):
             return "changed_in_panel"
     for ident, stream in before.items():
-        client.update_inbound(int(ident), stream)
+        if currents[ident] != stream:  # an inbound not written yet needs nothing
+            client.update_inbound(int(ident), stream)
     return None

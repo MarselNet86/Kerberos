@@ -687,6 +687,12 @@ TEXT: dict[str, str] = {
     "cli.no_tty": "Запустите KERBEROS в терминале",
     "cli.version": "KERBEROS {version}",
     "cli.interrupted": "Прервано.",
+    "error.rollback_failed": "не откатилось и осталось на месте: нужна ручная проверка",
+    "error.internal_error": "внутренняя ошибка KERBEROS",
+    "error.pair_not_ready": "у одной из нод пары нет копий хостов на своём домене",
+    "error.reserve_chain": "нода не может быть резервом и основой одновременно",
+    "plan.reserve.is_reserve": "{node} уже резерв для {main}: у резерва не бывает своего резерва",
+    "plan.blocked.panel_peer": "панель подключается к ноде не с того адреса, что KERBEROS",
 }
 
 

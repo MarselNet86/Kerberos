@@ -15,8 +15,9 @@ from kerberos.checks.score import score
 from kerberos.copy import TEXT, t
 from kerberos.fixes.engine import Engine
 from kerberos.fixes.journal import RunStore, iso
+from kerberos.fixes.model import is_applied
 from kerberos.fixes.plan import PlanItem, build_plan, follow_admin_key
-from kerberos.flow import BACK, EXIT_INTERRUPTED, EXIT_OK, EXIT_PARTIAL, NEXT
+from kerberos.flow import BACK, EXIT_OK, NEXT
 from kerberos.screens.check import report_header, show_pager, write_report
 from kerberos.ui.keys import hotkey
 from kerberos.ui.widgets import Checklist, Consent, Notice, ProgressBoard, TextInput
@@ -92,6 +93,12 @@ def choose_reserve(app: App, session: Session, items: list[PlanItem], main: Plan
     from kerberos.ui.widgets import Menu
 
     name = app.session_name(main.node_uuid)
+    if main.params.get("reserveOf"):
+        # A reserve with its own reserve would be hidden and visible at once (§10.9).
+        app.notice("warning", t("plan.reserve.is_reserve", node=app.mask(name),
+                                main=app.mask(app.session_name(main.params["reserveOf"]))),
+                   t("plan.title"))  # fmt: skip
+        return
     others = [i for i in items if i.fix_id == "self_steal" and i is not main
               and not i.params.get("reserve")
               and i.params.get("reserveOf") in (None, main.node_uuid)]  # fmt: skip
@@ -527,10 +534,15 @@ def ask_overwrite(app: App, diff: str) -> bool:
 
 def refresh_snapshot(app: App, session: Session) -> None:
     """Panel changes land in the score after: read the panel again."""
-    if session.panel is None or session.location is None:
+    if session.panel is None or session.location is None or session.snapshot is None:
         return
     try:
-        snapshot = session.panel.snapshot(session.location.version, session.location.panel_domain)
+        if session.snapshot.kind == "3x-ui":
+            node = session.snapshot.nodes[0]  # §7.6: the one node is this server
+            snapshot = session.panel.snapshot(session.location, node.address, node.name)
+        else:
+            snapshot = session.panel.snapshot(session.location.version,
+                                              session.location.panel_domain)  # fmt: skip
     except Exception:  # noqa: BLE001 - the score after then uses what KERBEROS knows
         return
     session.snapshot = snapshot
@@ -549,8 +561,10 @@ def finish_run(app: App, session: Session, engine: Engine) -> None:
     run["finishedAt"] = iso(app.env.clock)
     store = RunStore(app.env.state, app.env.clock)
     store.save(run)
-    applied = sum(1 for c in run["changes"] if c["state"] in ("applied", "confirmed"))
-    store.log(run, f"fix: {applied} applied, {engine.failed} failed, score {run['scoreAfter']}")
+    applied = sum(1 for c in run["changes"] if is_applied(c))
+    store.log(run, f"fix: {applied} applied, {engine.failed} failed, {engine.rollback_failed} "
+                   f"not rolled back, score {run['scoreAfter']}")  # fmt: skip
+    session.data["exit"] = engine.exit_code  # kept if the person quits on S9
     write_report(app, run)
 
 
@@ -631,8 +645,4 @@ def step_done(app: App, session: Session) -> Any:
 
     keys = (("s", t("keys.full_report")), ("Enter", t("keys.menu")), ("q", t("keys.quit")))
     app.interact(t("done.title"), body, keys, handle)
-    if engine is not None and engine.cancelled:
-        return EXIT_INTERRUPTED
-    if engine is not None and engine.failed:
-        return EXIT_PARTIAL
-    return EXIT_OK
+    return engine.exit_code if engine is not None else EXIT_OK

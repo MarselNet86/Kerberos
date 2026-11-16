@@ -13,7 +13,7 @@ from typing import Any, Optional
 
 from kerberos.fixes import subscription, xhttp
 from kerberos.fixes.journal import iso
-from kerberos.fixes.model import Change
+from kerberos.fixes.model import ROLLBACK_FAILED, Change, is_applied
 from kerberos.fixes.panel_changes import diff_text, digest, load_snapshot, save_snapshot, undo
 from kerberos.panel.errors import PanelError
 
@@ -26,6 +26,14 @@ PANEL_ITEMS = {
     "xhttp.uplink_get",
 }
 PING_TYPE = "proxy-head"
+
+
+class Refused(Exception):
+    """The fix cannot run as planned; nothing was written. `code` goes to the journal."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
 
 
 class PanelFixes:
@@ -69,7 +77,7 @@ class PanelFixes:
         for item in data.nodes:
             domains += data.own_domains(item)
         for change in self.engine.run["changes"]:
-            if change["fixId"] == "self_steal.site" and change["state"] == "applied":
+            if change["fixId"] == "self_steal.site" and is_applied(change):
                 domains.append(change["params"].get("domain", ""))
         return [d for d in dict.fromkeys(domains) if d]
 
@@ -103,11 +111,19 @@ class PanelFixes:
                     if current.json and not self.engine.ask_diff(diff_text(wanted, current.json)):
                         result[kind] = current.uuid  # the person keeps their edits
                         continue
+                # What is about to be written, before the PATCH: a rollback compares the
+                # panel with it, also when the answer to the PATCH never came.
+                details["templates"][current.uuid].update(
+                    written=digest(wanted),
+                    writtenPath=save_snapshot(self.engine.store, self.engine.run["runId"],
+                                              f"template-{current.uuid}-written", wanted),
+                )  # fmt: skip
+                self.engine.save()
                 self.client.patch_template(current.uuid, wanted)
-                details["templates"][current.uuid]["written"] = digest(wanted)
                 result[kind] = current.uuid
-        except PanelError as exc:
-            self.engine.finish(change, "failed", exc.code)
+        except Exception as exc:
+            # §10.5: a template written already goes back before the error goes on.
+            self.settle(change, exc.code if isinstance(exc, PanelError) else "internal_error")
             raise
         self.engine.finish(change, "applied")
         self._templates = result
@@ -127,30 +143,51 @@ class PanelFixes:
         self.current = None
         try:
             change = handler(item)
-        except PanelError as exc:
+        except Refused as exc:
+            if self.current is not None:
+                self.engine.finish(self.current, "failed", exc.code)
             self.engine.failed += 1
-            change = self.current
-            if change is not None and change["state"] == "applying":
-                # Part of it may be written already: put that back (§10.1).
-                reason = undo(self.client, change)
-                self.engine.finish(change, "rolled_back" if reason is None else "failed",
-                                   exc.code)  # fmt: skip
             self.engine.event("apply", item, "failed", exc.code)
+            return False
+        except PanelError as exc:
+            self.fail(item, exc.code)
             return False
         self.engine.event("backup", item, "ok")
         self.engine.event("apply", item, "ok")
         self.engine.event("confirm", item, "skipped")
         if not self.recheck(item, change):
-            reason = undo(self.client, change)
-            self.engine.failed += 1
-            self.engine.event("check", item, "rolled_back" if reason is None else "failed",
-                              "recheck")  # fmt: skip
-            self.engine.finish(change, "rolled_back" if reason is None else "failed",
-                               "recheck_failed")  # fmt: skip
+            rolled = self.settle(change, "recheck_failed")
+            self.engine.event("check", item, "rolled_back" if rolled else "failed",
+                              "recheck_failed" if rolled else ROLLBACK_FAILED)  # fmt: skip
             return False
         self.engine.event("check", item, "ok")
         self.engine.finish(change, "applied")
         return True
+
+    def settle(self, change: Change, code: str) -> bool:
+        """What a failed change wrote goes back (§10.5); False: that failed too."""
+        rolled = self.engine.settle(change, code, undo(self.client, change,
+                                                       ask=self.engine.ask_undo))  # fmt: skip
+        if rolled:
+            self.engine.failed += 1
+        return rolled
+
+    def fail(self, item: Any, code: str) -> None:
+        """A step of the fix failed: the change it belongs to is undone and finished."""
+        change = self.current
+        rolled = True
+        if change is not None and change["finishedAt"] is None:
+            rolled = self.settle(change, code)
+        elif change is None:
+            self.engine.failed += 1
+        # A change finished already (the shared templates) was counted when it was settled.
+        self.engine.event("apply", item, "failed", code if rolled else ROLLBACK_FAILED)
+
+    def abandon(self, item: Any, exc: BaseException) -> None:
+        """Not a panel error (a bug, a template that cannot be filled): never left half done."""
+        self.engine.store.log(self.engine.run, f"{item.fix_id}: internal error "
+                                               f"{type(exc).__name__}")  # fmt: skip
+        self.fail(item, "internal_error")
 
     def guarded(self, change: Change, action) -> Any:
         """A panel call of a change; a failure is undone and finished by `run`."""
@@ -164,12 +201,13 @@ class PanelFixes:
         hosts = {h.uuid: h for h in self.guarded(change, self.client.hosts)}
         previous = {u: hosts[u].template_uuid for u in item.params["hosts"] if u in hosts}
         self.snapshot(change, f"hosts-{change['changeId'][:8]}", previous)
-        change["details"] = {"hosts": previous}
         paired = set(item.params.get("paired", []))
-        for host_uuid in previous:
-            kind = "reserve" if host_uuid in paired else "single"
-            self.guarded(change, lambda u=host_uuid, k=kind: self.client.patch_host(
-                u, {"xrayJsonTemplateUuid": templates[k]}))  # fmt: skip
+        written = {u: templates["reserve" if u in paired else "single"] for u in previous}
+        change["details"] = {"hosts": previous, "written": written}
+        self.engine.save()
+        for host_uuid, template in written.items():
+            self.guarded(change, lambda u=host_uuid, w=template: self.client.patch_host(
+                u, {"xrayJsonTemplateUuid": w}))  # fmt: skip
         return change
 
     def ping_type(self, item: Any) -> Change:
@@ -195,10 +233,22 @@ class PanelFixes:
 
     def reserve(self, item: Any) -> Change:
         """§10.9: copies of the main and of the reserve share tags; the reserve's are hidden."""
-        templates = self.templates()
         main, spare = item.node_uuid, item.params["reserve"]
-        change = self.change("reserve", item.target, {"reserve": spare, "node": main})
-        hosts = {h.uuid: h for h in self.guarded(change, self.client.hosts)}
+        params = {"reserve": spare, "node": main}
+        code, hosts = self.pair_problem(item), None
+        if code is None:
+            hosts = {h.uuid: h for h in self.client.hosts()}
+            if not any(u in hosts for u in self.copies_of(main)) or not any(
+                u in hosts for u in self.copies_of(spare)
+            ):
+                code = "pair_not_ready"
+        if code is not None:
+            # Nothing is written: hiding the reserve's copies without a main that injects
+            # them would take the reserve out of every subscription.
+            self.change("reserve", item.target, params)
+            raise Refused(code)
+        templates = self.templates()
+        change = self.change("reserve", item.target, params)
         main_name = self.session.snapshot.node(main).name
         tags = subscription.pair_tags(main_name)
         plan = {}
@@ -214,16 +264,38 @@ class PanelFixes:
                                     "xrayJsonTemplateUuid": templates["reserve"]})  # fmt: skip
         previous = {u: before for u, (before, _after) in plan.items()}
         self.snapshot(change, f"reserve-{main[:8]}", previous)
-        change["details"] = {"hosts": previous, "tags": tags}
+        change["details"] = {
+            "hosts": previous,
+            "tags": tags,
+            "written": {u: after for u, (_before, after) in plan.items()},
+        }
+        self.engine.save()
         for host_uuid, (_before, after) in plan.items():
             self.guarded(change, lambda u=host_uuid, a=after: self.client.patch_host(u, a))
         return change
 
+    def pair_problem(self, item: Any) -> Optional[str]:
+        """Why a reserve pair cannot be linked now; None when it can."""
+        main, spare = item.node_uuid, item.params["reserve"]
+        for other in self.engine.queue:
+            if other is item or other.fix_id != "reserve":
+                continue
+            # A chain A→B→C: B would be a hidden reserve and a visible main at once.
+            if main == other.params.get("reserve") or spare in (
+                other.node_uuid,
+                other.params.get("reserve"),
+            ):
+                return "reserve_chain"
+        if not self.copies_of(main) or not self.copies_of(spare):
+            return "pair_not_ready"
+        return None
+
     def copies_of(self, node_uuid: str) -> list[str]:
+        """Host copies a self-steal of this run made for the node and kept."""
         for change in self.engine.run["changes"]:
             if (
                 change["fixId"] == "self_steal.hosts"
-                and change["state"] == "applied"
+                and is_applied(change)
                 and (change["params"].get("node") == node_uuid)
             ):
                 return list(change["details"].get("created", []))
