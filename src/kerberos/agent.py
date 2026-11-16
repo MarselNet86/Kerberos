@@ -332,13 +332,33 @@ def parse_socket_ports(text: str) -> list:
     return ports
 
 
+def key_options(text: str) -> list:
+    """Names of the options before the key type, commas inside quotes kept together."""
+    names, current, quoted = [], "", False
+    for char in text:
+        if char == '"':
+            quoted = not quoted
+        if char == "," and not quoted:
+            names.append(current)
+            current = ""
+        else:
+            current += char
+    names.append(current)
+    return [name.split("=", 1)[0].strip().lower() for name in names if name.strip()]
+
+
 def count_admin_keys(text: str) -> int:
+    """Keys that let a person log in: not KERBEROS's own, and none with `command=` or
+    `restrict` (cloud-init's "Please login as ubuntu", backup keys): `from=` still counts."""
     count = 0
     for line in (text or "").splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        if re.search(r"(^|\s)(ssh-|ecdsa-|sk-)\S+\s+\S+", line) and AGENT_PATH not in line:
+        key = re.search(r"(^|\s)(ssh-|ecdsa-|sk-)\S+\s+\S+", line)
+        if not key or AGENT_PATH in line:
+            continue
+        if not {"command", "restrict"} & set(key_options(line[: key.start()])):
             count += 1
     return count
 

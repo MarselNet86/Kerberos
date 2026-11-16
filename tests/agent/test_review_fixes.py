@@ -385,3 +385,31 @@ def test_node_api_rule_when_the_panel_is_connected(remnanode, recorder):
                                   {"port": 2222, "panelIp": "198.51.100.5"})  # fmt: skip
     assert code == 0, answer
     assert "ip saddr 198.51.100.5 counter accept" in read(remnanode, "/etc/kerberos/node-api.nft")
+
+
+# -- 7. keys that give no login counted as the administrator's ------------------------------
+CLOUD_INIT = (
+    "no-port-forwarding,no-agent-forwarding,no-X11-forwarding,command=\"echo 'Please login as "
+    'the user \\"ubuntu\\" rather than the user \\"root\\".\';echo;sleep 10;exit 142" '
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICloudInitCloudInitCloudInit ubuntu@image"
+)
+BACKUP = (
+    'command="/usr/bin/rrsync -ro /srv/",restrict '
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBackupBackupBackupBackupBack backup@nas"
+)
+
+
+def test_forced_command_and_restrict_keys_are_not_a_login():
+    assert agent.count_admin_keys(CLOUD_INIT + "\n" + BACKUP + "\n") == 0
+    only_from = 'from="192.0.2.10,198.51.100.0/24" ' + ADMIN
+    assert agent.count_admin_keys(only_from + "\n") == 1, "from= still lets the person in"
+    assert agent.count_admin_keys("no-pty " + ADMIN + "\n") == 1
+    comment = ADMIN.rsplit(" ", 1)[0] + " restrict command=x"
+    assert agent.count_admin_keys(comment + "\n") == 1, "the comment is not an option"
+
+
+def test_key_only_refuses_when_root_has_only_such_keys(node):
+    write(node, "/root/.ssh/authorized_keys", CLOUD_INIT + "\n" + BACKUP + "\n", 0o600)
+    _change, code, answer = apply(node, "ssh.key_only")
+    assert code == 1 and answer["error"]["code"] == "no_admin_key"
+    assert agent.collect_ssh(node)["adminKeys"] == 0
