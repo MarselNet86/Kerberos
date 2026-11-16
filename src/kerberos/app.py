@@ -114,6 +114,7 @@ class App:
         typing: bool = False,
         timeout: Optional[float] = None,
         tick: Optional[Callable[[], Optional[T]]] = None,
+        interrupt: Optional[Callable[[], Optional[T]]] = None,
     ) -> T:
         """Draw and dispatch keys until `handle` or `tick` returns a value.
 
@@ -131,7 +132,11 @@ class App:
             if key is None:
                 continue
             if key == "ctrl-c":
-                if self.confirm_quit():
+                if interrupt is not None:
+                    result = interrupt()
+                    if result is not None:
+                        return result
+                elif self.confirm_quit():
                     raise QuitApp
                 continue
             if not typing:
@@ -196,6 +201,10 @@ class App:
                 return EXIT_OK if result is None else result
             if command == "report":
                 return self.show_report(arg)
+            if command == "rollback":
+                from kerberos.screens.rollback import rollback_flow
+
+                return rollback_flow(self, arg)
             self.notice("info", t("app.soon"))
             return EXIT_OK
         except QuitApp:
@@ -206,7 +215,9 @@ class App:
 
         steps = [panel.step, nodes.step, access.step, check.step_collect, check.step_report]
         if session.mode == "fix":
-            steps.append(self.step_soon)
+            from kerberos.screens import fix
+
+            steps += [fix.step_plan, fix.step_apply, fix.step_done]
         return steps
 
     def run_mode(self, mode: str) -> Optional[int]:
@@ -265,6 +276,10 @@ class App:
                 from kerberos.screens.check import reports_menu
 
                 reports_menu(self)
+            elif choice == "rollback":
+                from kerberos.screens.rollback import rollback_flow
+
+                rollback_flow(self)
             else:
                 self.notice("info", t("app.soon"))
 

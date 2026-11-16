@@ -100,7 +100,7 @@ def step_collect(app: App, session: Session) -> Any:
         return NEXT if progress.done else None
 
     keys = (("q", t("keys.quit")),)
-    app.interact(t("s5.title"), body, keys, lambda _key: None, timeout=0.01, tick=tick)
+    app.interact(t("s5.title"), body, keys, lambda _key: None, timeout=0, tick=tick)
     box_["thread"].join()
     if progress.error is not None:
         app.notice("error", t("s5.failed", error=type(progress.error).__name__), t("s5.title"))

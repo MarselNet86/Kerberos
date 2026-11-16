@@ -50,10 +50,30 @@ def render(run: Run, mask: Optional[Callable[[str], str]] = None) -> str:
                 lines.append("  - " + t("report.details", text=details(item["evidence"])))
         if passed:
             lines.append(("" if not part else "\n") + "✓ " + t("report.passed", n=len(passed)))
+    if run.get("changes"):
+        lines += ["", f"## {t('report.changes')}", ""]
+        for change in run["changes"]:
+            ports = ", ".join(change["params"].get("ports", []))
+            lines.append(
+                t(
+                    "report.change",
+                    state=t(f"state.{change['state']}"),
+                    node=target_label({"target": change["target"], "evidence": {}}, names),
+                    fix=t(f"fix.{change['fixId']}.label", ports=ports),
+                )
+            )
+            if change.get("error"):
+                reason = TEXT.get(f"error.{change['error']}", change["error"])
+                lines.append(t("report.change_error", reason=reason))
+        lines += ["", t("report.backups")]
     lines += ["", f"## {t('report.nodes')}", "", t("report.nodes.head"), "|---|---|---|---|"]
     for node in run["nodes"]:
         access = t(f"access.status.{node.get('access', 'none')}")
         lines.append(
             f"| {node['name']} | {node['address']} | {node.get('sshPort', 22)} | {access} |"
         )
+    if run["mode"] == "fix" and run.get("changes"):
+        from kerberos.screens.fix import rollback_command
+
+        lines += ["", f"## {t('report.rollback')}", "", "`" + rollback_command(run["runId"]) + "`"]
     return mask("\n".join(lines) + "\n")

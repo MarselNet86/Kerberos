@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
-from kerberos.demo.nodes import build_prober, build_whois, give_agent
+from kerberos.demo.nodes import auth_methods_of, build_prober, build_whois, give_agent
 from kerberos.host import CommandResult, FakeHost
 from kerberos.nodes.fake import FakeNode, FakeTransport
 from kerberos.nodes.keys import PublicKey, demo_blob
@@ -416,4 +416,5 @@ def attach(env, state_root: Optional[Path] = None) -> None:
     env.state = State(root)
     env.transport = FakeTransport(build_nodes(), env.state)
     env.prober = build_prober()
+    env.prober.auth = auth_methods_of(list(env.transport.nodes.values()))
     env.whois = build_whois()

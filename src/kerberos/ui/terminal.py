@@ -223,6 +223,10 @@ class FakeTerminal:
         return False
 
     def read_key(self, timeout: Optional[float] = None) -> Optional[str]:
+        # A non-blocking poll while work runs (S5, S8): the person has typed only
+        # an interruption so far; other scripted keys belong to the next screen.
+        if timeout == 0 and self._keys and self._keys[0] != "ctrl-c":
+            return None
         if self._keys:
             key = self._keys.popleft()
             if key == "tick":
