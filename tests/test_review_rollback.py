@@ -198,6 +198,41 @@ def test_xui_rollback_of_the_port_is_tried_from_outside(answer, code):
         assert ssh["ports"] == [new] and app.env.state.node("local").ssh_port == new
 
 
+@pytest.mark.parametrize("answer", ["enter", "esc"])
+def test_xui_port_whose_recheck_fails_is_tried_on_the_old_port_from_outside(answer):
+    """The engine takes a confirmed port back the same way as `kerberos rollback` (§9.3)."""
+    from kerberos.demo.xui import XUI_IP
+    from kerberos.nodes.transport import TransportError
+
+    # Space marks the port, consent, accept, «the new port works», then the old port.
+    keys = XUI_PLAN + ["down"] * XUI_PORT_ROW + ["space", "enter", "enter", "enter", answer]
+    app, term = make_app(keys + ["enter", "enter"], panel_kind=None, height=44)
+    real = app.env.transport.agent
+    armed = {"on": False, "done": False}
+
+    def agent(target, command, payload=None, **kwargs):
+        if command.startswith("confirm") and target.port != 22 and not armed["done"]:
+            armed["on"] = armed["done"] = True  # the confirm on the new port
+        elif command == "facts" and armed["on"]:
+            armed["on"] = False
+            raise TransportError("timeout", "facts")  # the recheck gets no answer
+        return real(target, command, payload, **kwargs)
+
+    app.env.transport.agent = agent
+    app.run("fix")
+    assert seen(term, t("rb.outside", port=22, command=f"ssh -p 22 root@{XUI_IP}"))
+    change = next(c for c in last_run(app)["changes"] if c["fixId"] == "ssh.port")
+    ssh = app.env.transport.nodes["127.0.0.1"].state["facts"]["ssh"]
+    if answer == "enter":
+        assert (change["state"], change["error"]) == ("rolled_back", "recheck_failed")
+        assert ssh["ports"] == [22] and app.env.state.node("local").ssh_port == 22
+    else:
+        new = change["details"]["newPort"]
+        assert (change["state"], change["error"]) == ("confirmed", "rollback_failed")
+        assert change["details"]["rollbackError"] == "port_closed"
+        assert ssh["ports"] == [new] and app.env.state.node("local").ssh_port == new
+
+
 # -- 5. a node given by name is reached on its IPv4 (§8.2) ----------------------------------
 NL1_NAME = "nl-1.example.com"
 TO_S4 = login_keys() + ["enter", "enter"]

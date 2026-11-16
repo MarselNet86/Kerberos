@@ -51,6 +51,7 @@ def finalize_items(client: PanelClient, store: RunStore, pairs: list) -> list:
                 config = finalize_profile(profile.config, item["domain"])
                 if config != profile.config:
                     client.patch_profile(profile.uuid, config)
+                    remember_final(store, run, item, config)
         except PanelError as exc:
             item["error"] = exc.code
             failed.append(item)
@@ -60,6 +61,20 @@ def finalize_items(client: PanelClient, store: RunStore, pairs: list) -> list:
         run.setdefault("finalized", []).append({**item, "at": iso(store.clock)})
         store.save(run)
     return failed
+
+
+def remember_final(store: RunStore, run: dict, item: dict, config: dict) -> None:
+    """A later rollback compares the panel with the finalized profile: not a hand edit."""
+    from kerberos.fixes.panel_changes import digest, save_snapshot
+
+    change = next((c for c in run["changes"] if c["changeId"] == item["changeId"]), None)
+    if change is None:
+        return
+    # The profile holds the Reality private key: a 0600 snapshot, never run.json.
+    change["details"]["writtenPath"] = save_snapshot(
+        store, run["runId"], f"profile-{item['profileUuid']}-final", config
+    )
+    change["details"]["written"] = digest(config)
 
 
 def finalize_xui(client: Any, store: RunStore, run: dict, item: dict) -> None:
@@ -83,11 +98,16 @@ def finalize_xui(client: Any, store: RunStore, run: dict, item: dict) -> None:
 
 
 def schedule(app: Any, client: PanelClient, run: dict, launcher: str) -> bool:
-    """«Сделать автоматически»: a 2-day panel token and a systemd timer for the run."""
+    """«Сделать автоматически»: a 2-day panel token and a systemd timer for the run.
+
+    `finalizeTimer` names the timer only when there is one: S9 says «automatic» by it.
+    """
     store = RunStore(app.env.state, app.env.clock)
+    run["finalizeTimer"] = None
     try:
         token_uuid, token = client.create_token("kerberos-finalize", 2)
     except PanelError:
+        store.save(run)
         return False
     path = store.path(run["runId"]) / TOKEN_FILE
     api = run["panel"].get("api", "")
@@ -95,15 +115,43 @@ def schedule(app: Any, client: PanelClient, run: dict, launcher: str) -> bool:
     unit = f"kerberos-finalize-{run['runId']}"
     result = app.env.host.run(["systemd-run", "--on-active=24h", "--unit", unit, launcher,
                                "finalize", run["runId"]])  # fmt: skip
-    run["finalizeTimer"] = unit if result.ok else None
+    if result.ok:
+        run["finalizeTimer"] = unit
+    else:
+        # No timer will use the token: it must not lie around for two days (§7.3).
+        forget_token(client, token_uuid, path)
     store.save(run)
     return result.ok
+
+
+def forget_token(client: PanelClient, token_uuid: str, path: Any) -> None:
+    """The finalization token leaves the panel and the disk."""
+    try:
+        client.delete_token(token_uuid)
+    except PanelError:
+        pass  # it expires in two days anyway
+    path.unlink(missing_ok=True)
+
+
+def drop_saved_token(store: RunStore, transport: Any, clock: Clock, run_id: str) -> None:
+    """The token of a run whose timer has nothing to do (its self-steal went back)."""
+    path = store.path(run_id) / TOKEN_FILE
+    try:
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        api, token, token_uuid = saved["api"], saved["token"], saved["uuid"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return  # no token, or one KERBEROS cannot read: nothing it could delete
+    client = PanelClient(api, transport, clock)
+    client.set_token(token)
+    forget_token(client, token_uuid, path)
 
 
 def unattended(store: RunStore, transport: Any, clock: Clock, run_id: Optional[str]) -> int:
     """`kerberos finalize` without a terminal: the timer's call with the saved token."""
     pairs = due_items(store, clock.now(), run_id)
     if not pairs:
+        if run_id is not None:
+            drop_saved_token(store, transport, clock, run_id)
         return 0
     code = 0
     for run in {id(r): r for r, _i in pairs}.values():

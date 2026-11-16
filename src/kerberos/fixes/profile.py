@@ -176,6 +176,18 @@ def build_profile(
     return profile
 
 
+def template_tags(profile: dict) -> dict:
+    """Tags of the Reality and Hysteria2 inbounds the template made in a built profile.
+
+    `build_profile` puts the template's inbounds first; the person's own come after.
+    """
+    inbounds = [i for i in profile.get("inbounds") or [] if isinstance(i, dict)]
+    return {
+        "reality": next((i.get("tag") for i in inbounds if is_reality(i)), None),
+        "hysteria": next((i.get("tag") for i in inbounds if is_hysteria(i)), None),
+    }
+
+
 def finalize_profile(current: dict, domain: str) -> dict:
     """§10.4 step 6: only the own domain stays in serverNames."""
     profile = copy.deepcopy(current)

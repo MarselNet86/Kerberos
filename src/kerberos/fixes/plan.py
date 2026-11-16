@@ -168,6 +168,12 @@ def build_plan(
             and (facts.get("remnanode") or {}).get("network") == "bridge"
         ):
             item.blocked = "bridge_network"
+        if item.fix_id == "node_api.panel_only" and item.blocked is None:
+            # §10.3: the rule lets in only the address KERBEROS comes from. When the panel
+            # reaches the node from another one (IPv6 against IPv4, another interface), the
+            # rule would cut the panel off. No such fact (an older agent): not known, not blocked.
+            if (facts.get("nodeApi") or {}).get("panelPeer") is False:
+                item.blocked = "panel_peer"
         if item.fix_id == "ssh.key_only" and not (facts.get("ssh") or {}).get("adminKeys"):
             mode = (admin or {}).get("mode", "skip")
             if mode in ("mine", "create"):
@@ -227,13 +233,14 @@ def edge_paths(data: CheckInput, node) -> list[str]:
 
 def template_hosts(data: CheckInput, template_uuid: str) -> tuple[list, list]:
     """Enabled hosts of the chosen nodes on a template; those whose node has a reserve."""
-    from kerberos.checks.rules import reserves_of
+    from kerberos.checks.rules import host_template, reserves_of
 
     hosts, paired = [], []
     for node in data.nodes:
         has_reserve = bool(reserves_of(data, node))
         for host in data.snapshot.node_hosts(node.node):
-            if host.is_disabled or host.template_uuid != template_uuid or host.uuid in hosts:
+            if (host.is_disabled or host.uuid in hosts
+                    or host_template(data.snapshot, host) != template_uuid):  # fmt: skip
                 continue
             hosts.append(host.uuid)
             if has_reserve:
@@ -283,9 +290,23 @@ def self_steal_blocker(data: CheckInput, node) -> Optional[str]:
            for s in listening):  # fmt: skip
         return "port80_busy"
     on443 = [s for s in listening if s["port"] == 443 and s["proto"] == "tcp"]
-    if on443 and not any(s.get("process") in ("xray", "rw-core") for s in on443):
+    xray = any(is_xray(s.get("process")) for s in on443) or xui_port(data, node, 443)
+    if on443 and not xray:
         return "port443"
     return None
+
+
+def is_xray(process) -> bool:
+    """Xray as `ss` names it: xray, rw-core in remnanode, xray-linux-amd6 of 3x-ui (15 chars)."""
+    name = str(process or "")
+    return name == "rw-core" or name.startswith("xray")
+
+
+def xui_port(data: CheckInput, node, port: int) -> bool:
+    """3x-ui (§7.6): a port of a running inbound is Xray's, whatever its binary is called."""
+    if data.snapshot.kind != "3x-ui":
+        return False
+    return any(not h.is_disabled and h.port == port for h in data.snapshot.node_hosts(node.node))
 
 
 def follow_admin_key(items: list[PlanItem]) -> None:

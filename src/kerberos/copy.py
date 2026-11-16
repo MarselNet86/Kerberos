@@ -657,6 +657,9 @@ TEXT: dict[str, str] = {
     "error.check_failed": "проверка снаружи не увидела свой домен",
     "error.node_offline": "нода не подключилась к панели после смены профиля",
     "error.host_mismatch": "панель сохранила копию хоста не так, как её отправили",
+    "error.hostkey_mismatch": (
+        "сервер по-прежнему показывает старый ключ, новых ключей sshd не видит"
+    ),
     "error.changed_in_panel": "объект в панели изменён после KERBEROS",
     "error.no_panel": "нет доступа к панели",
     "error.no_snapshot": "нет снимка объекта до изменения",
@@ -839,6 +842,12 @@ TEXT: dict[str, str] = {
     "cli.no_tty": "Запустите KERBEROS в терминале",
     "cli.version": "KERBEROS {version}",
     "cli.interrupted": "Прервано.",
+    "error.rollback_failed": "не откатилось и осталось на месте: нужна ручная проверка",
+    "error.internal_error": "внутренняя ошибка KERBEROS",
+    "error.pair_not_ready": "у одной из нод пары нет копий хостов на своём домене",
+    "error.reserve_chain": "нода не может быть резервом и основой одновременно",
+    "plan.reserve.is_reserve": "{node} уже резерв для {main}: у резерва не бывает своего резерва",
+    "plan.blocked.panel_peer": "панель подключается к ноде не с того адреса, что KERBEROS",
 }
 
 

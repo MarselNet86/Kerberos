@@ -86,13 +86,23 @@ class Masker:
         self.enabled = not self.enabled
 
     def register(self, *values: Optional[str]) -> None:
-        """Remember sensitive domains seen in panel or node data."""
+        """Remember sensitive domains seen in panel or node data, and their DNS zones.
+
+        A zone is masked too: «fleet.one_zone» names it on its own. The set is replaced,
+        not changed in place: S5 registers names from the collecting thread while the
+        screen thread masks text.
+        """
+        names = set(self._registered)
         for value in values:
             if not value:
                 continue
             name = value.strip().lower().rstrip(".")
             if "." in name and not is_doc_domain(name) and not _looks_like_ip(name):
-                self._registered.add(name)
+                names.add(name)
+                zone = ".".join(name.split(".")[-2:])
+                if not is_doc_domain(zone):
+                    names.add(zone)
+        self._registered = names
 
     # -- single values -------------------------------------------------
     def ip(self, value: str) -> str:
@@ -152,7 +162,8 @@ class Masker:
         """Mask unconditionally (report files written with --mask)."""
         out = _V6_RE.sub(lambda m: self._sub_v6(m.group(1)), value)
         out = _V4_RE.sub(lambda m: self._sub_v4(m.group(1)), out)
-        for name in sorted(self._registered, key=len, reverse=True):
+        registered = self._registered  # one set for the whole text (see register)
+        for name in sorted(registered, key=len, reverse=True):
             out = re.sub(
                 r"(?<![\w-])" + re.escape(name) + r"(?![\w-])",
                 lambda _m, n=name: self.domain(n),

@@ -218,12 +218,14 @@ def test_finalization_after_a_day_and_twice_changes_nothing():
 
 
 def test_unattended_finalization_with_the_saved_token():
+    from kerberos.demo.fleet import build_host
     from kerberos.host import CommandResult
 
     panel, nodes = fleet()
+    host = build_host()
+    host.on(["systemd-run"], CommandResult(0))  # the timer is set: the token is kept for it
     keys = TO_PLAN + domain_keys(NL1_SELF_STEAL, "nl-1.example.com") + ["f"] + APPLY
-    app, term = make_app(keys, panel=panel, nodes=list(nodes.values()), height=46)
-    app.env.host.commands[("systemd-run",)] = CommandResult(0, "", "")  # the timer is set
+    app, term = make_app(keys, panel=panel, nodes=list(nodes.values()), height=46, host=host)
     app.run("fix")
     store = store_of(app)
     run = store.runs()[0]

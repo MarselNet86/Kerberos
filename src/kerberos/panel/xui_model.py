@@ -79,6 +79,19 @@ def client_sni(stream: dict) -> str:
     return str(tls.get("serverName") or "") if isinstance(tls, dict) else ""
 
 
+def carries_udp(item: dict) -> bool:
+    """Xray listens on UDP for this inbound too (Hysteria2, mKCP, Shadowsocks tcp,udp...)."""
+    stream, settings = item["streamSettings"], item["settings"]
+    if item["protocol"] in UDP or stream.get("network") in ("kcp", "quic"):
+        return True
+    if item["protocol"] in ("shadowsocks", "dokodemo-door", "tunnel"):
+        return "udp" in str(settings.get("network") or "")
+    if item["protocol"] == "socks":
+        return bool(settings.get("udp"))
+    tls = stream.get("tlsSettings") if isinstance(stream.get("tlsSettings"), dict) else {}
+    return stream.get("network") == "xhttp" and "h3" in (tls.get("alpn") or [])
+
+
 def client_fingerprint(stream: dict) -> str:
     for key in ("realitySettings", "tlsSettings"):
         block = stream.get(key)
@@ -118,9 +131,11 @@ def snapshot(
                           is_disabled=not item["enable"], is_hidden=False, tags=[],
                           xhttp_extra=None, profile_uuid=PROFILE, inbound_uuid=uuid,
                           template_uuid=None, override_sni=False, view_position=None))  # fmt: skip
-        if item["enable"] and item["listen"] in ("", "0.0.0.0", "::"):
-            proto = "udp" if item["protocol"] in UDP or stream.get("network") == "kcp" else "tcp"
-            ports.append((item["port"], proto))
+        if item["enable"]:
+            # §7.6: a running inbound is public on purpose, whatever address it listens on.
+            ports.append((item["port"], "tcp"))
+            if carries_udp(item):
+                ports.append((item["port"], "udp"))
     for key in ("port", "subPort"):
         if info.get(key):
             ports.append((int(info[key]), "tcp"))

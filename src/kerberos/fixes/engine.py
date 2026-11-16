@@ -6,6 +6,10 @@ A change that needs confirmation (SSH access) is confirmed over a new
 connection within 60 s, else rolled back (the agent's own timer rolls it back
 anyway). After applying, the finding is checked again; if it still fails,
 the change is rolled back. Interruption stops before the next change.
+
+A change whose automatic rollback fails too keeps the state it reached, with
+error `rollback_failed`: it is still in place, `kerberos rollback` offers it,
+and the run exits with 5 (§5.3).
 """
 
 from __future__ import annotations
@@ -15,15 +19,21 @@ from typing import Any, Callable, Optional
 
 from kerberos.checks import spec
 from kerberos.fixes.journal import RunStore, iso
-from kerberos.fixes.model import Change
+from kerberos.fixes.model import ROLLBACK_FAILED, Change
 from kerberos.fixes.plan import PlanItem
+from kerberos.flow import EXIT_INTERRUPTED, EXIT_OK, EXIT_PARTIAL, EXIT_ROLLBACK_FAILED
 from kerberos.nodes import schema
 from kerberos.nodes.transport import NodeAgentError, Target, TransportError
 
 CONFIRM_WINDOW = 60
 LOCAL_ADDRESS = "127.0.0.1"  # the 3x-ui server reaching itself (§7.6)
 CONFIRM_RETRY = 5
-ROLLBACKABLE = ("applied", "confirmed", "pending_confirm")
+# §11.2: a change left "applying" was cut short (a killed process, an uncaught error)
+# and may be partly in place, so `kerberos rollback` offers it as well.
+ROLLBACKABLE = ("applying", "applied", "confirmed", "pending_confirm")
+# §10.3 node_api.panel_only: the panel must keep its node for about 30 s after the rule.
+NODE_API_POLLS = 6
+NODE_API_PAUSE = 5
 
 
 class Engine:
@@ -42,12 +52,19 @@ class Engine:
         self.queue = [i for i in items if i.selected and i.blocked is None]
         self.index = 0
         self.cancelled = False
-        self.failed = 0
+        self.failed = 0  # plan items that failed; what they changed went back
+        self.rollback_failed = 0  # changes that failed and could not be rolled back
         self.on_event = on_event or (lambda *args: None)
         self.ask_diff: Callable[[str], bool] = lambda _diff: True
+        # An automatic undo meets a panel object edited after KERBEROS wrote it: overwrite?
+        # By default no: the change stays as it is and `kerberos rollback` asks later.
+        self.ask_undo: Callable[[str], bool] = lambda _diff: False
         # 3x-ui (§7.6): a new SSH port of this very server is tried from outside by
         # the person: KERBEROS on the same server cannot see the hoster's firewall.
         self.ask_outside: Callable[[int, str], bool] = lambda _port, _command: False
+        # The same, when a confirmed new port goes back after its recheck: the person
+        # tries the old port from outside (§9.3).
+        self.ask_old_port: Callable[[int, str], bool] = lambda _port, _command: False
         self._panel_fixes = None
 
     @property
@@ -66,6 +83,17 @@ class Engine:
     @property
     def current(self) -> Optional[PlanItem]:
         return None if self.done else self.queue[self.index]
+
+    @property
+    def exit_code(self) -> int:
+        """§5.3: a rollback that failed needs a person first, then interruption, then 4."""
+        if self.rollback_failed:
+            return EXIT_ROLLBACK_FAILED
+        if self.cancelled:
+            return EXIT_INTERRUPTED
+        if self.failed:
+            return EXIT_PARTIAL
+        return EXIT_OK
 
     def step(self) -> None:
         """Apply the next change completely: it is never left half done."""
@@ -112,6 +140,23 @@ class Engine:
         change["finishedAt"] = iso(self.env.clock)
         self.save()
 
+    def settle(self, change: Change, failure: str, rollback_error: Optional[str],
+               done: str = "rolled_back") -> bool:  # fmt: skip
+        """A failed change after its automatic rollback. False: that rollback failed too.
+
+        Then the change keeps the state it reached: it is still in place.
+        """
+        if rollback_error is None:
+            self.finish(change, done, failure)
+            return True
+        change["error"] = ROLLBACK_FAILED
+        change["details"] = {**(change.get("details") or {}), "failure": failure,
+                             "rollbackError": rollback_error}  # fmt: skip
+        change["finishedAt"] = iso(self.env.clock)
+        self.rollback_failed += 1
+        self.save()
+        return False
+
     # -- one change ------------------------------------------------------------
     def apply(self, item: PlanItem) -> None:
         from kerberos.fixes.panel_fixes import PANEL_ITEMS
@@ -119,8 +164,8 @@ class Engine:
         if item.fix_id in PANEL_ITEMS:
             try:
                 self.panel_fixes.run(item)
-            except Exception:  # noqa: BLE001 - a failed panel step is counted, not fatal
-                self.failed += 1
+            except Exception as exc:  # noqa: BLE001 - a panel change is never left half done
+                self.panel_fixes.abandon(item, exc)
             return
         if item.fix_id == "self_steal":
             from kerberos.fixes.self_steal import SelfSteal
@@ -163,11 +208,12 @@ class Engine:
             self.finish(change, "failed", exc.code)
             return
         except TransportError as exc:
-            # The change may have happened before the connection broke: undo it.
-            self.failed += 1
-            self.rollback(target, change["changeId"])
-            self.event("apply", item, "failed", exc.kind)
-            self.finish(change, "failed", exc.kind)
+            # The change may have happened before the connection broke: undo it. An agent
+            # without a record of it never started it.
+            error = self.rollback(target, change["changeId"], missing_ok=True)
+            if self.settle(change, exc.kind, error, done="failed"):
+                self.failed += 1
+            self.event("apply", item, "failed", exc.kind if error is None else ROLLBACK_FAILED)
             return
         self.event("backup", item, "ok")
         self.event("apply", item, "ok")
@@ -175,11 +221,16 @@ class Engine:
         state = "applied" if answer.get("state") == "noop" else answer.get("state")
         change["state"] = state
         self.save()
+        original, previous = target, None
         if state == "pending_confirm":
-            previous = None
             confirm_target = target
             if item.fix_id == "hostkeys.regenerate":
-                previous = self.pin_new_host_key(target, change)
+                previous, served = self.pin_new_host_key(target, change)
+                if not served:
+                    # sshd does not show any of the new keys (HostKey elsewhere, §10.3):
+                    # confirming on the old pin would report keys nobody sees.
+                    self.give_up(item, change, target, "confirm", "hostkey_mismatch")
+                    return
             if item.fix_id == "ssh.port":
                 confirm_target = self.new_port_target(target, change)
             self.event("confirm", item, "running")
@@ -190,13 +241,14 @@ class Engine:
                 confirmed = self.confirm(confirm_target, change["changeId"])
             if not confirmed:
                 # The old port still listens until confirm: roll back through it.
-                rolled = self.rollback(target, change["changeId"], fresh=True)
+                error = self.rollback(target, change["changeId"], fresh=True)
                 if previous:
                     self.env.state.pin(target.address, target.port, "ssh-ed25519", previous)
-                error = "port_closed" if item.fix_id == "ssh.port" else "confirm_failed"
-                self.failed += 1
-                self.event("confirm", item, "rolled_back" if rolled else "failed", error)
-                self.finish(change, "rolled_back" if rolled else "failed", error)
+                reason = "port_closed" if item.fix_id == "ssh.port" else "confirm_failed"
+                if self.settle(change, reason, error):
+                    self.failed += 1
+                self.event("confirm", item, "rolled_back" if error is None else "failed",
+                           reason if error is None else ROLLBACK_FAILED)  # fmt: skip
                 return
             change["state"] = "confirmed"
             self.save()
@@ -208,31 +260,75 @@ class Engine:
             self.event("confirm", item, "skipped")
         self.event("check", item, "running")
         if not self.recheck(item, target):
-            rolled = self.rollback(target, change["changeId"])
-            self.failed += 1
-            self.event("check", item, "rolled_back" if rolled else "failed", "recheck")
-            self.finish(change, "rolled_back" if rolled else "failed", "recheck_failed")
+            if item.fix_id == "ssh.port" and change["state"] == "confirmed":
+                error, back = self.roll_back_port(item, target, change)
+            else:
+                error = self.rollback(target, change["changeId"])
+                back = error is None
+            if back:
+                self.restore_access(item, change, original, previous)
+            if self.settle(change, "recheck_failed", error):
+                self.failed += 1
+            self.event("check", item, "rolled_back" if error is None else "failed",
+                       "recheck_failed" if error is None else ROLLBACK_FAILED)  # fmt: skip
             return
         self.event("check", item, "ok")
         self.finish(change, change["state"])
+
+    def give_up(self, item: PlanItem, change: Change, target: Target, step: str,
+                reason: str) -> None:  # fmt: skip
+        """Roll an agent change back before it is confirmed; journal why."""
+        error = self.rollback(target, change["changeId"])
+        if self.settle(change, reason, error):
+            self.failed += 1
+        self.event(step, item, "rolled_back" if error is None else "failed",
+                   reason if error is None else ROLLBACK_FAILED)  # fmt: skip
+
+    def roll_back_port(self, item: PlanItem, target: Target, change: Change) -> tuple:
+        """A confirmed SSH port goes back the way it came (§9.3): the old port is proved
+        by a new connection, from outside on 3x-ui, before the new one closes.
+
+        (error, back): back when SSH listens on the old port only again.
+        """
+        from kerberos.nodes.ssh_port import roll_back_port
+
+        node = self.session.snapshot.node(item.node_uuid or "")
+        address = node.address if node else target.address
+
+        def ask(port: int) -> bool:
+            return bool(self.ask_old_port(port, f"ssh -p {port} root@{address}"))
+
+        return roll_back_port(self.env, target, change, ask)
+
+    def restore_access(self, item: PlanItem, change: Change, original: Target,
+                       previous: Optional[str]) -> None:  # fmt: skip
+        """A confirmed access change went back: KERBEROS's own records go back with it."""
+        if item.fix_id == "ssh.port" and change["state"] == "confirmed":
+            self.move_to_port(item.node_uuid or "", original.port)
+        if item.fix_id == "hostkeys.regenerate" and previous:
+            self.env.state.pin(original.address, original.port, "ssh-ed25519", previous)
 
     def outside_login(self, item: PlanItem, port: int) -> bool:
         node = self.session.snapshot.node(item.node_uuid or "")
         address = node.address if node else ""
         return bool(self.ask_outside(port, f"ssh -p {port} root@{address}"))
 
-    def pin_new_host_key(self, target: Target, change: Change) -> Optional[str]:
-        """§10.3: read the new key from the agent, check it with ssh-keyscan, pin it."""
+    def pin_new_host_key(self, target: Target, change: Change) -> tuple[Optional[str], bool]:
+        """§10.3: read the new key from the agent, check it with ssh-keyscan, pin it.
+
+        (the key pinned before, whether sshd now shows one of the new keys).
+        """
         state = self.env.state
         previous = state.pinned(target.address, target.port)
         new = {k["fingerprint"] for k in change["details"].get("hostKeys", [])
                if k.get("type") == "ED25519"}  # fmt: skip
         scanned = self.env.transport.keyscan(target.address, target.port)
-        if scanned is not None and scanned.fingerprint in new:
-            state.pin(target.address, target.port, scanned.type, scanned.blob)
-            change["details"]["previousKey"] = previous
-            self.save()
-        return previous
+        if scanned is None or scanned.fingerprint not in new:
+            return previous, False
+        state.pin(target.address, target.port, scanned.type, scanned.blob)
+        change["details"]["previousKey"] = previous
+        self.save()
+        return previous, True
 
     def new_port_target(self, target: Target, change: Change) -> Target:
         """§10.3: the same host key answers on the new port; KERBEROS goes there."""
@@ -262,12 +358,19 @@ class Engine:
                     return False
                 clock.sleep(CONFIRM_RETRY)
 
-    def rollback(self, target: Target, change_id: str, fresh: bool = False) -> bool:
+    def rollback(self, target: Target, change_id: str, fresh: bool = False,
+                 missing_ok: bool = False) -> Optional[str]:  # fmt: skip
+        """None: the agent rolled the change back; else the code of why it did not.
+
+        `missing_ok`: an agent with no record of the change never applied it.
+        """
         try:
             self.env.transport.agent(target, f"rollback {change_id}", fresh=fresh)
-            return True
-        except (NodeAgentError, TransportError):
-            return False
+            return None
+        except NodeAgentError as exc:
+            return None if missing_ok and exc.code == "no_backup" else exc.code
+        except TransportError as exc:
+            return exc.kind
 
     def recheck(self, item: PlanItem, target: Target) -> bool:
         data = self.session.data["input"]
@@ -288,12 +391,28 @@ class Engine:
             methods = self.env.prober.auth_methods(node.ipv4, target.port)
             if methods is not None and set(methods) - {"publickey"}:
                 return False
-        if item.fix_id == "node_api.panel_only" and self.session.panel is not None:
+        if item.fix_id == "node_api.panel_only":
+            return self.panel_keeps_node(item.node_uuid or "")
+        return True
+
+    def panel_keeps_node(self, node_uuid: str) -> bool:
+        """§10.3: the panel still reaches the node a while after the rule (6 × 5 s).
+
+        The panel notices a lost node only on its next health check, so one look
+        right after the rule proves nothing. The demo has nothing to wait for.
+        """
+        panel = self.session.panel
+        if panel is None or not hasattr(panel, "nodes"):
+            return True
+        pause = 0 if self.env.demo else NODE_API_PAUSE
+        for _ in range(NODE_API_POLLS):
+            if pause:
+                self.env.clock.sleep(pause)
             try:
-                nodes = {n.uuid: n for n in self.session.panel.nodes()}
+                nodes = {n.uuid: n for n in panel.nodes()}
             except Exception:  # noqa: BLE001 - the panel check is advisory here
                 return True
-            current = nodes.get(item.node_uuid or "")
+            current = nodes.get(node_uuid)
             if current is not None and not current.is_connected:
                 return False
         return True

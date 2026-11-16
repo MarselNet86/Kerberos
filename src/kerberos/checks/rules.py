@@ -23,7 +23,7 @@ from kerberos.checks import (
     xhttp_inbounds,
 )
 from kerberos.fixes.model import Finding
-from kerberos.panel.model import Host
+from kerberos.panel.model import Host, PanelSnapshot
 
 # Hosts, templates, squads, reserves and subscription settings exist only in
 # Remnawave; with 3x-ui these checks have nothing to look at (tech.md §7.6).
@@ -578,13 +578,28 @@ def dpi_mtu(data: CheckInput) -> list[Finding]:
 
 
 # == Topic 5. Smart routing ======================================================
+def host_template(snapshot: PanelSnapshot, host: Host) -> Optional[str]:
+    """The XRAY_JSON template a host's subscription is built from.
+
+    A host without one gets the panel's default template. Nothing in the API marks it:
+    KERBEROS takes the XRAY_JSON template named «Default» (any case); without one the
+    host is skipped, as before.
+    """
+    if host.template_uuid:
+        return host.template_uuid
+    default = next((t for t in snapshot.templates if t.type == "XRAY_JSON"
+                    and t.name.strip().lower() == "default"), None)  # fmt: skip
+    return default.uuid if default is not None else None
+
+
 def used_templates(data: CheckInput) -> list:
     used = []
     for item in data.nodes:
         for host in node_hosts(data, item):
-            if host.is_disabled or not host.template_uuid:
+            uuid = host_template(data.snapshot, host)
+            if host.is_disabled or not uuid:
                 continue
-            template = data.snapshot.template(host.template_uuid)
+            template = data.snapshot.template(uuid)
             if template is not None and template.json is not None and template not in used:
                 used.append(template)
     return used

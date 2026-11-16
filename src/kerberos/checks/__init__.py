@@ -156,6 +156,12 @@ def inbound_configs(snapshot: PanelSnapshot, node: Node) -> list[dict]:
     if profile is None:
         return []
     tags = {i.tag for i in snapshot.node_inbounds(node)}
+    if snapshot.kind == "3x-ui":
+        # §7.6: an inbound switched off in 3x-ui does not run, so it shows nothing to anyone.
+        off = {h.inbound_uuid for h in snapshot.hosts if h.is_disabled}
+        running = {i.tag for i in snapshot.node_inbounds(node) if i.uuid not in off}
+        return [i for i in profile.config.get("inbounds") or []
+                if isinstance(i, dict) and i.get("tag") in running]  # fmt: skip
     return [
         i for i in profile.config.get("inbounds") or []
         if isinstance(i, dict) and (not tags or i.get("tag") in tags)
