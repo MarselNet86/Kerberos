@@ -12,6 +12,7 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
+from kerberos.demo.nodes import build_prober, build_whois, give_agent
 from kerberos.host import CommandResult, FakeHost
 from kerberos.nodes.fake import FakeNode, FakeTransport
 from kerberos.nodes.keys import PublicKey, demo_blob
@@ -82,7 +83,12 @@ def xhttp(tag: str, path: str) -> dict:
         "streamSettings": {
             "network": "xhttp",
             "security": "none",
-            "xhttpSettings": {"path": path, "mode": "auto", "extra": {"noSSEHeader": True}},
+            "xhttpSettings": {
+                "path": path,
+                "mode": "auto",
+                "scMaxEachPostBytes": 1000000,
+                "extra": {"noSSEHeader": True},
+            },
         },
     }
 
@@ -131,14 +137,14 @@ def build_panel(shape: str = "tags") -> FakePanel:
     de1 = raw_profile(
         "DE-1",
         profile_config(
-            reality("VLESS-REALITY-DE1", f"{FOREIGN_SNI}:443", [FOREIGN_SNI], "DEMO_KEY_DE1"),
+            reality("VLESS-REALITY-DE1", "127.0.0.1:8445", ["de-1.example.com"], "DEMO_KEY_DE1"),
             hysteria("HY2-DE1", f"https://{FOREIGN_SNI}"),
         ),
     )
     fi1 = raw_profile(
         "FI-1",
         profile_config(
-            reality("VLESS-REALITY-FI1", f"{FOREIGN_SNI}:443", [FOREIGN_SNI], "DEMO_KEY_FI1"),
+            reality("VLESS-REALITY-FI1", "127.0.0.1:8445", ["fi-1.example.com"], "DEMO_KEY_FI1"),
             xhttp("XHTTP-FI1", "/api/stream"),
         ),
     )
@@ -205,7 +211,7 @@ def build_panel(shape: str = "tags") -> FakePanel:
             "VLESS-REALITY-DE1",
             "DE Reality",
             "198.51.100.20",
-            sni=FOREIGN_SNI,
+            sni="de-1.example.com",
             fingerprint="chrome",
             tags=["DE1"],
             template_uuid=tpl,
@@ -217,7 +223,7 @@ def build_panel(shape: str = "tags") -> FakePanel:
             "HY2-DE1",
             "DE Hysteria2",
             "198.51.100.20",
-            sni=FOREIGN_SNI,
+            sni="de-1.example.com",
             fingerprint="chrome",
             tags=["DE1"],
             position=4,
@@ -228,7 +234,7 @@ def build_panel(shape: str = "tags") -> FakePanel:
             "VLESS-REALITY-DE1",
             "NL-2 reserve",
             "198.51.100.20",
-            sni=FOREIGN_SNI,
+            sni="de-1.example.com",
             fingerprint="chrome",
             tags=["NL2"],
             hidden=True,
@@ -240,7 +246,7 @@ def build_panel(shape: str = "tags") -> FakePanel:
             "VLESS-REALITY-FI1",
             "FI Reality",
             "198.51.100.77",
-            sni=FOREIGN_SNI,
+            sni="fi-1.example.com",
             fingerprint="chrome",
             tags=["FI1"],
             position=6,
@@ -272,10 +278,22 @@ def build_panel(shape: str = "tags") -> FakePanel:
             kz1,
             "VLESS-REALITY-KZ1",
             "KZ Reality",
-            "192.0.2.60",
+            "kz-1.example.com",
             sni=FOREIGN_SNI,
             fingerprint="chrome",
             position=9,
+        ),
+        raw_host(
+            shape,
+            nl2,
+            "VLESS-REALITY-NL2",
+            "NL-1 reserve",
+            "203.0.113.11",
+            sni=FOREIGN_SNI,
+            fingerprint="chrome",
+            tags=["NL1"],
+            hidden=True,
+            position=10,
         ),
     ]
     reality_inbounds = [
@@ -327,6 +345,7 @@ def build_host() -> FakeHost:
         CommandResult(0, json.dumps({"name": "@remnawave/backend", "version": PANEL_VERSION})),
     )
     host.on(["ssh-keygen"], _keygen)
+    host.on(["sshd", "-T"], CommandResult(0, "port 22\npasswordauthentication yes\n"))
     admin = demo_blob("admin-laptop")
     host.files["/root/.ssh/authorized_keys"] = f"ssh-ed25519 {admin} admin@laptop\n"
     host.files["/opt/remnawave/.env"] = (
@@ -341,7 +360,7 @@ PANEL_IP = "198.51.100.5"  # the panel server as the nodes see it
 def build_nodes() -> list[FakeNode]:
     """Six nodes; nl-1 and nl-2 share a host key (an image of the hoster)."""
     shared = PublicKey("ssh-ed25519", demo_blob("hoster-image"))
-    return [
+    nodes = [
         FakeNode("nl-1", "203.0.113.10", shared, panel_ip=PANEL_IP),
         FakeNode("nl-2", "203.0.113.11", shared, panel_ip=PANEL_IP),
         FakeNode(
@@ -373,6 +392,9 @@ def build_nodes() -> list[FakeNode]:
             panel_ip=PANEL_IP,
         ),
     ]
+    for node in nodes:
+        give_agent(node)
+    return nodes
 
 
 def _keygen(argv, _input) -> CommandResult:
@@ -393,3 +415,5 @@ def attach(env, state_root: Optional[Path] = None) -> None:
     root = state_root or Path(tempfile.mkdtemp(prefix="kerberos-demo-"))
     env.state = State(root)
     env.transport = FakeTransport(build_nodes(), env.state)
+    env.prober = build_prober()
+    env.whois = build_whois()

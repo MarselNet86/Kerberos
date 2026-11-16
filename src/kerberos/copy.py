@@ -214,6 +214,185 @@ TEXT: dict[str, str] = {
     ),
     "ssh.demo": "В демо входа на ноды нет: ноды встроенного парка не настоящие",
     "lock.busy": "KERBEROS уже запущен в другом окне. Дождитесь его завершения.",
+    # K3: topics, findings and actions (§10.2)
+    "topic.hosting": "Хостинг и AS",
+    "topic.sni": "Свой SNI вместо чужого",
+    "topic.scanning": "Защита от сканирования",
+    "topic.dpi": "DPI",
+    "topic.routing": "Умная маршрутизация",
+    "topic.reserves": "Резервы",
+    "target.panel": "панель",
+    "target.fleet": "парк",
+    "target.template": "шаблон {name}",
+    "target.host": "хост {name}",
+    "action.fix": "Исправит KERBEROS",
+    "action.manual": "Вручную: {how}",
+    "action.explain": "Объяснение: {how}",
+    "action.plan": "{how}",
+    "action.passed": "Пройдено",
+    "action.partial": "Вручную: паддинг настроен частично, его правят руками",
+    "check.fleet.same_asn.title": "Ноды одной страны у одного хостера (AS{asn})",
+    "check.fleet.same_asn.threat": "Блокировку по AS хостера получат сразу все такие ноды",
+    "check.fleet.same_asn.how": "держите резерв у другого хостера",
+    "check.fleet.same_24.title": "Ноды в одной или соседних подсетях /24 ({net})",
+    "check.fleet.same_24.threat": "Блокировка подсети снимет сразу несколько нод",
+    "check.fleet.same_24.how": "разнесите ноды по разным подсетям или хостерам",
+    "check.fleet.shared_hostkey.title": "Одинаковый ключ сервера у нескольких нод",
+    "check.fleet.shared_hostkey.threat": (
+        "Сканеры собирают ключи SSH и по ним связывают ваши серверы между собой"
+    ),
+    "check.fleet.one_zone.title": "Домены трёх и больше нод в одной зоне {zone}",
+    "check.fleet.one_zone.threat": (
+        "Сертификаты попадают в публичные журналы CT, и по зоне находят все ноды разом"
+    ),
+    "check.fleet.one_zone.how": "разнесите домены по разным зонам или возьмите wildcard-сертификат",
+    "check.host.ip_check.title": "Блокировку IP нельзя проверить из-за рубежа",
+    "check.host.ip_check.threat": "Новый IP может быть уже заблокирован у российских операторов",
+    "check.host.ip_check.how": (
+        "до ввода нового IP проверьте его из России у нескольких операторов"
+    ),
+    "check.reality.foreign_sni.title": "Reality маскируется под чужой сайт",
+    "check.reality.foreign_sni.threat": (
+        "Чужое имя на IP хостинга заметно: такие ноды блокируют за минуты"
+    ),
+    "check.probe.no_sni.title": "По IP без имени отдаётся чужой сертификат или нет сайта",
+    "check.probe.no_sni.threat": "Любой, кто зайдёт на IP, поймёт, что это не обычный сайт",
+    "check.hy2.foreign_masquerade.title": "Hysteria2 маскируется под чужой сайт",
+    "check.hy2.foreign_masquerade.threat": "Ответ сервера не совпадает с его IP и сертификатом",
+    "check.profile.template.title": "Конфиг ноды отличается от проверенного",
+    "check.profile.template.threat": (
+        "Reality, Hysteria2, DNS или правила настроены не так, как на проверенном парке"
+    ),
+    "check.site.same_template.title": "Одинаковые сайты-заглушки на нескольких нодах",
+    "check.site.same_template.threat": "По одинаковой странице сканер связывает ноды между собой",
+    "check.ssh.password.title": "Вход на сервер по паролю",
+    "check.ssh.password.threat": (
+        "Пароль перебирают тысячи раз в сутки; удачный подбор отдаёт сервер целиком"
+    ),
+    "check.ssh.port_default.title": "SSH на стандартном порту 22",
+    "check.ssh.port_default.threat": "Сканеры находят сервер по порту 22 и начинают перебор",
+    "check.ssh.fail2ban.title": "Нет защиты от перебора паролей (fail2ban)",
+    "check.ssh.fail2ban.threat": "Перебор паролей SSH ничем не ограничен",
+    "check.kernel.mptcp.title": "В ядре включён MPTCP",
+    "check.kernel.mptcp.threat": "Уязвимость CVE-2026-98432 даёт удалённый root через MPTCP",
+    "check.node_api.public.title": "Порт API ноды открыт всем",
+    "check.node_api.public.threat": (
+        "По TLS с обязательным клиентским сертификатом сканер узнаёт ноду Remnawave"
+    ),
+    "check.ports.public.title": "Открыты лишние порты: {ports}",
+    "check.ports.public.threat": "Голый VLESS или XHTTP опознают по ответу на мусорный запрос",
+    "check.cdn.origin_direct.title": "Сервер за CDN отвечает туннелем напрямую по IP",
+    "check.cdn.origin_direct.threat": (
+        "Прямой запрос к IP выдаёт туннель: CDN больше не прячет сервер"
+    ),
+    "check.panel.public.title": "Панель открыта на публичном домене без барьера",
+    "check.panel.public.threat": "Страницу входа находят сканеры и подбирают пароль",
+    "check.panel.public.how": (
+        "закройте панель барьером: caddy-security, секретный путь или доступ по VPN"
+    ),
+    "check.panel_server.ssh.title": "На сервер панели можно войти по паролю",
+    "check.panel_server.ssh.threat": "Взлом сервера панели отдаёт управление всеми нодами",
+    "check.panel_server.ssh.how": (
+        "выключите вход по паролю сами: KERBEROS не меняет доступ к серверу, "
+        "на котором вы работаете"
+    ),
+    "check.client.ping_type.title": "Клиенты меряют задержку прямым пингом до IP ноды",
+    "check.client.ping_type.threat": (
+        "Прямые ICMP и TCP на IP ноды выделяются на фоне обычного трафика"
+    ),
+    "check.node.icmp.title": "Нода отвечает на ping",
+    "check.node.icmp.threat": "",
+    "check.node.icmp.how": (
+        "выключать не нужно: важнее тип пинга клиента, а ping нужен для диагностики"
+    ),
+    "check.xhttp.padding.title": "У XHTTP нет паддинга",
+    "check.xhttp.padding.threat": "Размеры запросов складываются в узнаваемую сигнатуру",
+    "check.xhttp.uplink_get.title": "XHTTP за CDN отправляет данные методом POST",
+    "check.xhttp.uplink_get.threat": "Российские CDN режут POST: наблюдали ответ 405",
+    "check.xhttp.post_size.title": (
+        "Маленький scMaxEachPostBytes у хоста за CDN ({scMaxEachPostBytes})"
+    ),
+    "check.xhttp.post_size.threat": "",
+    "check.xhttp.post_size.how": (
+        "запросов к CDN становится в разы больше, они упираются в лимит на соединение; "
+        "держите не меньше 10 000"
+    ),
+    "check.xhttp.extra_outer.title": "Параметры sc* XHTTP стоят вне extra",
+    "check.xhttp.extra_outer.threat": "Xray молча игнорирует их, когда задан extra",
+    "check.xhttp.extra_outer.how": "перенесите параметры sc* внутрь extra",
+    "check.host.fingerprint.title": "У хоста {host} пустой fingerprint",
+    "check.host.fingerprint.threat": "Клиент шлёт ClientHello, не похожий на браузер",
+    "check.dpi.fragment.title": "Фрагментация ClientHello не нужна",
+    "check.dpi.fragment.threat": "",
+    "check.dpi.fragment.how": "со своим доменом SNI совпадает с IP: резать нечего",
+    "check.dpi.mtu.title": "MTU 1280 на сервере не меняем",
+    "check.dpi.mtu.threat": "",
+    "check.dpi.mtu.how": "MTU настраивают в клиенте, а не на сервере",
+    "check.sub.ru_direct.title": "Российские сайты идут через ноду (шаблон {template})",
+    "check.sub.ru_direct.threat": ("Сайты в РФ видят IP ноды, а нода копит подозрительный трафик"),
+    "check.sub.probe_interval.title": "Клиент проверяет ноды чаще раза в минуту ({seconds} с)",
+    "check.sub.probe_interval.threat": "Частые пробы заметны и тратят трафик",
+    "check.exit.ru_traffic.title": "Через ноду ходят российские сайты ({ruShare})",
+    "check.exit.ru_traffic.threat": "Доля российских доменов в трафике ноды выше 1 %",
+    "check.exit.ru_traffic.how": "исправится шаблоном подписки KERBEROS (sub.template)",
+    "check.reserve.missing.title": "У ноды нет скрытого резерва",
+    "check.reserve.missing.threat": (
+        "При блокировке клиенты останутся без связи, пока не обновят подписку"
+    ),
+    "check.reserve.missing.how": "резервную ноду выбирают в плане исправления",
+    "check.reserve.same_asn.title": "Основа и резерв у одного хостера (AS{asn})",
+    "check.reserve.same_asn.threat": "Блокировка хостера снимет и основу, и резерв",
+    "check.reserve.same_asn.how": "держите резерв у другого хостера",
+    "check.node.blocked.title": "Похоже, ноду заблокировали",
+    "check.node.blocked.threat": (
+        "На основе нет пользователей, а резерв работает, или соединения обрываются"
+    ),
+    "check.node.blocked.how": "замените IP основы у хостера",
+    "check.watch.missing.title": "Нет сборщика признаков блокировки",
+    "check.watch.missing.threat": "Блокировку видно только по жалобам пользователей",
+    # K3: S5 collection and S6 report
+    "s5.title": "Проверка",
+    "s5.collecting": "Собираю данные: только чтение, ничего не меняю",
+    "s5.col.node": "Нода",
+    "s5.step.facts": "факты",
+    "s5.step.watch": "наблюдение",
+    "s5.step.site": "сайт",
+    "s5.step.outside": "снаружи",
+    "s5.whois.question": (
+        "Узнать хостеров (AS) нод через whois.cymru.com? "
+        "Запрос передаст адреса нод третьей стороне."
+    ),
+    "s5.whois.yes": "Да, узнать AS",
+    "s5.whois.no": "Нет, без whois",
+    "s5.failed": "Сбор данных остановился: {error}",
+    "s6.title": "Отчёт проверки",
+    "s6.summary": "Найдено: {problems}. Исправит KERBEROS: {auto}. Вручную: {manual}.",
+    "s6.none": "Проблем не найдено",
+    "s6.details": "Пробел: подробности",
+    "s6.end": "Enter: в меню",
+    "s6.next": "Enter: к плану исправления",
+    "s6.no_access": "Без доступа, проверены только со стороны панели: {nodes}",
+    "keys.details": "подробности",
+    "keys.menu": "в меню",
+    "report.title.check": "KERBEROS: отчёт проверки",
+    "report.title.fix": "KERBEROS: отчёт исправления",
+    "report.title.rollback": "KERBEROS: отчёт отката",
+    "report.title.finalize": "KERBEROS: отчёт финализации",
+    "report.head": "Время: {time} · Режим: {mode} · Панель: Remnawave {version} · Нод: {nodes}",
+    "report.mode.check": "Проверка",
+    "report.mode.fix": "Исправление",
+    "report.mode.rollback": "Откат",
+    "report.mode.finalize": "Финализация",
+    "report.score_before_after": "Защищённость: было {before}, стало {after} из 100",
+    "report.threat": "Чем грозит: {text}",
+    "report.details": "Подробности: {text}",
+    "report.passed": "Пройдено проверок: {n}",
+    "report.nodes": "Ноды",
+    "report.nodes.head": "| Нода | Адрес | Порт SSH | Доступ |",
+    "report.rollback": "Откат",
+    "report.empty": "Отчётов пока нет: запустите «Проверку» или «Исправление».",
+    "reports.title": "Отчёты",
+    "reports.item": "{run} · {mode} · защищённость {score}",
     # CLI (§5.3)
     "cli.usage": "Использование: sudo ./kerberos [команда] [флаги]",
     "cli.help": (
