@@ -127,6 +127,19 @@ def test_s9_at_80x24_pins_the_new_ssh_port_summary_and_rollback_command():
     assert s9[1] != first and t("s9.ssh_port", node="nl-1", port=port) in s9[1], "PgDn scrolls"
 
 
+def test_finalize_consent_at_80x24_has_its_own_keys():
+    keys = ["down"] * row_of("nl-1", "self_steal") + ["d"] + list("nl-1.example.com")
+    app, term, code = run_fix(keys + ["enter", "enter", "enter", "enter"], height=30)
+    assert code == EXIT_OK
+    app.env.clock.advance(24 * 3600 + 1)
+    term.height = 24
+    term.feed(*typed("admin"), "enter", *typed("pw"), "enter", "down", "esc")
+    assert app.run("finalize") == EXIT_OK
+    consent = [f for f in titled(term, "fin.title") if t("fin.accept") in f]
+    assert len(consent) == 2 and all(t("fin.keys") in flat(f) for f in consent)
+    assert last_run(app)["pending"], "Esc leaves the old names in place"
+
+
 def test_kerberos_ssh_is_offered_only_with_the_administrator_key():
     # «Создать ключ на сервере панели»: the key exists, so `kerberos ssh` works.
     keys = TO_S4_END + ["down", "enter", "enter", "enter", "enter"]
@@ -385,6 +398,10 @@ def test_cursor_and_colour_samples_without_colour():
     keys = ["down"] * row_of("nl-1", "self_steal") + ["esc", "q", "enter"]
     _app, term, _code = run_fix(keys)
     assert "██" not in titled(term, "plan.title")[-1]
+    app, term = make_app(TO_PLAN + keys, state=short_state())
+    term.color = True  # a terminal with colour gets the samples of the site's colours
+    app.run("fix")
+    assert "██ ██ ██" in titled(term, "plan.title")[-1]
 
 
 # -- widgets ------------------------------------------------------------------------
