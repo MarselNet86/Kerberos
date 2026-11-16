@@ -46,20 +46,25 @@ def test_s1_ctrl_c_asks_before_leaving():
     assert t("quit.confirm") in term.frames[1]
 
 
-def test_logo_is_red_on_s1_and_in_the_header():
-    from kerberos.ui.logo import LOGO
+def test_logo_is_red_pixels_on_s1_and_a_line_in_the_header():
+    from kerberos.ui.logo import LOGO, LOGO_ART
     from kerberos.ui.palette import PALETTE
     from kerberos.ui.terminal import frame_text
 
     assert LOGO == "/// kerberos"
     assert PALETTE["logo"] == "bold red"
+    assert len(LOGO_ART) == 2 and len(LOGO_ART[0]) == len(LOGO_ART[1])
     app, term = make_app(["q", "enter"], height=24)
     app.run()
-    s1 = term.frames[0]
-    assert s1.splitlines()[0].startswith(LOGO)
-    assert any(line.strip() == LOGO for line in s1.splitlines()[2:6])
+    lines = term.frames[0].splitlines()
+    assert lines[0].startswith(LOGO)
+    assert LOGO_ART[0].rstrip() in lines[3] and LOGO_ART[1].rstrip() in lines[4]
     colored = frame_text(app.frame("", app.s1_body(_menu()), ()), 100, 24, color=True)
     assert "\x1b[1;31m/// kerberos" in colored
+    assert "\x1b[1;31m" + LOGO_ART[0] in colored
+    # The selected menu row is red like the logo, and still marked with the pointer.
+    assert "\x1b[1;31m" + t("mode.check") in colored
+    assert "\x1b[1;31m›" in colored
 
 
 def _menu():

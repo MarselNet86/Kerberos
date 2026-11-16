@@ -14,7 +14,7 @@ PALETTE: dict[str, str] = {
     "risk.low": "cyan",
     "ok": "bold green",
     "muted": "grey50",
-    "accent": "bold magenta",
+    "accent": "bold red",
     "logo": "bold red",
     "danger.bg": "white on red",
 }

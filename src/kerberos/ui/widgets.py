@@ -488,7 +488,8 @@ class FindingList:
         yield from rendered[self._offset : self._offset + height]
 
 
-NOTICE_STYLE = {"info": "accent", "warning": "risk.medium", "error": "risk.high"}
+# An info plate stays neutral: red is the brand and the selection, not a warning.
+NOTICE_STYLE = {"info": "muted", "warning": "risk.medium", "error": "risk.high"}
 
 
 class Notice:
@@ -499,8 +500,8 @@ class Notice:
         self.text = text_value
 
     def __rich__(self) -> RenderableType:
-        style = NOTICE_STYLE.get(self.kind, "accent")
-        title_style = "danger.bg" if self.kind == "error" else style
+        style = NOTICE_STYLE.get(self.kind, "muted")
+        title_style = {"error": "danger.bg", "info": "bold"}.get(self.kind, style)
         return Panel(
             Text(self.text),
             title=Text(f" {t('notice.' + self.kind)} ", style=title_style),
