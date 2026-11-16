@@ -158,3 +158,7 @@ python3 tools/screenshots.py
 ```
 
 `tools/check.sh` гоняет ruff, тесты на Python 3.9 и 3.14 и запуск без site-packages; `tools/stand.sh` проверяет агента и изменения на пяти VM стенда; `tools/screenshots.py` пересобирает скриншоты из демо с маскировкой.
+
+## Лицензия
+
+MIT, текст в [LICENSE](LICENSE). Rich в `vendor/` распространяется под своей лицензией MIT: [vendor/licenses/rich-LICENSE](vendor/licenses/rich-LICENSE).
