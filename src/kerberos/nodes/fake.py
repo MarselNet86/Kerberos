@@ -66,7 +66,9 @@ class FakeTransport:
         node = self.nodes.get(target.address)
         if node is None or not node.reachable:
             raise TransportError("unreachable", target.address)
-        if target.port != node.ssh_port:
+        if target.port in node.state.get("closed_ports", ()):
+            raise TransportError("timeout", f"{target.address}:{target.port} is filtered")
+        if target.port not in [node.ssh_port] + node.state.get("extra_ports", []):
             raise TransportError("refused", f"{target.address}:{target.port}")
         return node
 
@@ -81,7 +83,9 @@ class FakeTransport:
     def keyscan(self, address: str, port: int) -> Optional[PublicKey]:
         node = self.nodes.get(address)
         self.log.append((address, f"keyscan {port}"))
-        if node is None or not node.reachable or port != node.ssh_port:
+        if node is None or not node.reachable or port in node.state.get("closed_ports", ()):
+            return None
+        if port not in [node.ssh_port] + node.state.get("extra_ports", []):
             return None
         return node.host_key
 

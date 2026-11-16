@@ -32,7 +32,7 @@ import time
 from typing import Any, Callable, Optional
 
 PROTOCOL = 1
-AGENT_VERSION = "0.4.0"
+AGENT_VERSION = "0.5.0"
 AGENT_PATH = "/usr/local/sbin/kerberos-agent"
 STATE_DIR = "/var/lib/kerberos"
 
@@ -921,12 +921,25 @@ class Plan:
         self.access = False  # timer and confirmation by a new connection
         self.details: dict = {}
         self.after: Optional[Callable[[System], dict]] = None
+        self.keep: list = []  # backed up now, changed only by `confirm`
+        self.confirm_files: dict = {}  # path -> (text, mode), written by `confirm`
+        self.confirm_commands: list = []  # (argv, error code), run by `confirm`
 
     def write(self, path: str, text: Optional[str], mode: int = 0o644) -> None:
         self.files[path] = (text, mode)
 
     def run(self, argv: list, code: str = "command_failed") -> None:
         self.commands.append((argv, code))
+
+    def on_confirm(self, path: Optional[str] = None, text: Optional[str] = None,
+                   argv: Optional[list] = None, code: str = "command_failed") -> None:  # fmt: skip
+        """Second phase (§10.3, ssh.port): after the new connection has worked."""
+        if path is not None:
+            self.confirm_files[path] = (text, 0o644)
+            if path not in self.files and path not in self.keep:
+                self.keep.append(path)
+        if argv is not None:
+            self.confirm_commands.append((argv, code))
 
 
 FIXES: dict = {}
@@ -985,7 +998,8 @@ def mode_of(system: System, path: str) -> Optional[int]:
 def backup(system: System, change_id: str, plan: Plan) -> dict:
     """Copy every file the change touches before anything happens (§9.3)."""
     entries = []
-    paths = list(plan.files) + [p for p in plan.created if p not in plan.files]
+    paths = list(plan.files) + [p for p in plan.created + plan.keep if p not in plan.files]
+    paths = list(dict.fromkeys(paths))
     for index, path in enumerate(paths):
         data = system.read_bytes(path)
         entry = {"path": path, "existed": data is not None, "mode": mode_of(system, path),
@@ -1005,6 +1019,10 @@ def backup(system: System, change_id: str, plan: Plan) -> dict:
         "undoAfter": plan.undo_after,
         "access": plan.access,
         "details": dict(plan.details),
+        "confirm": {
+            "files": {p: [text, mode] for p, (text, mode) in plan.confirm_files.items()},
+            "commands": [[argv, code] for argv, code in plan.confirm_commands],
+        },
         "written": {},
         "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(system.now())),
     }
@@ -1115,10 +1133,27 @@ def cmd_confirm(system: System, args: list, data: Any) -> dict:
         return answer_of(record, "noop")
     if record["state"] != "pending_confirm":
         raise AgentError("change_conflict", f"change is {record['state']}")
+    second = record.get("confirm") or {}
+    try:
+        for path, (text, mode) in (second.get("files") or {}).items():
+            if text is None:
+                if system.exists(path):
+                    os.remove(system.path(path))
+            else:
+                system.write(path, text, mode)
+        for argv, code in second.get("commands") or []:
+            if not system.run(argv).ok:
+                raise AgentError(code, " ".join(argv))
+    except AgentError:
+        stop_timer(system, change_id)
+        restore(system, record)
+        record["state"] = "failed"
+        if pending_change(system) == change_id:
+            system.write(PENDING_FILE, "", 0o600)
+        save_record(system, record)
+        raise
     stop_timer(system, change_id)
-    for argv in record.get("confirm", []):
-        if not system.run(argv).ok:
-            raise AgentError("command_failed", " ".join(argv))
+    record["written"] = {e["path"]: file_sha(system, e["path"]) for e in record["files"]}
     record["state"] = "confirmed"
     if pending_change(system) == change_id:
         system.write(PENDING_FILE, "", 0o600)
@@ -1357,6 +1392,96 @@ def fix_key_only(system: System, params: dict) -> Plan:
     plan.write(SSHD_CONF, "\n".join(lines) + "\n")
     ssh_reload(plan)
     plan.access = True
+    return plan
+
+
+SOCKET_DROPIN = "/etc/systemd/system/ssh.socket.d/zz-kerberos.conf"
+SSHD_MAIN = "/etc/ssh/sshd_config"
+JAIL_FILE = "/etc/fail2ban/jail.d/zz-kerberos.local"
+
+
+def socket_listen(text: str) -> list:
+    """Addresses of `systemctl show ssh.socket -p Listen`: [("0.0.0.0", 22), ("[::]", 22)]."""
+    found = []
+    for match in re.finditer(r"(\[[^\]]*\]|[0-9.]+|\*)?:(\d+) \(Stream\)", text or ""):
+        host = match.group(1) or ""
+        item = (host, int(match.group(2)))
+        if item not in found:
+            found.append(item)
+    return found
+
+
+def socket_dropin(hosts: list, ports: list) -> str:
+    lines = ["[Socket]", "ListenStream="]
+    for port in ports:
+        for host in hosts:
+            lines.append(f"ListenStream={host}:{port}" if host else f"ListenStream={port}")
+    return "\n".join(lines) + "\n"
+
+
+def with_ports(text: str, ports: list) -> str:
+    """Our sshd file: other lines as they are, Port lines for `ports`."""
+    kept = [line for line in (text or "").splitlines() if line.split(" ", 1)[0].lower() != "port"]
+    return "\n".join(kept + [f"Port {p}" for p in ports]) + "\n"
+
+
+def comment_ports(text: str) -> str:
+    lines = []
+    for line in (text or "").splitlines():
+        if re.match(r"^\s*Port\s+\d+", line, re.I):
+            line = f"# {line.strip()}  # KERBEROS: the port lives in sshd_config.d"
+        lines.append(line)
+    return "\n".join(lines) + "\n"
+
+
+def jail_ports(text: str, ports: list) -> str:
+    joined = ",".join(str(p) for p in ports)
+    return re.sub(r"(?m)^port\s*=.*$", f"port = {joined}", text)
+
+
+@fix("ssh.port")
+def fix_ssh_port(system: System, params: dict) -> Plan:
+    port = int_list([params.get("port")], "port")[0]
+    if port < 1024:
+        raise AgentError("bad_params", "port")
+    if any(s["port"] == port for s in parse_ss_listen(system.run(["ss", "-Hlntup"]).stdout)):
+        raise AgentError("port_busy", str(port))
+    plan = Plan("ssh.port")
+    plan.access = True
+    if parse_ufw(system.run(["ufw", "status", "verbose"]).stdout)["state"] == "active":
+        plan.run(["ufw", "allow", f"{port}/tcp"])
+        plan.undo_after.append(["ufw", "delete", "allow", f"{port}/tcp"])
+    socket = system.run(["systemctl", "is-active", "ssh.socket"]).stdout.strip() == "active"
+    listen = socket_listen(system.run(["systemctl", "show", "ssh.socket", "-p", "Listen"]).stdout)
+    if socket and listen:
+        old = sorted({p for _host, p in listen})
+        hosts = list(dict.fromkeys(host for host, _p in listen)) or ["0.0.0.0", "[::]"]
+        plan.write(SOCKET_DROPIN, socket_dropin(hosts, old + [port]))
+        plan.run(["systemctl", "daemon-reload"])
+        plan.run(["systemctl", "restart", "ssh.socket"])
+        plan.on_confirm(SOCKET_DROPIN, socket_dropin(hosts, [port]))
+        plan.on_confirm(argv=["systemctl", "daemon-reload"])
+        plan.on_confirm(argv=["systemctl", "restart", "ssh.socket"])
+        plan.undo_after += [["systemctl", "daemon-reload"], ["systemctl", "restart", "ssh.socket"]]
+    else:
+        old = parse_sshd_t(system.run(["sshd", "-T"]).stdout).get("port") or [22]
+        current = system.read(SSHD_CONF) or ""
+        plan.write(SSHD_CONF, with_ports(current, old + [port]))
+        ssh_reload(plan)
+        plan.on_confirm(SSHD_CONF, with_ports(current, [port]))
+        main = system.read(SSHD_MAIN)
+        if main is not None and re.search(r"(?m)^\s*Port\s+\d+", main, re.I):
+            plan.on_confirm(SSHD_MAIN, comment_ports(main))
+        plan.on_confirm(argv=["sshd", "-t"], code="sshd_test_failed")
+        plan.on_confirm(argv=["systemctl", "try-reload-or-restart", "ssh.service"])
+    jail = system.read(JAIL_FILE)
+    if jail is not None:
+        plan.write(JAIL_FILE, jail_ports(jail, old + [port]))
+        plan.run(["systemctl", "restart", "fail2ban"])
+        plan.on_confirm(JAIL_FILE, jail_ports(jail, [port]))
+        plan.on_confirm(argv=["systemctl", "restart", "fail2ban"])
+        plan.undo_after.append(["systemctl", "restart", "fail2ban"])
+    plan.details = {"newPort": port, "oldPorts": old, "socket": bool(socket and listen)}
     return plan
 
 

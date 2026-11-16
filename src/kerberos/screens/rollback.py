@@ -35,7 +35,10 @@ def label(app: App, run: dict, change: dict) -> str:
     node = node_of(run, change["target"])
     name = node["name"] if node else change["target"]
     ports = ", ".join(change["params"].get("ports", []))
-    return f"{app.mask(name)}: {app.mask(t('fix.' + change['fixId'] + '.label', ports=ports))}"
+    text = t(
+        "fix." + change["fixId"] + ".label", ports=ports, port=change["params"].get("port", "")
+    )
+    return f"{app.mask(name)}: {app.mask(text)}"
 
 
 def choose_run(app: App, runs: list) -> Optional[dict]:
@@ -79,6 +82,11 @@ def roll_back(app: App, run: dict, changes: list) -> list:
         previous = change["details"].get("previousKey")
         if change["fixId"] == "hostkeys.regenerate" and previous:
             app.env.state.pin(target.address, target.port, "ssh-ed25519", previous)
+        if change["fixId"] == "ssh.port" and change["details"].get("oldPorts"):
+            record = app.env.state.node(target.uuid)
+            if record is not None:
+                record.ssh_port = change["details"]["oldPorts"][0]
+                app.env.state.save_node(record)
         change["state"] = "rolled_back"
         change["finishedAt"] = iso(app.env.clock)
         store.save(run)

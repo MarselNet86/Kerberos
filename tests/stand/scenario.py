@@ -113,6 +113,12 @@ def main() -> int:
           lambda f: not ({k["fingerprint"] for k in f["hostKeys"]} & old),
           lambda f: {k["fingerprint"] for k in f["hostKeys"]} == old, confirm=True)  # fmt: skip
 
+    port = next(p for p in range(24622, 32767)
+                if all(s["port"] != p for s in before["listening"]))  # fmt: skip
+    cycle("ssh.port", {"port": port},
+          lambda f: f["ssh"]["ports"] == [port],
+          lambda f: f["ssh"]["ports"] == before["ssh"]["ports"], confirm=True)  # fmt: skip
+
     if before["ssh"]["adminKeys"]:
         cycle("ssh.key_only", {},
               lambda f: not f["ssh"]["passwordAuthentication"],

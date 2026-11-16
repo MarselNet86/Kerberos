@@ -22,10 +22,16 @@ from kerberos.ui.widgets import Checklist, Consent, Notice, ProgressBoard
 if TYPE_CHECKING:
     from kerberos.app import App, Session
 
-WARNINGS = {
-    "ssh.key_only": "fix.key_only.warning",
-}
 STEP_KEYS = ("backup", "apply", "check", "confirm")
+
+
+def warning_of(item: PlanItem) -> Optional[str]:
+    """Warnings of §15 shown before consent, word for word."""
+    if item.fix_id == "ssh.key_only":
+        return t("fix.key_only.warning")
+    if item.fix_id == "ssh.port":
+        return t("fix.ssh_port.warning", port=item.params.get("port"))
+    return None
 
 
 def launcher() -> str:
@@ -40,7 +46,7 @@ def fix_label(app: App, item: Any) -> str:
     fix_id = item.fix_id if isinstance(item, PlanItem) else item["fixId"]
     params = item.params if isinstance(item, PlanItem) else item["params"]
     ports = ", ".join(params.get("ports", []))
-    return app.mask(t(f"fix.{fix_id}.label", ports=ports))
+    return app.mask(t(f"fix.{fix_id}.label", ports=ports, port=params.get("port", "")))
 
 
 def node_name(session: Session, target: str) -> str:
@@ -78,7 +84,7 @@ def step_plan(app: App, session: Session) -> Any:
         result = []
         for item in items:
             note = t(f"plan.blocked.{item.blocked}") if item.blocked else ""
-            if not note and item.fix_id in WARNINGS:
+            if not note and warning_of(item):
                 note = t("plan.has_warning")
             risk = Text(f"● {t('risk.' + item.risk)}", style=f"risk.{item.risk}"
                         if item.risk != "info" else "muted")  # fmt: skip
@@ -134,9 +140,9 @@ def consent(app: App, session: Session, items: list[PlanItem]) -> bool:
         lines.append(Text(f"  {app.mask(name)}: " + "; ".join(labels)))
     warnings = []
     for item in chosen:
-        key = WARNINGS.get(item.fix_id)
-        if key and t(key) not in warnings:
-            warnings.append(t(key))
+        text = warning_of(item)
+        if text and text not in warnings:
+            warnings.append(text)
     for text in warnings:
         lines.append(Notice("warning", text))
     widget = Consent(Group(*lines), t("consent.accept"), t("consent.keys"))
@@ -223,6 +229,13 @@ def change_lines(app: App, session: Session, run: dict) -> list[RenderableType]:
             reason = error_text(change.get("error"))
             lines.append(Text(f"↺ {name}: {label}. " + t("apply.rolled_back", reason=reason),
                               style="risk.high"))  # fmt: skip
+        node = session.snapshot.node(change["target"].partition(":")[2])
+        if change["fixId"] == "ssh.port" and change["state"] == "confirmed" and node:
+            port = change["details"].get("newPort")
+            command = f"ssh -p {port} root@{app.mask(node.address)}"
+            lines.append(Text("  " + t("s9.ssh_port", port=port), style="accent"))
+            lines.append(Text("  " + t("s9.login", command=command, node=app.mask(node.name)),
+                              style="muted"))  # fmt: skip
         for key in change["details"].get("hostKeys", []) if change["state"] in (
             "applied", "confirmed") else []:  # fmt: skip
             if key.get("type") == "ED25519":

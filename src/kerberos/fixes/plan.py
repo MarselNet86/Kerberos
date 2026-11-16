@@ -7,6 +7,7 @@ automatic fixes of high and medium risk are marked, except `ssh.port`.
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -39,6 +40,7 @@ IMPLEMENTED = {
     "ports.drop",
     "hostkeys.regenerate",
     "ssh.key_only",
+    "ssh.port",
 }
 ACCESS_FIXES = {"ssh.key_only", "ssh.port", "hostkeys.regenerate"}
 RISK_RANK = {"high": 0, "medium": 1, "low": 2, "info": 3}
@@ -67,7 +69,23 @@ def order_key(item: PlanItem, node_index: dict) -> tuple:
             item.target)  # fmt: skip
 
 
-def node_params(fix_id: str, finding: Finding, facts: dict, panel_ip: str) -> dict:
+SSH_PORTS = (20000, 32767)  # below the ephemeral range (§10.3)
+
+
+def choose_port(facts: dict, rng: random.Random) -> int:
+    """A free port for SSH: random in 20000-32767, not listened on by anything."""
+    busy = {s.get("port") for s in facts.get("listening", [])}
+    while True:
+        port = rng.randint(*SSH_PORTS)
+        if port not in busy:
+            return port
+
+
+def node_params(
+    fix_id: str, finding: Finding, facts: dict, panel_ip: str, rng: random.Random
+) -> dict:
+    if fix_id == "ssh.port":
+        return {"port": choose_port(facts, rng)}
     if fix_id == "fail2ban.sshd":
         return {"sshPorts": list(facts["ssh"]["ports"]), "panelIp": panel_ip}
     if fix_id == "node_api.panel_only":
@@ -77,9 +95,15 @@ def node_params(fix_id: str, finding: Finding, facts: dict, panel_ip: str) -> di
     return {}
 
 
-def build_plan(findings: list[Finding], data: CheckInput, admin: Optional[dict],
-               panel_ips: dict) -> list[PlanItem]:  # fmt: skip
+def build_plan(
+    findings: list[Finding],
+    data: CheckInput,
+    admin: Optional[dict],
+    panel_ips: dict,
+    rng: Optional[random.Random] = None,
+) -> list[PlanItem]:
     """`admin`: the choice of §8.5 ({mode, keys}); `panel_ips`: node uuid -> panel address."""
+    rng = rng or random.SystemRandom()
     items: dict = {}
     for finding in findings:
         fix_id = finding["fixId"]
@@ -94,7 +118,7 @@ def build_plan(findings: list[Finding], data: CheckInput, admin: Optional[dict],
         key = (finding["target"], fix_id)
         item = items.get(key)
         if item is None:
-            params = node_params(fix_id, finding, node.facts, panel_ips.get(ref, ""))
+            params = node_params(fix_id, finding, node.facts, panel_ips.get(ref, ""), rng)
             item = PlanItem(fix_id, finding["target"], ref, params, finding["risk"])
             items[key] = item
         elif RISK_RANK[finding["risk"]] < RISK_RANK[item.risk]:
