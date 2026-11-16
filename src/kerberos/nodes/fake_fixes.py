@@ -134,6 +134,41 @@ def apply_admin_keys(node: FakeNode, params: dict, change_id: str) -> tuple[dict
     return {"added": len(keys)}, undo
 
 
+def apply_ssh_port(node: FakeNode, params: dict, change_id: str) -> tuple:
+    facts = node.state["facts"]
+    new = params["port"]
+    if any(s["port"] == new for s in facts["listening"]):
+        raise NodeAgentError("port_busy", str(new))
+    saved = copy.deepcopy({k: facts[k] for k in ("ssh", "fail2ban", "listening")})
+    saved_main = node.ssh_port
+    old = list(facts["ssh"]["ports"])
+    facts["ssh"]["ports"] = old + [new]
+    node.state.setdefault("extra_ports", []).append(new)
+    listener = {"proto": "tcp", "address": "0.0.0.0", "port": new, "process": "sshd"}
+    facts["listening"].append({**listener, "docker": False, "firewalled": False})
+    if node.state.get("hoster_firewall"):
+        node.state.setdefault("closed_ports", []).append(new)
+    if facts["fail2ban"].get("sshdJail"):
+        facts["fail2ban"]["jailPorts"] = sorted(set(facts["fail2ban"]["jailPorts"]) | {new})
+
+    def confirm() -> None:
+        facts["ssh"]["ports"] = [new]
+        node.ssh_port = new
+        node.state["extra_ports"] = [p for p in node.state["extra_ports"] if p != new]
+        facts["listening"] = [s for s in facts["listening"]
+                              if not (s["process"] == "sshd" and s["port"] in old)]  # fmt: skip
+        if facts["fail2ban"].get("sshdJail"):
+            facts["fail2ban"]["jailPorts"] = [new]
+
+    def undo() -> None:
+        facts.update(copy.deepcopy(saved))
+        node.ssh_port = saved_main
+        node.state["extra_ports"] = [p for p in node.state.get("extra_ports", []) if p != new]
+
+    details = {"newPort": new, "oldPorts": old, "socket": facts["ssh"].get("socketActivated")}
+    return details, undo, confirm
+
+
 MODEL: dict = {
     "mptcp.guard": apply_mptcp,
     "fail2ban.sshd": apply_fail2ban,
@@ -142,6 +177,7 @@ MODEL: dict = {
     "hostkeys.regenerate": apply_hostkeys,
     "ssh.key_only": apply_key_only,
     "access.admin_keys": apply_admin_keys,
+    "ssh.port": apply_ssh_port,
 }
 
 
@@ -171,9 +207,12 @@ def give_fixes(node: FakeNode, model: dict = MODEL) -> None:
         failures = n.state.get("fail", {})
         if fix_id in failures:
             raise NodeAgentError(failures[fix_id], f"injected for {fix_id}")
-        details, undo = model[fix_id](n, params or {}, change_id)
+        result = model[fix_id](n, params or {}, change_id)
+        details, undo = result[0], result[1]
+        second = result[2] if len(result) > 2 else None
         state = "pending_confirm" if fix_id in ACCESS else "applied"
-        changes[change_id] = {"fixId": fix_id, "state": state, "details": details, "undo": undo}
+        changes[change_id] = {"fixId": fix_id, "state": state, "details": details, "undo": undo,
+                              "confirm": second}  # fmt: skip
         return _answer(change_id, changes[change_id])
 
     def confirm(n: FakeNode, args: list, _data: Any) -> dict:
@@ -184,6 +223,8 @@ def give_fixes(node: FakeNode, model: dict = MODEL) -> None:
             raise TransportError("timeout", "the new connection did not come up")
         if record["state"] != "pending_confirm":
             return _answer(args[0], record, "noop")
+        if record.get("confirm"):
+            record["confirm"]()
         record["state"] = "confirmed"
         return _answer(args[0], record)
 

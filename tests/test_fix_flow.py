@@ -181,4 +181,5 @@ def test_s9_snapshot_and_s7_rows():
     text = re.sub(r"SHA256:\S+", "SHA256:<new>", text)
     assert_snapshot("s9", text.replace(run["runId"], "<run>"))
     s7 = next(f for f in term.frames if t("plan.title") in f.splitlines()[0])
-    assert t("fix.mptcp.guard.label") in s7 and t("plan.selected", n=14, total=14) in s7
+    assert t("fix.mptcp.guard.label") in s7
+    assert t("plan.selected", n=ALL_CHANGES, total=ALL_CHANGES + 4) in s7  # ssh.port unmarked

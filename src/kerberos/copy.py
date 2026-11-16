@@ -401,6 +401,15 @@ TEXT: dict[str, str] = {
     "fix.ports.drop.label": "Закрыть лишние порты: {ports}",
     "fix.hostkeys.regenerate.label": "Новые ключи сервера",
     "fix.ssh.key_only.label": "Вход только по ключу",
+    "fix.ssh.port.label": "Перенести SSH на порт {port}",
+    "error.port_closed": (
+        "новый порт не открылся, похоже, его закрывает фаервол хостера: откройте порт "
+        "в панели хостера; KERBEROS вернул старый"
+    ),
+    "error.port_busy": "этот порт уже занят на ноде",
+    "s9.ssh_port": "Новый порт SSH: {port}",
+    "s9.login": "Входить теперь: {command} или kerberos ssh {node}",
+    "report.ssh_port": "Новый порт SSH: {port}. Входить: {command}",
     "plan.col.node": "Нода",
     "plan.col.fix": "Исправление",
     "plan.col.risk": "Риск",

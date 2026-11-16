@@ -145,19 +145,27 @@ class Engine:
         self.save()
         if state == "pending_confirm":
             previous = None
+            confirm_target = target
             if item.fix_id == "hostkeys.regenerate":
                 previous = self.pin_new_host_key(target, change)
+            if item.fix_id == "ssh.port":
+                confirm_target = self.new_port_target(target, change)
             self.event("confirm", item, "running")
-            if not self.confirm(target, change["changeId"]):
+            if not self.confirm(confirm_target, change["changeId"]):
+                # The old port still listens until confirm: roll back through it.
                 rolled = self.rollback(target, change["changeId"], fresh=True)
                 if previous:
                     self.env.state.pin(target.address, target.port, "ssh-ed25519", previous)
+                error = "port_closed" if item.fix_id == "ssh.port" else "confirm_failed"
                 self.failed += 1
-                self.event("confirm", item, "rolled_back" if rolled else "failed", "confirm")
-                self.finish(change, "rolled_back" if rolled else "failed", "confirm_failed")
+                self.event("confirm", item, "rolled_back" if rolled else "failed", error)
+                self.finish(change, "rolled_back" if rolled else "failed", error)
                 return
             change["state"] = "confirmed"
             self.save()
+            if item.fix_id == "ssh.port":
+                self.move_to_port(item.node_uuid or "", confirm_target.port)
+                target = confirm_target
             self.event("confirm", item, "ok")
         else:
             self.event("confirm", item, "skipped")
@@ -183,6 +191,20 @@ class Engine:
             change["details"]["previousKey"] = previous
             self.save()
         return previous
+
+    def new_port_target(self, target: Target, change: Change) -> Target:
+        """§10.3: the same host key answers on the new port; KERBEROS goes there."""
+        port = int(change["details"].get("newPort") or change["params"]["port"])
+        blob = self.env.state.pinned(target.address, target.port)
+        if blob:
+            self.env.state.pin(target.address, port, "ssh-ed25519", blob)
+        return Target(target.uuid, target.name, target.address, port)
+
+    def move_to_port(self, node_uuid: str, port: int) -> None:
+        record = self.env.state.node(node_uuid)
+        if record is not None:
+            record.ssh_port = port
+            self.env.state.save_node(record)
 
     def confirm(self, target: Target, change_id: str) -> bool:
         clock = self.env.clock

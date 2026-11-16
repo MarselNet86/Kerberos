@@ -59,12 +59,22 @@ def render(run: Run, mask: Optional[Callable[[str], str]] = None) -> str:
                     "report.change",
                     state=t(f"state.{change['state']}"),
                     node=target_label({"target": change["target"], "evidence": {}}, names),
-                    fix=t(f"fix.{change['fixId']}.label", ports=ports),
+                    fix=t(
+                        f"fix.{change['fixId']}.label",
+                        ports=ports,
+                        port=change["params"].get("port", ""),
+                    ),
                 )
             )
             if change.get("error"):
                 reason = TEXT.get(f"error.{change['error']}", change["error"])
                 lines.append(t("report.change_error", reason=reason))
+            if change["fixId"] == "ssh.port" and change["state"] == "confirmed":
+                node = next((n for n in run["nodes"]
+                             if change["target"] == f"node:{n['uuid']}"), None)  # fmt: skip
+                port = change["details"].get("newPort")
+                command = f"ssh -p {port} root@{node['address'] if node else '?'}"
+                lines.append("  - **" + t("report.ssh_port", port=port, command=command) + "**")
         lines += ["", t("report.backups")]
     lines += ["", f"## {t('report.nodes')}", "", t("report.nodes.head"), "|---|---|---|---|"]
     for node in run["nodes"]:
