@@ -3,7 +3,7 @@
 import subprocess
 import sys
 
-from conftest import ROOT
+from helpers import ROOT
 
 SCRIPT = r"""
 import sys

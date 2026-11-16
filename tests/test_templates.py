@@ -9,7 +9,7 @@ import json
 import re
 from copy import deepcopy
 
-from conftest import ROOT
+from helpers import ROOT
 
 HASH_LINE = re.compile(r"`templates/([\w.-]+\.json)`\s+`?([0-9a-f]{64})`?")
 

@@ -1,7 +1,6 @@
 """S2 panel and S3 nodes: key scenarios (tech.md §6, §7, K1)."""
 
-from conftest import assert_snapshot
-from helpers import login_keys, make_app, typed
+from helpers import assert_snapshot, login_keys, make_app, typed
 
 from kerberos.copy import t
 from kerberos.demo.fleet import build_panel
@@ -105,7 +104,7 @@ def test_s3_needs_at_least_one_node():
     app, term = make_app(keys, panel=strict_panel())
     app.run("check")
     assert any(t("nodes.need_one") in f for f in term.frames)
-    assert any(t("app.soon") in f for f in term.frames)
+    assert any(t("access.title") in f for f in term.frames)
 
 
 def test_check_mode_makes_no_changes_in_the_panel():

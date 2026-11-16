@@ -39,7 +39,7 @@ class Terminal(Protocol):
 
     def has_pending(self) -> bool: ...
 
-    def suspend(self) -> AbstractContextManager[None]: ...
+    def suspend(self, message: str = "") -> AbstractContextManager[None]: ...
 
     def close(self) -> None: ...
 
@@ -148,9 +148,12 @@ class LiveTerminal:
         return self._queue.popleft()
 
     @contextmanager
-    def suspend(self) -> Iterator[None]:
+    def suspend(self, message: str = "") -> Iterator[None]:
         """Give the terminal to a child process (ssh asking for a password)."""
         self._leave()
+        if message:
+            self._out.write(message + "\n")
+            self._out.flush()
         try:
             yield
         finally:
@@ -187,6 +190,7 @@ class FakeTerminal:
         self.height = height
         self.frames: list[str] = []
         self.suspended = 0
+        self.messages: list[str] = []
         self._keys: deque[str] = deque(keys)
         self._on_idle = on_idle
         self._idle = 0
@@ -237,8 +241,9 @@ class FakeTerminal:
         return None
 
     @contextmanager
-    def suspend(self) -> Iterator[None]:
+    def suspend(self, message: str = "") -> Iterator[None]:
         self.suspended += 1
+        self.messages.append(message)
         yield
 
     def close(self) -> None:

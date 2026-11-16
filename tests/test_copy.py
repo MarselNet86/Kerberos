@@ -2,7 +2,7 @@
 
 import re
 
-from conftest import ROOT
+from helpers import ROOT
 
 from kerberos.copy import TEXT
 
