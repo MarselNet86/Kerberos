@@ -317,35 +317,48 @@ class App:
         return EXIT_OK
 
     def main_menu(self) -> int:
-        """S1: logo, one phrase about the product, the mode menu."""
+        """S1: logo, one phrase about the product, the mode menu.
+
+        On quit: the last non-zero exit code of the flows run from here (§5.3), so
+        `sudo ./kerberos` reports a partly failed fix or rollback like the commands do.
+        """
         items = [
             ("check", t("mode.check"), ""),
             ("fix", t("mode.fix"), ""),
             ("rollback", t("mode.rollback"), ""),
             ("reports", t("mode.reports"), ""),
         ]
-        while True:
-            due = self.due_finalization()
-            menu = Menu(([("finalize", t("mode.finalize"), "")] if due else []) + items)
-            body = self.s1_body(menu)
-            if due:
-                body = self.with_banner(body, t("app.pending", n=len(due)))
-            choice = self.interact("", body, keys_menu(), menu.handle)
-            if choice == "finalize":
-                self.finalize_flow()
-                continue
-            if choice in ("check", "fix"):
-                self.run_mode(choice)
-            elif choice == "reports":
-                from kerberos.screens.check import reports_menu
+        code = EXIT_OK
+        try:
+            while True:
+                due = self.due_finalization()
+                menu = Menu(([("finalize", t("mode.finalize"), "")] if due else []) + items)
+                body = self.s1_body(menu)
+                if due:
+                    body = self.with_banner(body, t("app.pending", n=len(due)))
+                choice = self.interact("", body, keys_menu(), menu.handle)
+                result = None
+                if choice == "finalize":
+                    result = self.finalize_flow()
+                elif choice in ("check", "fix"):
+                    result = self.run_mode(choice)
+                elif choice == "reports":
+                    from kerberos.screens.check import reports_menu
 
-                reports_menu(self)
-            elif choice == "rollback":
-                from kerberos.screens.rollback import rollback_flow
+                    reports_menu(self)
+                elif choice == "rollback":
+                    from kerberos.screens.rollback import rollback_flow
 
-                rollback_flow(self)
-            else:
-                self.notice("info", t("app.soon"))
+                    result = rollback_flow(self)
+                else:
+                    self.notice("info", t("app.soon"))
+                if isinstance(result, int) and result != EXIT_OK:
+                    code = result
+        except QuitApp:
+            # Quit inside a flow (q on S9): its outcome was kept when S8 finished.
+            session = getattr(self, "session", None)
+            quit_code = session.data.get("exit") if session is not None else None
+            return quit_code or code
 
     def show_report(self, run_id: Optional[str]) -> int:
         """`kerberos report [runId]` in a terminal: the report with scrolling."""

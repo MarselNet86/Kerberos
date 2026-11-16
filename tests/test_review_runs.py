@@ -116,3 +116,24 @@ def test_lock_waits_for_the_other_kerberos(tmp_path):
             pass
     other.__exit__(None, None, None)
     assert slept[2:] == [5.0, 5.0, 2.0], "it gives up after `wait` seconds"
+
+
+# -- app 20: `sudo ./kerberos` exits with what its flows ended with ---------------------------
+def test_menu_returns_the_last_failure_of_its_flows():
+    from kerberos.flow import EXIT_PARTIAL
+
+    panel, nodes = fleet()
+    nodes["nl-2"].state["fail"] = {"mptcp.guard": "mptcp_absent"}
+    keys = ["down", "enter"] + TO_PLAN + APPLY + DONE + ["q", "enter"]  # «Исправление», then quit
+    app, _term = make_app(keys, panel=panel, nodes=list(nodes.values()), height=46)
+    assert app.run() == EXIT_PARTIAL
+
+
+def test_menu_keeps_the_outcome_when_the_person_quits_on_s9():
+    from kerberos.flow import EXIT_PARTIAL
+
+    panel, nodes = fleet()
+    nodes["nl-2"].state["fail"] = {"mptcp.guard": "mptcp_absent"}
+    keys = ["down", "enter"] + TO_PLAN + APPLY + ["q", "enter"]  # q on S9 itself
+    app, _term = make_app(keys, panel=panel, nodes=list(nodes.values()), height=46)
+    assert app.run() == EXIT_PARTIAL
