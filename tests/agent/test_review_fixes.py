@@ -504,3 +504,78 @@ def test_guard_of_a_one_line_location_stays_inside_it():
     )
     assert text.count(agent.EDGE_SNIPPET) == 1, "nothing at server level (ACME stays open)"
     assert agent.edge_guarded(text, ["/api/stream"]) == text, "twice is once"
+
+
+# -- 14. node.letsencrypt_mount trusted a text search -------------------------------------
+OLD_CERT = """services:
+  remnanode:
+    image: remnawave/node:latest
+    network_mode: host
+    volumes:
+      - /etc/letsencrypt/live/old.example.com:/certs:ro
+"""
+SAME_LEVEL = """services:
+  remnanode:
+    image: remnawave/node:latest
+    volumes:
+    - /var/log/remnanode:/var/log/remnanode
+    - type: bind
+      source: /opt/remnanode/xray
+      target: /usr/local/share/xray
+    env_file:
+      - .env
+"""
+
+
+def inspect_mounts(*destinations):
+    mounts = [{"Destination": d} for d in destinations]
+    return json.dumps([{"HostConfig": {"NetworkMode": "host"}, "Mounts": mounts,
+                        "Config": {"Env": []}}])  # fmt: skip
+
+
+def test_mount_of_another_letsencrypt_path_is_not_the_mount(node, recorder):
+    write(node, agent.COMPOSE_FILE, OLD_CERT)
+    recorder.on(["docker", "inspect"], agent.Result(0, inspect_mounts("/certs")))
+    _change, code, answer = apply(node, "node.letsencrypt_mount")
+    assert code == 0 and answer["files"] == [agent.COMPOSE_FILE]
+    assert "      - /etc/letsencrypt:/etc/letsencrypt:ro\n" in read(node, agent.COMPOSE_FILE)
+
+
+def test_container_with_the_mount_needs_nothing(node, recorder):
+    write(node, agent.COMPOSE_FILE, OLD_CERT)
+    recorder.on(["docker", "inspect"], agent.Result(0, inspect_mounts("/etc/letsencrypt/")))
+    _change, code, answer = apply(node, "node.letsencrypt_mount")
+    assert code == 0 and answer["files"] == []
+    assert not any(c[:2] == ["docker", "compose"] for c in recorder.calls)
+
+
+def test_volume_in_the_file_but_not_in_the_container_is_brought_up(node, recorder):
+    text = OLD_CERT + "      - /etc/letsencrypt:/etc/letsencrypt:ro\n"
+    write(node, agent.COMPOSE_FILE, text)
+    _change, code, answer = apply(node, "node.letsencrypt_mount")
+    assert code == 0 and answer["files"] == [] and read(node, agent.COMPOSE_FILE) == text
+    assert ["docker", "compose", "-f", agent.COMPOSE_FILE, "up", "-d"] in recorder.calls
+
+
+def test_items_at_the_indentation_of_volumes_stay_valid():
+    text = agent.add_volume(SAME_LEVEL, "remnanode", agent.LETSENCRYPT_VOLUME)
+    assert text == SAME_LEVEL.replace(
+        "      target: /usr/local/share/xray\n",
+        "      target: /usr/local/share/xray\n    - /etc/letsencrypt:/etc/letsencrypt:ro\n",
+    )
+
+
+# -- 17. `plan` showed files of the person (SECRET_KEY in docker-compose.yml) --------------
+def test_plan_does_not_show_files_of_the_person(node, recorder):
+    write(
+        node,
+        agent.COMPOSE_FILE,
+        OLD_CERT + "    environment:\n      - SECRET_KEY=never-show-this\n",
+    )
+    code, answer = call(node, ["plan", "node.letsencrypt_mount"], b"{}")
+    assert code == 0 and answer["files"] == [{"path": agent.COMPOSE_FILE, "content": None}]
+    assert "never-show-this" not in json.dumps(answer)
+    code, answer = call(node, ["plan", "ssh.key_only"], b"{}")
+    assert answer["files"] == [{"path": agent.SSHD_CONF, "content": None}]
+    code, answer = call(node, ["plan", "mptcp.guard"], b"{}")
+    assert all(item["content"] for item in answer["files"]), "files of KERBEROS stay visible"

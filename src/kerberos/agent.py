@@ -1034,9 +1034,15 @@ class Plan:
         self.confirm_commands: list = []  # (argv, error code), run by `confirm`
         self.steps: list = []  # ordered writes and runs after files and commands
         self.stage = False  # a confirmed change goes back through the first phase
+        self.private: set = set()  # files whose text `plan` does not show
 
-    def write(self, path: str, text: Optional[str], mode: int = 0o644) -> None:
+    def write(self, path: str, text: Optional[str], mode: int = 0o644,
+              private: bool = False) -> None:  # fmt: skip
+        """`private`: the text comes from a file of the person (docker-compose.yml with
+        SECRET_KEY, nginx sites, sshd configs): `plan` does not show it (§9.4)."""
         self.files[path] = (text, mode)
+        if private:
+            self.private.add(path)
 
     def run(self, argv: list, code: str = "command_failed") -> None:
         self.commands.append((argv, code))
@@ -1508,7 +1514,10 @@ def cmd_plan(system: System, args: list, data: dict) -> dict:
         raise AgentError("not_implemented", args[0])
     plan = builder(system, data)
     return {
-        "files": [{"path": p, "content": text} for p, (text, _mode) in plan.files.items()],
+        "files": [
+            {"path": p, "content": None if p in plan.private else text}
+            for p, (text, _mode) in plan.files.items()
+        ],  # fmt: skip
         "commands": [" ".join(argv) for argv, _code in plan.commands],
         "packages": plan.packages,
     }
@@ -1762,7 +1771,7 @@ def fix_key_only(system: System, params: dict) -> Plan:
     lines = ["PasswordAuthentication no", "KbdInteractiveAuthentication no",
              "PermitRootLogin prohibit-password", *kept]  # fmt: skip
     plan = Plan("ssh.key_only")
-    plan.write(SSHD_CONF, "\n".join(lines) + "\n")
+    plan.write(SSHD_CONF, "\n".join(lines) + "\n", private=True)
     ssh_reload(plan, system)
     plan.access = True
     return plan
@@ -1848,7 +1857,7 @@ def fix_ssh_port(system: System, params: dict) -> Plan:
     else:
         old = parse_sshd_t(system.run(["sshd", "-T"]).stdout).get("port") or [22]
         current = system.read(SSHD_CONF) or ""
-        plan.write(SSHD_CONF, with_ports(current, old + [port]))
+        plan.write(SSHD_CONF, with_ports(current, old + [port]), private=True)
         ssh_reload(plan, system)
         plan.on_confirm(SSHD_CONF, with_ports(current, [port]))
         main = system.read(SSHD_MAIN)
@@ -2973,54 +2982,87 @@ def fix_site(system: System, params: dict) -> Plan:
     return plan
 
 
-def add_volume(text: str, service: str, volume: str) -> str:
-    """Add a volume to one service of a compose file, keeping its indentation."""
-    lines = text.splitlines()
+def indent_of(line: str) -> int:
+    return len(line) - len(line.lstrip())
+
+
+def service_block(lines: list, service: str) -> tuple:
+    """(first line, end, indentation of the keys) of one service of a compose file."""
     start = next((i for i, line in enumerate(lines)
                   if re.match(rf"^(\s+){re.escape(service)}:\s*$", line)), None)  # fmt: skip
     if start is None:
         raise AgentError("bad_params", f"service {service} not in the compose file")
-    indent = len(lines[start]) - len(lines[start].lstrip())
-    end = len(lines)
-    for i in range(start + 1, len(lines)):
-        stripped = lines[i].strip()
-        if (
-            stripped
-            and not stripped.startswith("#")
-            and len(lines[i]) - len(lines[i].lstrip()) <= indent
-        ):
-            end = i
-            break
-    block = range(start + 1, end)
-    child = next((len(lines[i]) - len(lines[i].lstrip()) for i in block if lines[i].strip()),
+    indent = indent_of(lines[start])
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].strip()
+                and not lines[i].strip().startswith("#") and indent_of(lines[i]) <= indent),
+               len(lines))  # fmt: skip
+    child = next((indent_of(lines[i]) for i in range(start + 1, end) if lines[i].strip()),
                  indent + 2)  # fmt: skip
-    key = next((i for i in block if re.match(rf"^\s{{{child}}}volumes:\s*$", lines[i])), None)
-    if key is None:
-        insert = [f"{' ' * child}volumes:", f"{' ' * (child + 2)}- {volume}"]
-        return "\n".join(lines[:end] + insert + lines[end:]) + "\n"
-    items = []
+    return start, end, child
+
+
+def is_item(stripped: str) -> bool:
+    return stripped == "-" or stripped.startswith("- ")
+
+
+def volumes_list(lines: list, key: int, end: int, child: int) -> tuple:
+    """(last line of the list under `volumes:`, indentation of its items or None). Items
+    may sit deeper than the key or at the key's own indentation; both are YAML."""
+    last, items = key, None
     for i in range(key + 1, end):
         stripped = lines[i].strip()
         if not stripped or stripped.startswith("#"):
             continue
-        if len(lines[i]) - len(lines[i].lstrip()) <= child:
+        if indent_of(lines[i]) < child or (indent_of(lines[i]) == child and not is_item(stripped)):
             break  # the next key of the service: the volumes list is over
-        if stripped.startswith("- "):
-            items.append(i)
-    item_indent = (len(lines[items[0]]) - len(lines[items[0]].lstrip())) if items else child + 2
-    after = (items[-1] if items else key) + 1
-    return "\n".join(lines[:after] + [f"{' ' * item_indent}- {volume}"] + lines[after:]) + "\n"
+        if items is None and is_item(stripped):
+            items = indent_of(lines[i])
+        last = i
+    return last, items
+
+
+def add_volume(text: str, service: str, volume: str) -> str:
+    """Add a volume to one service of a compose file, keeping its indentation."""
+    lines = text.splitlines()
+    start, end, child = service_block(lines, service)
+    key = next((i for i in range(start + 1, end)
+                if re.match(rf"^\s{{{child}}}volumes:\s*$", lines[i])), None)  # fmt: skip
+    if key is None:
+        insert = [f"{' ' * child}volumes:", f"{' ' * (child + 2)}- {volume}"]
+        return "\n".join(lines[:end] + insert + lines[end:]) + "\n"
+    last, items = volumes_list(lines, key, end, child)
+    item = f"{' ' * (child + 2 if items is None else items)}- {volume}"
+    return "\n".join(lines[: last + 1] + [item] + lines[last + 1 :]) + "\n"
+
+
+def compose_mounts(text: str, service: str, target: str) -> bool:
+    """The service's volumes already name `target` inside the container (short or long form)."""
+    lines = text.splitlines()
+    start, end, child = service_block(lines, service)
+    for i in range(start + 1, end):
+        stripped = lines[i].strip().lstrip("-").strip().strip("'\"")
+        long_form = re.match(r"^target:\s*['\"]?([^'\"\s]+)", stripped)
+        if long_form and long_form.group(1).rstrip("/") == target:
+            return True
+        parts = stripped.split(":")
+        if len(parts) >= 2 and parts[0].startswith(("/", ".", "~", "$")):
+            if parts[1].strip().rstrip("/") == target:
+                return True
+    return False
 
 
 @fix("node.letsencrypt_mount")
 def fix_mount(system: System, params: dict) -> Plan:
+    """Decided by the container, not by the text: the file may name /etc/letsencrypt in a
+    comment, for another path, or in an edit that never reached the container."""
     text = system.read(COMPOSE_FILE)
     if text is None:
         raise AgentError("bad_params", f"no {COMPOSE_FILE}")
     plan = Plan("node.letsencrypt_mount")
-    if "/etc/letsencrypt" in text:
+    if parse_remnanode(system.run(["docker", "inspect", "remnanode"]).stdout)["letsencryptMounted"]:
         return plan
-    plan.write(COMPOSE_FILE, add_volume(text, "remnanode", LETSENCRYPT_VOLUME))
+    if not compose_mounts(text, "remnanode", "/etc/letsencrypt"):
+        plan.write(COMPOSE_FILE, add_volume(text, "remnanode", LETSENCRYPT_VOLUME), private=True)
     plan.run(["docker", "compose", "-f", COMPOSE_FILE, "up", "-d"])
     plan.undo_after.append(["docker", "compose", "-f", COMPOSE_FILE, "up", "-d"])
     return plan
@@ -3162,7 +3204,7 @@ def fix_edge_only(system: System, params: dict) -> Plan:
     v4, v6 = parse_ip_addr(system.run(["ip", "-j", "addr", "show"]).stdout)
     plan = Plan("cdn.edge_only")
     plan.write(EDGES_CONF, edge_geo(["127.0.0.1", "::1", *v4, *v6, *nets]))
-    plan.write(link_target(system, site), edge_guarded(files[site], paths))
+    plan.write(link_target(system, site), edge_guarded(files[site], paths), private=True)
     plan.run(["nginx", "-t"], "nginx_test_failed")
     plan.run(["systemctl", "reload", "nginx"])
     plan.undo_after.append(["systemctl", "reload", "nginx"])
@@ -3208,7 +3250,7 @@ def fix_admin_keys(system: System, params: dict) -> Plan:
     added = [k.strip() for k in keys if k.split()[1] not in blobs]
     plan = Plan("access.admin_keys")
     if added:
-        plan.write(AUTHORIZED_KEYS, "\n".join(lines + added) + "\n", 0o600)
+        plan.write(AUTHORIZED_KEYS, "\n".join(lines + added) + "\n", 0o600, private=True)
     plan.details = {"added": len(added)}
     return plan
 
