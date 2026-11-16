@@ -1,10 +1,11 @@
 # tech.md: KERBEROS
 
-**Версия:** v7 · 2026-11-16
+**Версия:** v8 · 2026-11-16
 **Владелец:** автор репозитория, он же тимлид и единственный разработчик. Сессии разработки работают по этому файлу и по `CLAUDE.md`.
 
 ## Changelog
 
+- v8 (K3, аддитивно и уточнения): агент вызывает ещё `ss` и `ip` из iproute2 (§3.1). Порт `Prober` для проверок с сервера панели: TLS без SNI, HTTP(S) к ноде, DNS, ping (§4). `AgentFacts`: необязательные поля `listening[].firewalled` (порт закрыт правилом nft или ufw) и `mptcp.sockets` (§9.2). `ports.public` не считает лишними TLS-порты сайтов nginx: на них CDN ходит к origin. `reality.foreign_sni`: находка, если `dest` не локальный или ни одно имя из `serverNames` не резолвится в IP ноды (старые имена в сутки финализации не дают находку). S5 спрашивает про whois, только если нод две и больше. На S6 пробел открывает подробности, Enter идёт дальше.
 - v7 (K2, аддитивно и уточнения): ответ `version` агента несёт `sha256` своего файла, по нему KERBEROS решает, нужен ли `update` (§8.3, §9.1). Bootstrap с паролем идёт через одно мастер-соединение `ssh`: пароль вводится один раз, установка python3-minimal и откат ключа идут по нему же (§8.2). Строка ключа KERBEROS со старым адресом панели заменяется. Вопрос про ключ администратора задаётся только в «Исправлении», а ключи попадают на ноды изменением после экрана согласия (§8.5). `nodes.json`: поля в camelCase (§5.4). При смене ключа хоста S4 показывает новый отпечаток и даёт подтвердить его или пропустить ноду (§8.1).
 - v6 (решение владельца): логотип на S1 пиксельными буквами, как в первой версии, красным; в шапке экранов строка «/// kerberos». Выделенная строка меню и списков (`accent`) тоже красная. Плашка «Инфо» нейтральная (`muted`), чтобы не путаться с ошибкой; риск по-прежнему передают символ ● и слово.
 - v5 (решение владельца): логотип «/// kerberos» красным: новый токен палитры `logo` (§14.1) в шапке каждого экрана и на S1; `accent` остаётся для выделенной строки.
@@ -81,7 +82,7 @@ KERBEROS: скрипт защиты VPN-серверов для владельц
 
 Правила:
 - Порт SSH агент меняет по факту, а не по версии ОС: `facts.ssh.socketActivated` (`systemctl is-active ssh.socket` и наличие `ListenStream`) решает, писать drop-in сокета или строки `Port`.
-- Агент не полагается на флаги coreutils: файлы, права, время и хэши он считает средствами Python, внешние команды вызывает только для `sshd`, `systemctl`, `nft`, `sysctl`, `ssh-keygen`, `apt-get`, `certbot`, `nginx`, `docker`, `ufw`.
+- Агент не полагается на флаги coreutils: файлы, права, время и хэши он считает средствами Python, внешние команды вызывает только для `sshd`, `systemctl`, `nft`, `sysctl`, `ssh-keygen`, `apt-get`, `certbot`, `nginx`, `docker`, `ufw` и `ss`, `ip` из iproute2. Конфиги fail2ban и nginx он читает как файлы.
 - Launcher перезапускает себя через `sudo -- "$0" "$@"` без дополнительных флагов: sudo-rs на Ubuntu 26.04 поддерживает не все флаги классического sudo.
 - fail2ban всегда с `backend = systemd` и пакетом `python3-systemd`: на Debian 13 нет `/var/log/auth.log`.
 - Rich и его зависимости закреплены на версиях, которые работают от Python 3.9 до 3.14; `tools/check.sh` проверяет обе крайние версии.
@@ -128,7 +129,7 @@ tests/                   # pytest; фикстуры в tests/fixtures/ толь�
 docs/                    # логотип, текстовые снимки экранов, видео-сценарий
 ```
 
-Порты (интерфейс, live, fake) у всего внешнего: `PanelClient`, `NodeTransport`, `Clock`, `Terminal`, `Whois`, `Host` (команды и файлы самого сервера панели: docker, ssh-keygen, ssh-keyscan, sshd -T). В `--demo` и тестах работают фейки.
+Порты (интерфейс, live, fake) у всего внешнего: `PanelClient`, `NodeTransport`, `Clock`, `Terminal`, `Whois`, `Host` (команды и файлы самого сервера панели: docker, ssh-keygen, ssh-keyscan, sshd -T), `Prober` (проверки с сервера панели наружу: TLS без SNI, HTTP(S) к ноде с нужным Host, DNS, ping). В `--demo` и тестах работают фейки.
 
 Чистые функции без ввода-вывода: все проверки §10, сборка плана, вставка правил в шаблоны, построение копии хоста, оценка отчёта, маскировка, разбор `ss`, `sshd -T`, `nft list`.
 
@@ -316,11 +317,11 @@ class AgentFacts(TypedDict):
     ipv4: list[str]                    # global unicast only
     ipv6: list[str]
     python: str
-    listening: list[dict]              # {proto, address, port, process, docker}
+    listening: list[dict]              # {proto, address, port, process, docker, firewalled}
     ssh: dict                          # {ports, socketActivated, passwordAuthentication,
                                        #  kbdInteractive, permitRootLogin, adminKeys}
     fail2ban: dict                     # {installed, sshdJail, jailPorts}
-    mptcp: dict                        # {enabled, ipOptionsDrop}
+    mptcp: dict                        # {enabled, ipOptionsDrop, sockets}
     nodeApi: dict                      # {port, panelOnly, otherPeers}
     nftTables: list[str]
     hostKeys: list[dict]               # {type, fingerprint} as ssh-keygen -l
@@ -391,7 +392,7 @@ class AgentChange(TypedDict):
 
 | checkId | Риск | Что проверяем | Действие |
 |---|---|---|---|
-| `reality.foreign_sni` | высокий | у Reality-инбаунда `dest` не локальный или `serverNames` не резолвится в IP ноды; снаружи TLS без SNI отдаёт чужой сертификат | `self_steal` (§10.4) **[парк]** |
+| `reality.foreign_sni` | высокий | у Reality-инбаунда `dest` не локальный или ни одно имя из `serverNames` не резолвится в IP ноды; снаружи TLS без SNI отдаёт чужой сертификат | `self_steal` (§10.4) **[парк]** |
 | `probe.no_sni` | средний | TLS на `<ip>:443` без SNI не отдаёт сертификат своего домена или сайт не отвечает 200 | `self_steal` **[парк]** |
 | `hy2.foreign_masquerade` | средний | `masquerade.url` у Hysteria2 указывает на чужой сайт | в составе `self_steal` **[парк]** |
 | `profile.template` | средний | защищаемые части профиля ноды (Reality, Hysteria2, `dns`, `outbounds`, базовые правила) отличаются от шаблона §10.9 | в составе `self_steal` **[парк]** |
@@ -406,7 +407,7 @@ class AgentChange(TypedDict):
 | `ssh.fail2ban` | средний | нет fail2ban или джейла sshd на порту, где слушает sshd | `fail2ban.sshd` **[парк]** |
 | `kernel.mptcp` | высокий | `net.mptcp.enabled = 1` (CVE-2026-98432: удалённый root через MPTCP; Xray до 26.10.31 открывает такие сокеты) | `mptcp.guard` **[парк]** |
 | `node_api.public` | средний | порт API ноды (`nodes.port`, обычно 2222) принимает соединения не только от панели; сканер узнаёт ноду Remnawave по TLS с обязательным клиентским сертификатом | `node_api.panel_only` **[парк]** |
-| `ports.public` | средний | на публичных адресах слушает порт вне разрешённых: 443/tcp, 443/udp, 80/tcp, SSH, API ноды. Голый VLESS или XHTTP опознают по ответу на мусорный запрос | `ports.drop`; порт Docker не трогаем |
+| `ports.public` | средний | на публичных адресах слушает порт вне разрешённых: 443/tcp, 443/udp, 80/tcp, SSH, API ноды, TLS-порты сайтов nginx (origin за CDN). Порт, закрытый правилом nft или ufw, не публичный. Голый VLESS или XHTTP опознают по ответу на мусорный запрос | `ports.drop`; порт Docker не трогаем |
 | `cdn.origin_direct` | высокий | origin за CDN отвечает туннелем на прямой запрос по своему IP: `/cdn-check` 204 или путь туннеля 400 от Xray | `cdn.edge_only` (§10.6) **[парк]** |
 | `panel.public` | средний | панель на публичном домене отвечает страницей входа без дополнительного барьера (caddy-security, секретный путь) | вручную |
 | `panel_server.ssh` | высокий | сервер панели пускает по паролю | вручную: KERBEROS не меняет доступ к серверу, на котором работает человек |
