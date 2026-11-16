@@ -68,6 +68,12 @@ def apply_node_api(node: FakeNode, params: dict, change_id: str) -> tuple[dict, 
 def apply_ports(node: FakeNode, params: dict, change_id: str) -> tuple[dict, Callable]:
     facts = node.state["facts"]
     wanted = set(params["ports"])
+    ssh = {f"{p}/tcp" for p in facts["ssh"]["ports"]} | {
+        f"{s['port']}/tcp" for s in facts["listening"]
+        if s["proto"] == "tcp" and str(s.get("process", "")).startswith("sshd")
+    }  # fmt: skip
+    if wanted & ssh:
+        raise NodeAgentError("ssh_port", ", ".join(sorted(wanted & ssh)))
     changed = []
     for sock in facts["listening"]:
         label = f"{sock['port']}/{sock['proto']}"

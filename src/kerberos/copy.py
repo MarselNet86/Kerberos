@@ -635,6 +635,7 @@ TEXT: dict[str, str] = {
     "error.auth": "ключ KERBEROS не подошёл",
     "error.hostkey_changed": "ключ сервера изменился",
     "error.failed": "сбой SSH",
+    "error.ssh_port": "это порт SSH: KERBEROS его не закрывает, иначе потеряется вход на ноду",
     "rb.title": "Откат",
     "rb.choose": "Какой запуск откатить?",
     "rb.item": "{run} · изменений: {n}",

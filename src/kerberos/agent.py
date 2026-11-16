@@ -269,16 +269,56 @@ def parse_ss_connections(text: str) -> list:
 
 
 def parse_sshd_t(text: str) -> dict:
-    values: dict = {"port": []}
+    """`sshd -T`: the first value of every key, and every port and host key.
+
+    `port` holds the ports of the `listenaddress` lines when there are any: those are
+    what sshd binds, and `ListenAddress 0.0.0.0:2222` puts 2222 only there."""
+    values: dict = {"port": [], "hostkey": []}
+    ports: list = []
+    listen: list = []
     for line in (text or "").splitlines():
         key, _, value = line.strip().partition(" ")
-        key = key.lower()
+        key, value = key.lower(), value.strip()
         if key == "port":
-            if value.strip().isdigit():
-                values["port"].append(int(value))
+            if value.isdigit() and int(value) not in ports:
+                ports.append(int(value))
+        elif key == "listenaddress":
+            _host, port = split_host_port(value.split()[0] if value else "")
+            if port and port not in listen:
+                listen.append(port)
+        elif key == "hostkey":
+            if value and value not in values["hostkey"]:
+                values["hostkey"].append(value)
         elif key:
-            values.setdefault(key, value.strip())
+            values.setdefault(key, value)
+    values["port"] = listen or ports
     return values
+
+
+def sshd_listen_ports(text: str) -> list:
+    """TCP ports that sshd itself holds in `ss -Hlntup` (any owner of the socket)."""
+    ports: list = []
+    for line in (text or "").splitlines():
+        parts = line.split()
+        if len(parts) < 5 or parts[0] != "tcp":
+            continue
+        if any(name.startswith("sshd") for name in re.findall(r'\("([^"]+)",pid=', line)):
+            _host, port = split_host_port(parts[4])
+            if port and port not in ports:
+                ports.append(port)
+    return ports
+
+
+def ssh_ports(sshd_ports: list, by_socket: bool, socket_listen: str, ss_text: str) -> tuple:
+    """Ports SSH listens on: ssh.socket's when it is active and has any, else sshd's own
+    (from `sshd -T`, else the listeners of sshd in `ss`). Second value: by the socket."""
+    if by_socket:
+        listen = parse_socket_ports(socket_listen)
+        if listen:
+            return listen, True
+    if sshd_ports:
+        return list(sshd_ports), False
+    return sshd_listen_ports(ss_text) or [22], False
 
 
 def parse_socket_ports(text: str) -> list:
@@ -656,23 +696,33 @@ def ensure_privsep(system: System) -> None:
     os.makedirs(system.path(PRIVSEP_DIR), mode=0o755, exist_ok=True)
 
 
-def collect_ssh(system: System) -> dict:
+def sshd_values(system: System) -> dict:
     result = system.run(["sshd", "-T"])
     if not result.ok:
         ensure_privsep(system)
         result = system.run(["sshd", "-T"])
-    values = parse_sshd_t(result.stdout)
+    return parse_sshd_t(result.stdout)
+
+
+def socket_active(system: System) -> bool:
+    return system.run(["systemctl", "is-active", "ssh.socket"]).stdout.strip() == "active"
+
+
+def socket_listen_text(system: System) -> str:
+    return system.run(["systemctl", "show", "ssh.socket", "-p", "Listen"]).stdout
+
+
+def collect_ssh(system: System, values: Optional[dict] = None) -> dict:
+    values = dict(sshd_values(system) if values is None else values)
     if "passwordauthentication" not in values:
         # No word from sshd: never report password login as off when it may be on.
         values.update(passwordauthentication="yes", kbdinteractiveauthentication="yes")
-    socket_active = system.run(["systemctl", "is-active", "ssh.socket"]).stdout.strip() == "active"
-    ports = values.get("port") or [22]
-    if socket_active:
-        listen = parse_socket_ports(
-            system.run(["systemctl", "show", "ssh.socket", "-p", "Listen"]).stdout
-        )
-        socket_active = bool(listen)
-        ports = listen or ports
+    active = socket_active(system)
+    listen = socket_listen_text(system) if active else ""
+    # sshd -T did not answer: the ports come from what sshd holds, not a guess of 22.
+    sshd_ports = values.get("port") or []
+    ss_text = "" if sshd_ports else system.run(["ss", "-Hlntup"]).stdout
+    ports, active = ssh_ports(sshd_ports, active, listen, ss_text)
     admin = count_admin_keys(
         (system.read("/root/.ssh/authorized_keys") or "")
         + "\n"
@@ -681,7 +731,7 @@ def collect_ssh(system: System) -> dict:
     kbd = values.get("kbdinteractiveauthentication", values.get("challengeresponseauthentication"))
     return {
         "ports": ports,
-        "socketActivated": socket_active,
+        "socketActivated": active,
         "passwordAuthentication": values.get("passwordauthentication") == "yes",
         "kbdInteractive": kbd == "yes",
         "permitRootLogin": values.get("permitrootlogin", ""),
@@ -1372,6 +1422,18 @@ def fix_node_api(system: System, params: dict) -> Plan:
 PORT_RE = re.compile(r"^(\d{1,5})/(tcp|udp)$")
 
 
+def ssh_ports_in_use(system: System, ss_text: str) -> set:
+    """Ports of SSH right now: the one this session came in on, every port sshd holds
+    and the ports of ssh.socket when it is active."""
+    ports = set(sshd_listen_ports(ss_text))
+    parts = system.environ.get("SSH_CONNECTION", "").split()
+    if len(parts) >= 4 and parts[3].isdigit():
+        ports.add(int(parts[3]))
+    if socket_active(system):
+        ports.update(parse_socket_ports(socket_listen_text(system)))
+    return ports
+
+
 @fix("ports.drop")
 def fix_ports(system: System, params: dict) -> Plan:
     wanted = []
@@ -1382,8 +1444,15 @@ def fix_ports(system: System, params: dict) -> Plan:
         wanted.append((int(match.group(1)), match.group(2)))
     if not wanted:
         raise AgentError("bad_params", "ports")
+    ss_text = system.run(["ss", "-Hlntup"]).stdout
+    # The rule drops established packets too: on an SSH port it would cut this very
+    # session and every way back to the node. No undo timer guards ports.drop.
+    ssh = ssh_ports_in_use(system, ss_text)
+    refused = [f"{p}/{proto}" for p, proto in wanted if proto == "tcp" and p in ssh]
+    if refused:
+        raise AgentError("ssh_port", ", ".join(refused))
     published = docker_published(system.run(["docker", "ps", "--format", "{{json .}}"]).stdout)
-    for sock in parse_ss_listen(system.run(["ss", "-Hlntup"]).stdout):
+    for sock in parse_ss_listen(ss_text):
         if sock["process"] == "docker-proxy":
             published.add((sock["port"], sock["proto"]))
     blocked = [f"{p}/{proto}" for p, proto in wanted if (p, proto) in published]
