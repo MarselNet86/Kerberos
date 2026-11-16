@@ -14,7 +14,8 @@ from kerberos.mask import Masker
 from kerberos.report import markdown
 from kerberos.screens.check import write_report
 
-TO_S5 = login_keys() + ["enter", "enter"] + ["enter"] * 5 + ["esc"] + ["enter"]
+# S2 summary, S3, the intro of «Проверка» on S4, five host keys, kz-1 skipped, S4 summary.
+TO_S5 = login_keys() + ["enter", "enter", "enter"] + ["enter"] * 5 + ["esc"] + ["enter"]
 WHOIS_YES = ["enter"]
 READ_ONLY = {"version", "facts", "watch", "site-check", "edge-sources"}
 

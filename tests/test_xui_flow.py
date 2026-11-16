@@ -19,6 +19,8 @@ CHOOSE = ["down", "enter"]  # S2: 3x-ui is the second panel of the demo server
 LOGIN = typed("admin") + ["enter"] + typed("pw") + ["enter"]
 TO_REPORT = CHOOSE + LOGIN + ["enter", "enter"]  # S2 summary, S4 summary (S3 is skipped)
 TO_PLAN = TO_REPORT + ["enter"]
+# «Проверка»: S4 first says what it installs on this server.
+CHECK_REPORT = CHOOSE + LOGIN + ["enter", "enter", "enter"]
 # S7 rows of the demo server: mptcp, fail2ban, ports, key only, ssh port, self-steal, watch.
 PORT_ROW, STEAL_ROW = 4, 5
 APPLY = ["enter", "enter"]
@@ -47,7 +49,7 @@ def steal(domain=XUI_DOMAIN):
 
 
 def test_choice_of_panel_then_check():
-    app, term = xui_app(TO_REPORT + ["enter"])
+    app, term = xui_app(CHECK_REPORT + ["enter"])
     assert app.run("check") == EXIT_OK
     assert seen(term, t("panel.choose")) and seen(term, t("panel.kind.3x-ui"))
     run = last_run(app)
@@ -63,7 +65,7 @@ def test_choice_of_panel_then_check():
 
 
 def test_local_access_needs_no_password_and_is_restricted():
-    app, term = xui_app(TO_REPORT + ["enter"])
+    app, term = xui_app(CHECK_REPORT + ["enter"])
     app.run("check")
     node = local_node(app)
     line = next(k for k in node.authorized_keys if "kerberos" in k or "command=" in k)

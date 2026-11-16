@@ -209,7 +209,7 @@ def check_by_name(nodes, state=None, extra=HOST_KEYS):
 
     panel = build_panel()
     next(n for n in panel.nodes if n["name"] == "nl-1")["address"] = NL1_NAME
-    keys = TO_S4 + extra + ["enter", "x", "q", "enter"]
+    keys = TO_S4 + ["enter"] + extra + ["enter", "x", "q", "enter"]  # S4 intro of «Проверка»
     app, term = make_app(keys, nodes=nodes, state=state, panel=panel)
     app.env.prober.dns[NL1_NAME] = ["2001:db8::10", NL1]  # A and AAAA
     app.run("check")

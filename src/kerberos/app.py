@@ -170,7 +170,7 @@ class App:
             Notice("warning", text),
             Text(f"{t('quit.yes')}    {t('quit.no')}", style="muted"),
         )
-        self.draw(t("keys.quit"), body)
+        self.draw(t("quit.title"), body)
         return self.term.read_key() == "enter"
 
     def show_help(self) -> None:
@@ -305,20 +305,34 @@ class App:
         if not pairs:
             self.notice("info", t("fin.none"), t("fin.title"))
             return EXIT_OK
-        opened = open_panel(self, kind=pairs[0][0]["panel"].get("kind", "remnawave"))
+        kind = pairs[0][0]["panel"].get("kind", "remnawave")
+        opened = open_panel(self, kind=kind)
         if not isinstance(opened, tuple):
             return EXIT_PANEL if opened == EXIT_PANEL else EXIT_OK
-        lines: list = [Text(t("fin.consent"))]
-        for _run, item in pairs:
-            lines.append(Text(f"  {self.mask(item['nodeName'])}: {self.mask(item['domain'])}"))
+        lines: list = [Text(t("fin.consent.local" if kind == "3x-ui" else "fin.consent"))]
+        lines += [Text("  " + self.finalize_line(run, item)) for run, item in pairs]
         if not agree(self, t("fin.title"), Consent(Group(*lines), t("fin.accept"), t("fin.keys"))):
             return EXIT_OK
         failed = finalize_items(opened[1], store, pairs)
         if failed:
-            self.notice("error", t("fin.failed", n=len(failed)), t("fin.title"))
+            names = ", ".join(self.mask(item["nodeName"]) for item in failed)
+            self.notice("error", t("fin.failed", n=len(failed), nodes=names), t("fin.title"))
             return EXIT_PANEL
         self.notice("info", t("fin.done", n=len(pairs)), t("fin.title"))
         return EXIT_OK
+
+    def finalize_line(self, run: dict, item: dict) -> str:
+        """«nl-1: останется nl-1.example.com, уберётся www.example.net» (§10.4, step 6)."""
+        change = next((c for c in run["changes"] if c["changeId"] == item.get("changeId")), None)
+        old = (change or {}).get("details", {}).get("oldNames")
+        if isinstance(old, dict):  # 3x-ui: the names of every Reality inbound of the run
+            old = [name for names in old.values() for name in names]
+        names = list(dict.fromkeys(n for n in old or [] if n != item["domain"]))
+        node, domain = self.mask(item["nodeName"]), self.mask(item["domain"])
+        if not names:
+            return t("fin.item.only", node=node, domain=domain)
+        key = "fin.item" if len(names) == 1 else "fin.item.many"
+        return t(key, node=node, domain=domain, old=", ".join(self.mask(n) for n in names))
 
     def main_menu(self) -> int:
         """S1: logo, one phrase about the product, the mode menu."""

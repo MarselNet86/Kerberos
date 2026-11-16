@@ -39,7 +39,9 @@ from kerberos.ui.widgets import (
 
 # S2 login, S3, S4: five host keys (de-1 also installs python3), kz-1 skipped.
 TO_S4_END = login_keys() + ["enter", "enter"] + ["enter"] * 5 + ["esc"]
-TO_S6_CHECK = TO_S4_END + ["enter", "enter"]  # S4 summary, whois yes
+# «Проверка» opens S4 with what it installs (one more Enter), then the same keys.
+CHECK_S4_END = login_keys() + ["enter", "enter", "enter"] + ["enter"] * 5 + ["esc"]
+TO_S6_CHECK = CHECK_S4_END + ["enter", "enter"]  # S4 summary, whois yes
 # «Исправление»: the admin key («Мои ключи» and its list), S4 summary, whois, S6 → S7.
 TO_PLAN = TO_S4_END + ["enter", "enter"] + ["enter", "enter", "enter"]
 LAUNCHER = "/opt/kerberos/kerberos"
