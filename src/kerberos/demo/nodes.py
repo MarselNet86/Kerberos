@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 
 from kerberos.nodes.fake import FakeNode
+from kerberos.nodes.fake_fixes import give_fixes
 from kerberos.nodes.keys import demo_blob, fingerprint
 from kerberos.probe import FakeProber, HttpResult, TlsResult
 from kerberos.whois import AsInfo, FakeWhois
@@ -142,6 +143,26 @@ def give_agent(node: FakeNode) -> None:
         d["domain"], {"template": None, "altSvc": None, "status": None}
     )
     node.handlers["edge-sources"] = lambda n, _a, _d: {"nets": n.state["edges"]}
+    give_fixes(node)
+
+
+def auth_methods_of(nodes: list[FakeNode]):
+    """What each demo node's SSH offers a stranger, from its current facts."""
+    by_address = {n.address: n for n in nodes}
+
+    def methods(ip: str, port: int):
+        node = by_address.get(ip)
+        if node is None:
+            return None
+        ssh = node.state["facts"]["ssh"]
+        offered = ["publickey"]
+        if ssh.get("passwordAuthentication"):
+            offered.append("password")
+        if ssh.get("kbdInteractive"):
+            offered.append("keyboard-interactive")
+        return offered
+
+    return methods
 
 
 DNS = {

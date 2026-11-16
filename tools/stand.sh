@@ -20,6 +20,7 @@ NAMES=(ubuntu-22.04 ubuntu-24.04 ubuntu-26.04 debian-12 debian-13)
 IMAGES=(ubuntu:22.04 ubuntu:24.04 ubuntu:26.04 debian:12 debian:13)
 VARS=(STAND_UBUNTU_2204 STAND_UBUNTU_2404 STAND_UBUNTU_2604 STAND_DEBIAN_12 STAND_DEBIAN_13)
 PAYLOAD=(src/kerberos/__init__.py src/kerberos/agent.py tests/conftest.py tests/agent tests/fixtures/agent)
+# tests/stand/scenario.py changes SSH, nftables and fail2ban: stand VMs only.
 [ -d tests/stand ] && PAYLOAD+=(tests/stand)
 
 REPORT="$(mktemp "${TMPDIR:-/tmp}/kerberos-stand.XXXXXX")"

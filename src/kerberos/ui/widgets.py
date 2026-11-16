@@ -206,8 +206,16 @@ class Checklist:
         self._offset = _scroll(self._offset, self.cursor, visible)
         table = Table(box=box.SIMPLE_HEAD, expand=True, show_edge=False, pad_edge=False)
         table.add_column("", no_wrap=True, width=5)
-        for column in self.columns:
-            table.add_column(column, no_wrap=True, overflow="ellipsis", header_style="muted")
+        longest = [
+            max([len(text(row[i]).plain) for row in self.rows if i < len(row)] + [len(column)])
+            for i, column in enumerate(self.columns)
+        ]
+        # The widest column takes what is left and is cut with an ellipsis; the
+        # others keep their width, so marks and names never shrink to "…".
+        flexible = longest.index(max(longest)) if longest else -1
+        for index, column in enumerate(self.columns):
+            table.add_column(column, no_wrap=True, overflow="ellipsis", header_style="muted",
+                             ratio=1 if index == flexible else None)  # fmt: skip
         for i in range(self._offset, min(len(self.rows), self._offset + visible)):
             off = i in self.disabled
             mark = " - " if off else ("[✓]" if i in self.selected else "[ ]")

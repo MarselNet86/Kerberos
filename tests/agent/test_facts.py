@@ -14,6 +14,7 @@ def test_facts_match_the_reference(name):
     system, _ = recorded(name)
     facts = agent.collect_facts(system)
     assert isinstance(facts.pop("python"), str)
+    assert facts.pop("agent") == agent.AGENT_VERSION
     expected = json.loads((FIXTURES / f"facts-{name}.json").read_text(encoding="utf-8"))
     assert facts == expected
 

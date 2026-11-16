@@ -77,11 +77,12 @@ class RunStore:
         if not self.state.runs.is_dir():
             return []
         found = []
-        for item in sorted(self.state.runs.iterdir(), reverse=True):
+        for item in self.state.runs.iterdir():
             run = self.load(item.name)
             if run is not None:
-                found.append(run)
-        return found
+                found.append((run.get("startedAt", ""), item.stat().st_mtime_ns, run))
+        # Newest first; runs started in the same second go by their last write.
+        return [run for *_key, run in sorted(found, key=lambda x: (x[0], x[1]), reverse=True)]
 
     def load(self, run_id: str) -> Optional[Run]:
         try:
