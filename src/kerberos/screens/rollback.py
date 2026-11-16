@@ -8,9 +8,10 @@ change touches it): then that later change has to go back first.
 from __future__ import annotations
 
 import copy
+from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
-from rich.console import Group, RenderableType
+from rich.console import Group
 from rich.text import Text
 
 from kerberos.copy import t
@@ -49,10 +50,37 @@ def label(app: App, run: dict, change: dict) -> str:
     return f"{app.mask(name)}: {app.mask(text)}"
 
 
+def run_when(run: dict) -> str:
+    """«16.11.2026 12:00 UTC»: when the run started; its id if the time is unreadable."""
+    try:
+        moment = datetime.strptime(run.get("startedAt") or "", "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return run.get("runId", "")
+    return t("run.when", date=moment.strftime("%d.%m.%Y"), time=moment.strftime("%H:%M"))
+
+
+def run_nodes(app: App, run: dict, limit: int = 3) -> str:
+    names = [app.mask(n["name"]) for n in run.get("nodes", [])]
+    return ", ".join(names[:limit]) + (", …" if len(names) > limit else "")
+
+
+def run_label(app: App, run: dict, changes: Optional[int] = None) -> str:
+    """How a person knows a run in a list: time, mode, changes (or the score), nodes."""
+    parts = {"when": run_when(run), "mode": t(f"report.mode.{run['mode']}"),
+             "nodes": run_nodes(app, run)}  # fmt: skip
+    if changes is not None:
+        return t("rb.item", n=changes, **parts)
+    if run.get("changes"):
+        return t("reports.item.changes", n=len(run["changes"]), **parts)
+    after = run.get("scoreAfter")
+    return t("reports.item", score=after if after is not None else run.get("scoreBefore", 0),
+             **parts)  # fmt: skip
+
+
 def choose_run(app: App, runs: list) -> Optional[dict]:
     items = [
-        (run["runId"], t("rb.item", run=run["runId"],
-                         n=sum(1 for c in run["changes"] if c["state"] in ROLLBACKABLE)), "")
+        (run["runId"],
+         run_label(app, run, sum(1 for c in run["changes"] if c["state"] in ROLLBACKABLE)), "")
         for run in runs
     ]  # fmt: skip
     menu = Menu(items)
@@ -181,20 +209,20 @@ def rollback_flow(app: App, run_id: Optional[str] = None) -> int:
     record = store.new_run("rollback", run["panel"], run["nodes"])
     record["changes"] = copy.deepcopy(chosen)
     record["findings"] = run.get("findings", [])
-    record["scoreBefore"] = run.get("scoreAfter") or run.get("scoreBefore", 0)
+    # The rollback goes from the protection after the fix back to the one before it;
+    # a partial rollback is counted the same way, as the lower bound.
+    after = run.get("scoreAfter")
+    record["scoreBefore"] = after if after is not None else run.get("scoreBefore", 0)
+    record["scoreAfter"] = run.get("scoreBefore", 0)
     record["rolledBackRun"] = run["runId"]
     record["finishedAt"] = iso(app.env.clock)
     store.save(record)
-    write_report(app, record)
-    lines: list[RenderableType] = [
-        Text(t("rb.done", ok=len(chosen) - len(failed), total=len(chosen)), style="bold")
-    ]
+    path = write_report(app, record)
+    lines = [t("rb.done", ok=len(chosen) - len(failed), total=len(chosen))]
     for change in failed:
-        lines.append(Text(f"✗ {label(app, run, change)}: {error_text(change.get('error'))}",
-                          style="risk.high"))  # fmt: skip
+        lines.append(f"✗ {label(app, run, change)}: {error_text(change.get('error'))}")
     if failed:
-        lines.append(Notice("error", t("rb.failed")))
-    app.notice("info" if not failed else "error", "\n".join(
-        str(line.plain) if isinstance(line, Text) else "" for line in lines).strip(),
-        t("rb.title"))  # fmt: skip
+        lines.append(t("rb.failed"))
+    lines += ["", t("report.saved", path=app.mask(path))]
+    app.notice("info" if not failed else "error", "\n".join(lines), t("rb.title"))
     return EXIT_ROLLBACK_FAILED if failed else EXIT_OK

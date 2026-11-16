@@ -12,7 +12,7 @@ from kerberos.copy import plural, t
 from kerberos.demo.fleet import build_nodes, build_panel
 from kerberos.demo.xui import XUI_DOMAIN
 from kerberos.fixes.journal import RunStore
-from kerberos.flow import EXIT_OK, EXIT_PANEL
+from kerberos.flow import EXIT_OK, EXIT_PANEL, EXIT_ROLLBACK_FAILED
 from kerberos.host import FakeHost
 from kerberos.nodes.keys import PublicKey, demo_blob, fingerprint
 from kerberos.panel.discover import XUI_DB
@@ -236,6 +236,59 @@ def fix_then(extra_nodes=None):
                          height=40)  # fmt: skip
     assert app.run("fix") == EXIT_OK
     return app, term, nodes, store_of(app).runs()[0]
+
+
+def test_rollback_result_shows_failures_the_hint_and_the_report():
+    app, term, nodes, _fixed = fix_then()
+    nodes["nl-1"].state["rollback_fails"] = True
+    term.feed(*ROLLBACK)
+    assert app.run("rollback") == EXIT_ROLLBACK_FAILED
+    record = store_of(app).runs()[0]
+    result = flat(term.frames[-1])
+    assert t("rb.failed") in result
+    assert "".join(t("report.saved", path="").split()) in solid(term.frames[-1])
+    assert record["runId"] in solid(term.frames[-1])
+
+
+def test_rollback_run_has_the_scores_the_other_way_round():
+    app, term, _nodes, fixed = fix_then()
+    term.feed(*ROLLBACK)
+    assert app.run("rollback") == EXIT_OK
+    record = store_of(app).runs()[0]
+    assert record["mode"] == "rollback" and record["rolledBackRun"] == fixed["runId"]
+    assert (record["scoreBefore"], record["scoreAfter"]) == (fixed["scoreAfter"],
+                                                             fixed["scoreBefore"])  # fmt: skip
+    report = store_of(app).report_text(record["runId"])
+    line = t("report.score_before_after", before=fixed["scoreAfter"], after=fixed["scoreBefore"])
+    assert line in report
+    assert "".join(t("report.saved", path="").split()) in solid(term.frames[-1])
+    assert record["runId"] in solid(term.frames[-1])
+
+
+def test_runs_are_named_by_time_mode_changes_and_nodes():
+    app, term, _nodes, fixed = fix_then()
+    term.feed("esc")
+    app.run("rollback")
+    name = f"{when(fixed)} · {t('report.mode.fix')} · изменений: 19 · nl-1, nl-2, de-1, …"
+    choice = term.frames[first(term, t("rb.choose"))]
+    assert name in choice and fixed["runId"] not in choice
+    term.feed("4", "esc", *QUIT)
+    app.run()
+    head = "/// kerberos  " + t("reports.title")
+    reports = next(f for f in term.frames if title(f).startswith(head))
+    assert name in reports
+
+
+def test_check_runs_in_the_reports_menu_show_the_score():
+    keys = TO_S4 + INTRO + ALL_NODES + ["enter", "enter", "enter"]  # S4, whois, S6 → the end
+    app, term = make_app(keys)
+    assert app.run("check") == EXIT_OK
+    run = store_of(app).runs()[0]
+    term.feed("4", "esc", *QUIT)
+    app.run()
+    name = (f"{when(run)} · {t('report.mode.check')} · защищённость {run['scoreBefore']}"
+            " · nl-1, nl-2, de-1, …")  # fmt: skip
+    assert seen(term, name)
 
 
 # -- 15: an address typed by hand is not «found» ---------------------------------------

@@ -235,11 +235,9 @@ def reports_menu(app: App) -> None:
     if not runs:
         app.notice("info", t("report.empty"), t("reports.title"))
         return
-    items = [
-        (run["runId"], t("reports.item", run=run["runId"], mode=t(f"report.mode.{run['mode']}"),
-                         score=run.get("scoreAfter") or run.get("scoreBefore")), "")
-        for run in runs
-    ]  # fmt: skip
+    from kerberos.screens.rollback import run_label
+
+    items = [(run["runId"], run_label(app, run), "") for run in runs]
     menu = Menu(items)
     while True:
 
