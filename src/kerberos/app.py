@@ -24,7 +24,7 @@ from kerberos.panel.client import PanelClient, Transport
 from kerberos.panel.discover import PanelLocation
 from kerberos.panel.model import PanelSnapshot
 from kerberos.ui.keys import hotkey
-from kerberos.ui.logo import LOGO
+from kerberos.ui.logo import LOGO_ART
 from kerberos.ui.terminal import Terminal
 from kerberos.ui.widgets import Body, KeyHints, Menu, Notice, Screen
 
@@ -216,7 +216,7 @@ class App:
         def body(_width: int, _height: int) -> RenderableType:
             return Group(
                 Text(""),
-                Text(LOGO, style="logo"),
+                Text("\n".join(LOGO_ART), style="logo"),
                 Text(""),
                 Text(t("app.tagline"), style="bold"),
                 Text(t("app.version", version=__version__), style="muted"),

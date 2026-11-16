@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
-# The brand mark, drawn with the `logo` palette token (red) in the header and on S1.
+# The brand mark, drawn with the `logo` palette token (red): one line in the
+# header of every screen, pixel letters of half blocks on S1.
 LOGO = "/// kerberos"
+
+LOGO_ART = (
+    " ▄▀ ▄▀ ▄▀  █▄▀ █▀▀ █▀█ █▄▄ █▀▀ █▀█ █▀█ █▀",
+    "▄▀ ▄▀ ▄▀   █ █ ██▄ █▀▄ █▄█ ██▄ █▀▄ █▄█ ▄█",
+)
 
 # Three rows per digit, three columns wide.
 DIGITS = {
