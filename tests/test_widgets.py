@@ -1,5 +1,6 @@
 import io
 
+import pytest
 from rich.text import Text
 
 from kerberos.copy import t
@@ -102,6 +103,19 @@ def test_progress_board_symbols():
     board.set("nl-1", "применение", "failed")
     frame = render(board)
     assert "✓" in frame and "✗" in frame
+
+
+@pytest.mark.parametrize("width", [80, 100])
+def test_progress_board_keeps_the_whole_reason(width):
+    steps = [t(f"step.{s}") for s in ("backup", "apply", "check", "confirm")]
+    board = ProgressBoard(["fi-1", "хост FI CDN"], steps)
+    board.start("fi-1", t("fix.xhttp.padding.label"))
+    reason = t("apply.rolled_back", reason=t("error.port_closed"))
+    board.finish("fi-1", Text(reason))
+    frame = render(board, width=width)
+    assert max(len(line) for line in frame.splitlines()) <= width
+    assert " ".join(frame.split()).count(reason) == 1, "the reason is never cut"
+    assert "fi-1: " in frame
 
 
 def test_score_badge_words_and_colours():

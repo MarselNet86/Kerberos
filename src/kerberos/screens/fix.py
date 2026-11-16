@@ -391,7 +391,9 @@ def consent(app: App, session: Session, items: list[PlanItem]) -> bool:
     lines: list[RenderableType] = [Text(t("consent.intro"), style="bold")]
     by_node: dict = {}
     for item in chosen:
-        by_node.setdefault(node_name(session, item.target), []).append(fix_label(app, item))
+        by_node.setdefault(node_name(session, item.target, item.params), []).append(
+            fix_label(app, item)
+        )
     for name, labels in by_node.items():
         lines.append(Text(f"  {app.mask(name)}: " + "; ".join(labels)))
     warnings = []
@@ -413,15 +415,15 @@ def step_apply(app: App, session: Session) -> Any:
     chosen = [i for i in items if i.selected and not i.blocked]
     names = []
     for item in chosen:
-        name = node_name(session, item.target)
+        name = node_name(session, item.target, item.params)
         if name not in names:
             names.append(name)
     board = ProgressBoard([app.mask(n) for n in names], [t(f"step.{s}") for s in STEP_KEYS])
     board.node_title, board.fix_title = t("board.node"), t("board.fix")
-    board.result_title, board.legend = t("board.result"), t("board.legend")
+    board.legend = t("board.legend")
 
     def on_event(step: str, item: PlanItem, state: str, note: str) -> None:
-        name = app.mask(node_name(session, item.target))
+        name = app.mask(node_name(session, item.target, item.params))
         if step == "backup" and state == "running":
             board.start(name, fix_label(app, item))
         board.set(name, t(f"step.{step}"), state)

@@ -428,7 +428,7 @@ TEXT: dict[str, str] = {
         "подписку, не подключатся через XHTTP, пока не обновят её."
     ),
     "keys.edges": "сети CDN",
-    "plan.edges.none": "e: подтвердите сети CDN",
+    "plan.edges.none": "e: выберите сети CDN",
     "plan.edges.ok": "сетей CDN: {n} ✓",
     "plan.edges.title": "Откуда CDN ходит на {node}",
     "plan.edges.hint": (
@@ -526,7 +526,6 @@ TEXT: dict[str, str] = {
     "step.confirm": "подтверждение",
     "board.node": "Нода",
     "board.fix": "Исправление",
-    "board.result": "Итог",
     "board.legend": "✓ готово · … идёт · ✗ ошибка · ↺ откачено · – не нужно",
     "keys.interrupt": "прервать",
     "apply.interrupt": (
