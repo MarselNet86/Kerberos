@@ -68,6 +68,7 @@ class PanelClient:
         self.clock = clock
         self._token: Optional[str] = None
         self.host_shape = "tags"
+        self._shape_known = False  # learnt from GET /hosts before the first host is written
         self.calls: list[tuple[str, str]] = []
 
     @property
@@ -168,7 +169,14 @@ class PanelClient:
     def hosts(self) -> list[Host]:
         raw = schema.items(self.request("GET", "/hosts"), "hosts")
         self.host_shape = schema.detect_shape(raw)
+        self._shape_known = True
         return [schema.host(h, self.host_shape) for h in raw]
+
+    def learn_shape(self) -> None:
+        """§7.4: hosts are written in the form the panel reads them in (a fresh client, e.g.
+        the one of `kerberos rollback`, has not read any host yet)."""
+        if not self._shape_known:
+            self.hosts()
 
     def templates(self) -> list[Template]:
         answer = self.request("GET", "/subscription-templates")
@@ -210,10 +218,12 @@ class PanelClient:
         )
 
     def create_host(self, fields: dict) -> Host:
+        self.learn_shape()
         body = schema.host_write_fields(fields, self.host_shape)
         return schema.host(self.request("POST", "/hosts", body), self.host_shape)
 
     def patch_host(self, uuid: str, fields: dict) -> Host:
+        self.learn_shape()
         body = {"uuid": uuid, **schema.host_write_fields(fields, self.host_shape)}
         return schema.host(self.request("PATCH", "/hosts", body), self.host_shape)
 

@@ -109,3 +109,35 @@ def test_3xui_error_names_the_panel_without_its_secret_path():
     app.run("check")
     assert seen(term, "http://127.0.0.1:2053")
     assert not seen(term, "s3cr3tpathXYZ")
+
+
+# -- app 13: a fresh client writes hosts in the panel's own form -------------------------------
+def test_fresh_client_writes_hosts_in_the_tag_form():
+    from kerberos.clock import FakeClock
+    from kerberos.demo.fleet import build_panel
+    from kerberos.panel.client import PanelClient
+
+    panel = build_panel("tag")
+    client = PanelClient("http://127.0.0.1:3000/api", panel, FakeClock())
+    client.login("admin", "any")  # as `kerberos rollback` does: no host read before the write
+    host = next(h for h in panel.hosts if h["remark"] == "DE Reality")
+    client.patch_host(host["uuid"], {"tags": ["DE1_BACK"], "isHidden": False})
+    assert host["tag"] == "DE1_BACK" and "tags" not in host
+    writes = [body for method, path, body in panel.log if (method, path) == ("PATCH", "/hosts")]
+    assert writes and "tag" in writes[-1] and "tags" not in writes[-1]
+
+
+def test_reserve_rollback_on_a_tag_panel():
+    from test_review_logic import ROLLBACK, fix, fleet
+    from test_review_self_steal import reserve_keys
+
+    from kerberos.demo.fleet import build_panel
+    from kerberos.flow import EXIT_OK
+
+    _panel, nodes = fleet()
+    panel = build_panel("tag")
+    app, _term, code = fix(reserve_keys() + APPLY + DONE, panel, nodes)
+    assert code == EXIT_OK
+    app.env.terminal.feed(*ROLLBACK, "x")
+    assert app.run("rollback") == EXIT_OK
+    assert {c["state"] for c in fix_run(app)["changes"]} == {"rolled_back"}
