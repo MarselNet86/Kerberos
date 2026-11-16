@@ -104,27 +104,60 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(t("cli.no_tty"), file=sys.stderr)
         return 2
 
+    if opts.command == "ssh":
+        return admin_ssh(opts)
+
     from kerberos.app import App, Env
     from kerberos.clock import SystemClock
     from kerberos.mask import Masker
+    from kerberos.state import Locked
     from kerberos.ui.terminal import LiveTerminal
 
-    terminal = LiveTerminal(color=opts.color)
-    env = Env(terminal=terminal, clock=SystemClock(), masker=Masker(opts.mask), demo=opts.demo)
+    env = Env(terminal=None, clock=SystemClock(), masker=Masker(opts.mask), demo=opts.demo)
     if opts.demo:
         from kerberos.demo.fleet import attach
 
         attach(env)
     else:
         from kerberos.host import LiveHost
+        from kerberos.nodes.transport import SshTransport
         from kerberos.panel.client import urllib_transport
+        from kerberos.state import State
 
         env.host = LiveHost()
         env.panel_transport = urllib_transport
+        env.state = State()
+        env.transport = SshTransport(env.state)
     try:
-        return App(env).run(opts.command, opts.arg)
-    finally:
-        terminal.close()
+        with env.state.lock():
+            env.terminal = LiveTerminal(color=opts.color)
+            try:
+                return App(env).run(opts.command, opts.arg)
+            finally:
+                env.terminal.close()
+    except Locked:
+        print(t("lock.busy"), file=sys.stderr)
+        return 2
+
+
+def admin_ssh(opts: Options) -> int:
+    """`kerberos ssh <node>`: log in with the administrator key (§8.5)."""
+    if opts.demo:
+        print(t("ssh.demo"))
+        return 0
+    from kerberos.nodes.transport import SshTransport, Target
+    from kerberos.state import State
+
+    state = State()
+    record = state.find_node(opts.arg or "")
+    if record is None:
+        print(t("ssh.unknown_node", node=opts.arg), file=sys.stderr)
+        return 2
+    if not state.admin_key.exists():
+        print(t("ssh.no_admin_key"), file=sys.stderr)
+        return 2
+    target = Target(record.uuid, record.name, record.address, record.ssh_port)
+    return SshTransport(state).admin_shell(target)
 
 
 if __name__ == "__main__":

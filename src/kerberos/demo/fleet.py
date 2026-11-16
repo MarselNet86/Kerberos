@@ -8,8 +8,13 @@ from __future__ import annotations
 
 import copy
 import json
+import tempfile
+from pathlib import Path
+from typing import Optional
 
 from kerberos.host import CommandResult, FakeHost
+from kerberos.nodes.fake import FakeNode, FakeTransport
+from kerberos.nodes.keys import PublicKey, demo_blob
 from kerberos.panel.fake import (
     FakePanel,
     new_uuid,
@@ -18,6 +23,7 @@ from kerberos.panel.fake import (
     raw_profile,
     seed_uuids,
 )
+from kerberos.state import State
 
 PANEL_VERSION = "2.8.1"
 PANEL_DOMAIN = "panel.example.com"
@@ -320,13 +326,70 @@ def build_host() -> FakeHost:
         ["docker", "exec", "remnawave", "cat", "/opt/app/package.json"],
         CommandResult(0, json.dumps({"name": "@remnawave/backend", "version": PANEL_VERSION})),
     )
+    host.on(["ssh-keygen"], _keygen)
+    admin = demo_blob("admin-laptop")
+    host.files["/root/.ssh/authorized_keys"] = f"ssh-ed25519 {admin} admin@laptop\n"
     host.files["/opt/remnawave/.env"] = (
         f"APP_PORT=3000\nPANEL_DOMAIN={PANEL_DOMAIN}\nJWT_AUTH_SECRET=demo-value-never-read\n"
     )
     return host
 
 
-def attach(env) -> None:
-    """Point the ports of `env` at the demo fleet."""
+PANEL_IP = "198.51.100.5"  # the panel server as the nodes see it
+
+
+def build_nodes() -> list[FakeNode]:
+    """Six nodes; nl-1 and nl-2 share a host key (an image of the hoster)."""
+    shared = PublicKey("ssh-ed25519", demo_blob("hoster-image"))
+    return [
+        FakeNode("nl-1", "203.0.113.10", shared, panel_ip=PANEL_IP),
+        FakeNode("nl-2", "203.0.113.11", shared, panel_ip=PANEL_IP),
+        FakeNode(
+            "de-1",
+            "198.51.100.20",
+            PublicKey("ssh-ed25519", demo_blob("de-1")),
+            python=False,
+            panel_ip=PANEL_IP,
+        ),
+        FakeNode(
+            "fi-1",
+            "198.51.100.77",
+            PublicKey("ssh-ed25519", demo_blob("fi-1")),
+            root_keys=True,
+            panel_ip=PANEL_IP,
+        ),
+        FakeNode(
+            "us-1",
+            "192.0.2.50",
+            PublicKey("ssh-ed25519", demo_blob("us-1")),
+            reachable=False,
+            panel_ip=PANEL_IP,
+        ),
+        FakeNode(
+            "kz-1",
+            "192.0.2.60",
+            PublicKey("ssh-ed25519", demo_blob("kz-1")),
+            reachable=False,
+            panel_ip=PANEL_IP,
+        ),
+    ]
+
+
+def _keygen(argv, _input) -> CommandResult:
+    """ssh-keygen of the demo: a fake key pair in the demo state directory."""
+    path = Path(argv[argv.index("-f") + 1])
+    comment = argv[argv.index("-C") + 1]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("demo private key: not a real key\n", encoding="utf-8")
+    blob = demo_blob(str(path))
+    path.with_suffix(".pub").write_text(f"ssh-ed25519 {blob} {comment}\n", encoding="utf-8")
+    return CommandResult(0)
+
+
+def attach(env, state_root: Optional[Path] = None) -> None:
+    """Point the ports of `env` at the demo fleet; state goes to a temporary directory."""
     env.host = build_host()
     env.panel_transport = build_panel()
+    root = state_root or Path(tempfile.mkdtemp(prefix="kerberos-demo-"))
+    env.state = State(root)
+    env.transport = FakeTransport(build_nodes(), env.state)

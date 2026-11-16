@@ -20,9 +20,11 @@ from kerberos.copy import t
 from kerberos.flow import BACK, EXIT_OK, NEXT
 from kerberos.host import Host
 from kerberos.mask import Masker
+from kerberos.nodes.transport import NodeTransport
 from kerberos.panel.client import PanelClient, Transport
 from kerberos.panel.discover import PanelLocation
 from kerberos.panel.model import PanelSnapshot
+from kerberos.state import State
 from kerberos.ui.keys import hotkey
 from kerberos.ui.logo import LOGO_ART
 from kerberos.ui.terminal import Terminal
@@ -44,6 +46,8 @@ class Env:
     masker: Masker
     host: Optional[Host] = None
     panel_transport: Optional[Transport] = None
+    state: Optional[State] = None
+    transport: Optional[NodeTransport] = None
     demo: bool = False
 
 
@@ -188,23 +192,27 @@ class App:
             return EXIT_OK
 
     def steps(self, session: Session) -> list[Callable[[Session], Any]]:
-        from kerberos.screens import nodes, panel
+        from kerberos.screens import access, nodes, panel
 
-        return [panel.step, nodes.step, self.step_soon]
+        return [panel.step, nodes.step, access.step, self.step_soon]
 
     def run_mode(self, mode: str) -> Optional[int]:
         """Walk the screens of a mode. None: the person went back to S1."""
         session = Session(mode)
         steps = self.steps(session)
         index = 0
-        while 0 <= index < len(steps):
-            result = steps[index](self, session)
-            if result == NEXT:
-                index += 1
-            elif result == BACK:
-                index -= 1
-            elif isinstance(result, int):
-                return result
+        try:
+            while 0 <= index < len(steps):
+                result = steps[index](self, session)
+                if result == NEXT:
+                    index += 1
+                elif result == BACK:
+                    index -= 1
+                elif isinstance(result, int):
+                    return result
+        finally:
+            if self.env.transport is not None:
+                self.env.transport.close()
         return EXIT_OK if index >= len(steps) else None
 
     @staticmethod
