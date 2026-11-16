@@ -565,6 +565,34 @@ def test_items_at_the_indentation_of_volumes_stay_valid():
     )
 
 
+# -- 16. our fail2ban [DEFAULT] ignoreip replaced the person's whitelist -------------------
+def test_fail2ban_keeps_the_persons_whitelist(node):
+    write(node, "/usr/bin/fail2ban-client", "")
+    write(
+        node, "/etc/fail2ban/jail.conf", "[DEFAULT]\nignoreip = 127.0.0.1/8\n[sshd]\nport = ssh\n"
+    )
+    local = "[DEFAULT]\nignoreip = 127.0.0.1/8 192.0.2.10\n           198.51.100.0/24 # office\n"
+    write(node, "/etc/fail2ban/jail.local", local)
+    write(node, "/etc/fail2ban/jail.d/zz-kerberos.local", "[DEFAULT]\nignoreip = 203.0.113.1\n")
+    _change, code, answer = apply(node, "fail2ban.sshd", {"sshPorts": [22]})
+    assert code == 0, answer
+    jail = read(node, "/etc/fail2ban/jail.d/zz-kerberos.local")
+    assert "ignoreip = 127.0.0.1/8 192.0.2.10 198.51.100.0/24 ::1 198.51.100.5\n" in jail
+    assert "203.0.113.1" not in jail, "our own earlier file does not count"
+    assert jail.count("ignoreip") == 1
+
+
+def test_fail2ban_keeps_a_whitelist_of_the_sshd_jail(node):
+    write(node, "/usr/bin/fail2ban-client", "")
+    write(node, "/etc/fail2ban/jail.local", "[sshd]\nignoreip = 192.0.2.10\n")
+    apply(node, "fail2ban.sshd", {"sshPorts": [22]})
+    jail = read(node, "/etc/fail2ban/jail.d/zz-kerberos.local")
+    assert (
+        "[sshd]\nenabled = true\nport = 22\nignoreip = 192.0.2.10 127.0.0.1/8 ::1 198.51.100.5\n"
+        in jail
+    )
+
+
 # -- 17. `plan` showed files of the person (SECRET_KEY in docker-compose.yml) --------------
 def test_plan_does_not_show_files_of_the_person(node, recorder):
     write(
@@ -579,3 +607,45 @@ def test_plan_does_not_show_files_of_the_person(node, recorder):
     assert answer["files"] == [{"path": agent.SSHD_CONF, "content": None}]
     code, answer = call(node, ["plan", "mptcp.guard"], b"{}")
     assert all(item["content"] for item in answer["files"]), "files of KERBEROS stay visible"
+
+
+# -- 18. hostkeys.regenerate renewed keys sshd does not use --------------------------------
+def blob(text):
+    import base64
+
+    return base64.b64encode(text.encode()).decode()
+
+
+def test_host_keys_come_from_sshd(node, recorder):
+    custom = "/etc/ssh/keys/host_ed25519"
+    write(node, custom, "old private\n", 0o600)
+    write(node, custom + ".pub", f"ssh-ed25519 {blob('old served key')} x\n")
+    write(node, "/etc/ssh/ssh_host_ed25519_key.pub", f"ssh-ed25519 {blob('unused key')} y\n")
+    recorder.on(["sshd", "-T"], agent.Result(0, f"port 22\nhostkey {custom}\n"))
+
+    def keygen(argv, _input):
+        path = argv[argv.index("-f") + 1]
+        write(node, path, "new\n", 0o600)
+        write(node, path + ".pub", f"ssh-ed25519 {blob('new served key')} z\n")
+        return agent.Result(0)
+
+    recorder.on(["ssh-keygen"], keygen)
+    before = agent.collect_facts(node)["hostKeys"]
+    assert len(before) == 1, "facts read the key sshd serves, not the unused default one"
+    change, code, answer = apply(node, "hostkeys.regenerate")
+    assert code == 0, answer
+    assert [c[-1] for c in recorder.calls if c[0] == "ssh-keygen"] == [custom]
+    assert answer["details"]["hostKeys"] != before
+    assert answer["details"]["hostKeys"] == agent.collect_facts(node)["hostKeys"]
+    call(node, ["rollback", change])
+    assert read(node, custom) == "old private\n"
+
+
+def test_ecdsa_keeps_its_size(node, recorder):
+    path = "/etc/ssh/ssh_host_ecdsa_key"
+    write(node, path, "old\n", 0o600)
+    write(node, path + ".pub", "ecdsa-sha2-nistp384 AAAAE2VjZHNhLXNoYTItbmlzdHAzODQ x\n")
+    recorder.on(["sshd", "-T"], agent.Result(0, f"hostkey {path}\n"))
+    recorder.on(["ssh-keygen"], agent.Result(0))
+    apply(node, "hostkeys.regenerate")
+    assert ["ssh-keygen", "-q", "-t", "ecdsa", "-b", "384", "-N", "", "-f", path] in recorder.calls

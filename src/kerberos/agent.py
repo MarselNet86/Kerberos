@@ -801,11 +801,30 @@ def collect_files(system: System, directory: str, suffix: str = "") -> dict:
     return files
 
 
+DEFAULT_HOST_KEYS = tuple(f"/etc/ssh/ssh_host_{name}_key" for name in ("rsa", "ecdsa", "ed25519"))
+
+
+def host_key_files(values: dict) -> list:
+    """The HostKey files of `sshd -T`; the usual ones when sshd did not answer."""
+    listed = [p for p in values.get("hostkey") or [] if p.startswith("/")]
+    return listed or list(DEFAULT_HOST_KEYS)
+
+
+def public_keys(system: System, paths: list) -> dict:
+    """The .pub files of these host keys; with the usual paths, every ssh_host_*.pub."""
+    if list(paths) == list(DEFAULT_HOST_KEYS):
+        return {p: t for p, t in collect_files(system, "/etc/ssh", ".pub").items()
+                if os.path.basename(p).startswith("ssh_host_")}  # fmt: skip
+    found = {f"{p}.pub": system.read(f"{p}.pub") for p in sorted(set(paths))}
+    return {p: t for p, t in found.items() if t is not None}
+
+
 def collect_facts(system: System) -> dict:
     os_release = parse_os_release(system.read("/etc/os-release") or "")
     kernel = (system.read("/proc/sys/kernel/osrelease") or "").strip()
     v4, v6 = parse_ip_addr(system.run(["ip", "-j", "addr", "show"]).stdout)
-    ssh = collect_ssh(system)
+    values = sshd_values(system)
+    ssh = collect_ssh(system, values)
     ruleset = Ruleset(system.run(["nft", "-j", "list", "ruleset"]).stdout)
     ufw_out = system.run(["ufw", "status", "verbose"])
     ufw = parse_ufw(ufw_out.stdout if ufw_out.code != 127 else "")
@@ -838,10 +857,7 @@ def collect_facts(system: System) -> dict:
         parts = line.split()
         if parts and parts[0] in ("MPTCP", "MPTCPv6") and len(parts) > 2 and parts[2].isdigit():
             mptcp_sockets += int(parts[2])
-    host_keys = host_key_facts({
-        p: t for p, t in collect_files(system, "/etc/ssh", ".pub").items()
-        if os.path.basename(p).startswith("ssh_host_")
-    })  # fmt: skip
+    host_keys = host_key_facts(public_keys(system, host_key_files(values)))
     nginx_files = collect_files(system, "/etc/nginx/sites-enabled")
     nginx_files.update(collect_files(system, "/etc/nginx/conf.d", ".conf"))
     nginx = parse_nginx(nginx_files)
@@ -1621,6 +1637,40 @@ def address_param(system: System, params: dict) -> str:
         raise AgentError("bad_params", "panelIp") from exc
 
 
+def fail2ban_value(configs: list, section: str, key: str) -> Optional[str]:
+    """The value of `key` in `section` that wins over fail2ban's files in their order;
+    a value goes on over the indented lines after it."""
+    value = None
+    for _name, text in configs:
+        current, going_on = None, False
+        for raw in (text or "").splitlines():
+            line = raw.split("#", 1)[0].split(";", 1)[0]
+            if not line.strip():
+                going_on = going_on and bool(raw.strip())
+                continue
+            if raw[:1] in (" ", "\t") and going_on and value is not None:
+                value += " " + line.strip()
+                continue
+            going_on = False
+            header = re.match(r"^\[(.+)\]$", line.strip())
+            if header:
+                current = header.group(1).strip()
+                continue
+            name, sep, rest = line.partition("=")
+            if sep and current == section and name.strip().lower() == key:
+                value, going_on = rest.strip(), True
+    return value
+
+
+def ignore_list(*values: Optional[str]) -> str:
+    tokens: list = []
+    for value in values:
+        for token in re.split(r"[,\s]+", value or ""):
+            if token and token not in tokens:
+                tokens.append(token)
+    return " ".join(tokens)
+
+
 @fix("fail2ban.sshd")
 def fix_fail2ban(system: System, params: dict) -> Plan:
     ports = int_list(params.get("sshPorts"), "sshPorts")
@@ -1631,14 +1681,19 @@ def fix_fail2ban(system: System, params: dict) -> Plan:
         plan.packages.append("fail2ban")
     if not system.exists("/usr/lib/python3/dist-packages/systemd"):
         plan.packages.append("python3-systemd")
+    # Our file is read last and its ignoreip replaces the person's whitelist: keep it.
+    configs = [(name, text) for name, text in fail2ban_files(system) if name != JAIL_FILE]
+    ours = f"127.0.0.1/8 ::1 {panel}"
+    sshd = fail2ban_value(configs, "sshd", "ignoreip")
     plan.write(
-        "/etc/fail2ban/jail.d/zz-kerberos.local",
+        JAIL_FILE,
         "[DEFAULT]\n"
-        f"ignoreip = 127.0.0.1/8 ::1 {panel}\n"
+        f"ignoreip = {ignore_list(fail2ban_value(configs, 'DEFAULT', 'ignoreip'), ours)}\n"
         "[sshd]\n"
         "enabled = true\n"
         f"port = {','.join(str(p) for p in ports)}\n"
-        "backend = systemd\n"
+        + (f"ignoreip = {ignore_list(sshd, ours)}\n" if sshd is not None else "")
+        + "backend = systemd\n"
         "maxretry = 5\n"
         "findtime = 10m\n"
         "bantime = 1h\n",
@@ -1733,32 +1788,45 @@ def ssh_reload(plan: Plan, system: System) -> None:
     plan.undo_after.append(["systemctl", "try-reload-or-restart", "ssh.service"])
 
 
+def host_key_type(system: System, path: str) -> tuple:
+    """(ssh-keygen type, bits or None) of a host key, from its .pub, else from its name."""
+    first = ((system.read(path + ".pub") or "").split() or [""])[0]
+    if first.startswith("ecdsa-sha2-nistp"):
+        return "ecdsa", first[len("ecdsa-sha2-nistp") :]
+    named = {"ssh-ed25519": "ed25519", "ssh-rsa": "rsa", "ssh-dss": "dsa"}.get(first)
+    if named:
+        return named, None
+    name = os.path.basename(path)
+    for kind in ("ed25519", "ecdsa", "rsa", "dsa"):
+        if kind in name:
+            return kind, None
+    return "", None
+
+
 @fix("hostkeys.regenerate")
 def fix_hostkeys(system: System, params: dict) -> Plan:
-    """New keys of the same types, made one by one. Not `ssh-keygen -A`: up to OpenSSH 9
-    it also makes a DSA key, so a server without one would get a deprecated key that the
-    rollback does not take away. A DSA key the server already has stays as it is."""
+    """New keys of the same types, made one by one, in the files sshd really uses (the
+    HostKey lines of `sshd -T`). Not `ssh-keygen -A`: up to OpenSSH 9 it also makes a DSA
+    key, so a server without one would get a deprecated key that the rollback does not
+    take away. A DSA key the server already has stays as it is."""
     plan = Plan("hostkeys.regenerate")
-    for name in HOST_KEY_NAMES:
-        path = f"/etc/ssh/ssh_host_{name}_key"
-        had = system.exists(path)
-        if not had and name != "ed25519":
+    paths = host_key_files(sshd_values(system))
+    for path in paths:
+        kind, bits = host_key_type(system, path)
+        if kind not in HOST_KEY_NAMES:
+            continue
+        if not system.exists(path) and kind != "ed25519":
             continue  # no new key types; ED25519 is the one the fleet is compared by
         for file in (path, path + ".pub"):
             if system.exists(file):
                 plan.write(file, None)
             else:
                 plan.created.append(file)
-        plan.run(["ssh-keygen", "-q", "-t", name, "-N", "", "-f", path])
+        plan.run(["ssh-keygen", "-q", "-t", kind, *(["-b", bits] if bits else []), "-N", "",
+                  "-f", path])  # fmt: skip
     ssh_reload(plan, system)
     plan.access = True
-
-    def new_keys(system_: System) -> dict:
-        files = {p: t for p, t in collect_files(system_, "/etc/ssh", ".pub").items()
-                 if os.path.basename(p).startswith("ssh_host_")}  # fmt: skip
-        return {"hostKeys": host_key_facts(files)}
-
-    plan.after = new_keys
+    plan.after = lambda system_: {"hostKeys": host_key_facts(public_keys(system_, paths))}
     return plan
 
 
