@@ -3063,20 +3063,36 @@ with open("__LOG__", "a") as log:
 """.replace("__AGENT__", AGENT_PATH).replace("__LOG__", WATCH_LOG)
 
 
-def location_line(text: str, path: str) -> Optional[int]:
-    """Index of the line that opens `location <path>` (plain, = or ^~)."""
+def location_open(text: str, path: str) -> Optional[tuple]:
+    """(line index, position after its `{`) of `location <path>` (plain, = or ^~)."""
     pattern = re.compile(rf"^\s*location\s+(?:=\s*|\^~\s*)?{re.escape(path)}/?\s*\{{")
     for index, line in enumerate(text.splitlines()):
-        if pattern.match(line):
-            return index
+        match = pattern.match(line)
+        if match:
+            return index, match.end()
     return None
 
 
+def location_line(text: str, path: str) -> Optional[int]:
+    found = location_open(text, path)
+    return None if found is None else found[0]
+
+
 def guard_location(text: str, path: str) -> str:
-    """First line of the location: anyone but the edges gets the answer of a missing page."""
+    """First thing in the location: anyone but the edges gets the answer of a missing page.
+    Right after the `{`: a location on one line keeps the guard inside, not at server level."""
+    found = location_open(text, path)
+    if found is None:
+        return text
+    index, after = found
     lines = text.splitlines()
-    index = location_line(text, path)
-    if index is None or (index + 1 < len(lines) and EDGE_SNIPPET in lines[index + 1]):
+    rest = lines[index][after:]
+    if rest.strip() and not rest.strip().startswith("#"):
+        if rest.lstrip().startswith(EDGE_SNIPPET):
+            return text
+        lines[index] = lines[index][:after] + " " + EDGE_SNIPPET + rest
+        return "\n".join(lines) + "\n"
+    if index + 1 < len(lines) and EDGE_SNIPPET in lines[index + 1]:
         return text
     indent = re.match(r"^\s*", lines[index]).group(0)
     guarded = lines[: index + 1] + [indent + "    " + EDGE_SNIPPET] + lines[index + 1 :]

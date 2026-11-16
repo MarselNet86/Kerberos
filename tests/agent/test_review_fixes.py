@@ -484,3 +484,23 @@ def test_port_80_of_nginx_service_is_fine(node, recorder):
         recorder.on(prefix, agent.Result(0))
     _change, code, answer = apply(node, "self_steal.site", {"domain": "de-1.example.com"})
     assert code == 0, answer
+
+
+# -- 13. the edge guard of a one-line location landed at server level ---------------------
+ONE_LINE_SITE = """server {
+    listen 8443 ssl;
+    server_name cdn.example.com;
+    location /api/stream { proxy_pass http://127.0.0.1:2053; }
+    location /.well-known/acme-challenge/ { root /var/www/acme; }
+}
+"""
+
+
+def test_guard_of_a_one_line_location_stays_inside_it():
+    text = agent.edge_guarded(ONE_LINE_SITE, ["/api/stream"])
+    line = next(x for x in text.splitlines() if "location /api/stream" in x)
+    assert line == (
+        "    location /api/stream { " + agent.EDGE_SNIPPET + " proxy_pass http://127.0.0.1:2053; }"
+    )
+    assert text.count(agent.EDGE_SNIPPET) == 1, "nothing at server level (ACME stays open)"
+    assert agent.edge_guarded(text, ["/api/stream"]) == text, "twice is once"
