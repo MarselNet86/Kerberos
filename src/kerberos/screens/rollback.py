@@ -156,6 +156,34 @@ def ask_old_port(app: App, port: int, command: str) -> bool:
     return app.term.read_key() == "enter"
 
 
+def note_failure(change: dict, error: str) -> None:
+    """This rollback did not take the change back. A change whose automatic rollback
+    already failed keeps that mark (it may still be in place); the new reason goes to
+    its details."""
+    if change.get("error") == "rollback_failed":
+        change["details"] = {**(change.get("details") or {}), "rollbackError": error}
+    else:
+        change["error"] = error
+
+
+def note_back(change: dict) -> None:
+    """The change went back now: a failed automatic rollback of it is settled, and the
+    reason it failed at apply stays."""
+    if change.get("error") == "rollback_failed":
+        details = dict(change.get("details") or {})
+        details.pop("rollbackError", None)
+        change["details"] = details
+        change["error"] = details.get("failure")
+
+
+def failure_text(change: dict) -> str:
+    """Why this rollback did not take the change back, in the words of a rollback."""
+    code = change.get("error")
+    if code == "rollback_failed":
+        code = (change.get("details") or {}).get("rollbackError") or code
+    return t("rb.port_closed") if code == "port_closed" else error_text(code)
+
+
 def roll_back(app: App, run: dict, changes: list, client=None) -> list:
     """Reverse order; returns the changes that did not go back.
 
@@ -169,7 +197,7 @@ def roll_back(app: App, run: dict, changes: list, client=None) -> list:
     for change in sorted(changes, key=lambda c: position.get(id(c), -1), reverse=True):
         nodes = nodes_of(change)
         if nodes & blocked:
-            change["error"] = "rollback_skipped"
+            note_failure(change, "rollback_skipped")
             failed.append(change)
             store.save(run)
             continue
@@ -180,13 +208,14 @@ def roll_back(app: App, run: dict, changes: list, client=None) -> list:
                 else ("no_panel")
             )
             if reason:
-                change["error"] = reason
+                note_failure(change, reason)
                 failed.append(change)
                 blocked |= nodes
                 store.save(run)
                 continue
             run["pending"] = [p for p in run.get("pending", [])
                               if p.get("changeId") != change["changeId"]]  # fmt: skip
+            note_back(change)
             change["state"] = "rolled_back"
             change["finishedAt"] = iso(app.env.clock)
             store.save(run)
@@ -196,7 +225,10 @@ def roll_back(app: App, run: dict, changes: list, client=None) -> list:
             error, back = port_rollback(app, run, target, change)
         else:
             error, back = agent_rollback(app, target, change)
+            if error == "no_backup" and change["state"] == "applying":
+                error, back = None, True  # cut short before the agent changed anything
         if back:
+            note_back(change)
             previous = change["details"].get("previousKey")
             if change["fixId"] == "hostkeys.regenerate" and previous:
                 app.env.state.pin(target.address, target.port, "ssh-ed25519", previous)
@@ -208,7 +240,7 @@ def roll_back(app: App, run: dict, changes: list, client=None) -> list:
             change["state"] = "rolled_back"
             change["finishedAt"] = iso(app.env.clock)
         if error:
-            change["error"] = error
+            note_failure(change, error)
             failed.append(change)
             blocked |= nodes
         store.save(run)
@@ -270,7 +302,7 @@ def rollback_flow(app: App, run_id: Optional[str] = None) -> int:
     path = write_report(app, record)
     lines = [t("rb.done", ok=len(chosen) - len(failed), total=len(chosen))]
     for change in failed:
-        lines.append(f"✗ {label(app, run, change)}: {error_text(change.get('error'))}")
+        lines.append(f"✗ {label(app, run, change)}: {failure_text(change)}")
     if failed:
         lines.append(t("rb.failed"))
     lines += ["", t("report.saved", path=app.mask(path))]

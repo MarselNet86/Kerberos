@@ -222,7 +222,10 @@ class App:
             self.notice("info", t("app.soon"))
             return EXIT_OK
         except QuitApp:
-            return EXIT_OK
+            # q on S9: the outcome of the changes was kept when S8 finished (§5.3).
+            session = getattr(self, "session", None)
+            quit_code = session.data.get("exit") if session is not None else None
+            return quit_code or EXIT_OK
 
     def steps(self, session: Session) -> list[Callable[[Session], Any]]:
         from kerberos.screens import access, check, nodes, panel
