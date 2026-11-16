@@ -199,16 +199,16 @@ def test_hostkeys_regenerate_and_roll_back(node, recorder):
         "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOldOldOldOldOldOldOldOldOldOldOld root@old\n",
     )
 
-    def keygen(_argv, _input):
+    def keygen(argv, _input):
         import base64
 
-        for name in ("rsa", "ecdsa", "ed25519"):
-            blob = base64.b64encode(f"new {name} key material".encode()).decode()
-            write(node, f"/etc/ssh/ssh_host_{name}_key", f"new {name}\n", 0o600)
-            write(node, f"/etc/ssh/ssh_host_{name}_key.pub", f"ssh-{name} {blob} root@new\n")
+        name, path = argv[argv.index("-t") + 1], argv[argv.index("-f") + 1]
+        blob = base64.b64encode(f"new {name} key material".encode()).decode()
+        write(node, path, f"new {name}\n", 0o600)
+        write(node, path + ".pub", f"ssh-{name} {blob} root@new\n")
         return agent.Result(0)
 
-    recorder.on(["ssh-keygen", "-A"], keygen)
+    recorder.on(["ssh-keygen"], keygen)
     change, code, answer = apply(node, "hostkeys.regenerate", {})
     assert code == 0 and answer["state"] == "pending_confirm"
     assert any(k["type"] == "ED25519" for k in answer["details"]["hostKeys"])

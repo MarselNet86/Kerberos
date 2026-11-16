@@ -126,3 +126,31 @@ def test_no_nftables_install_when_nft_is_there(node, recorder):
     write(node, "/usr/sbin/nft", "")
     _change, code, _answer = apply(node, "mptcp.guard")
     assert code == 0 and not any(c[:1] == ["apt-get"] for c in recorder.calls)
+
+
+# -- ssh-keygen -A made a DSA key on Ubuntu 22.04 that the rollback left behind --------
+def test_new_host_keys_keep_the_set_of_types(node, recorder):
+    for name in ("rsa", "ed25519"):
+        write(node, f"/etc/ssh/ssh_host_{name}_key", f"old {name}\n", 0o600)
+        write(
+            node, f"/etc/ssh/ssh_host_{name}_key.pub", f"ssh-{name} AAAAold{name}AAAAAAAAAAAA x\n"
+        )
+    write(node, "/etc/ssh/ssh_host_dsa_key", "old dsa\n", 0o600)
+
+    def keygen(argv, _input):
+        path = argv[argv.index("-f") + 1]
+        write(node, path, "new\n", 0o600)
+        write(node, path + ".pub", "ssh-ed25519 AAAAnewnewnewnewnewnew x\n")
+        return agent.Result(0)
+
+    recorder.on(["ssh-keygen"], keygen)
+    change, code, answer = apply(node, "hostkeys.regenerate")
+    assert code == 0, answer
+    made = [c for c in recorder.calls if c[0] == "ssh-keygen"]
+    assert ["-A"] not in [c[1:2] for c in made], "never ssh-keygen -A"
+    assert sorted(c[c.index("-t") + 1] for c in made) == ["ed25519", "rsa"]
+    assert not node.exists("/etc/ssh/ssh_host_ecdsa_key"), "no new key types"
+    assert open(node.path("/etc/ssh/ssh_host_dsa_key")).read() == "old dsa\n", "DSA untouched"
+    call(node, ["rollback", change])
+    for name in ("rsa", "ed25519"):
+        assert open(node.path(f"/etc/ssh/ssh_host_{name}_key")).read() == f"old {name}\n"

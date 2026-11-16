@@ -1410,17 +1410,21 @@ def ssh_reload(plan: Plan, system: System) -> None:
 
 @fix("hostkeys.regenerate")
 def fix_hostkeys(system: System, params: dict) -> Plan:
+    """New keys of the same types, made one by one. Not `ssh-keygen -A`: up to OpenSSH 9
+    it also makes a DSA key, so a server without one would get a deprecated key that the
+    rollback does not take away. A DSA key the server already has stays as it is."""
     plan = Plan("hostkeys.regenerate")
-    existing = [p for p in collect_files(system, "/etc/ssh")
-                if os.path.basename(p).startswith("ssh_host_")]  # fmt: skip
-    for path in existing:
-        plan.write(path, None)
     for name in HOST_KEY_NAMES:
-        for suffix in ("", ".pub"):
-            path = f"/etc/ssh/ssh_host_{name}_key{suffix}"
-            if path not in plan.files:
-                plan.created.append(path)
-    plan.run(["ssh-keygen", "-A"])
+        path = f"/etc/ssh/ssh_host_{name}_key"
+        had = system.exists(path)
+        if not had and name != "ed25519":
+            continue  # no new key types; ED25519 is the one the fleet is compared by
+        for file in (path, path + ".pub"):
+            if system.exists(file):
+                plan.write(file, None)
+            else:
+                plan.created.append(file)
+        plan.run(["ssh-keygen", "-q", "-t", name, "-N", "", "-f", path])
     ssh_reload(plan, system)
     plan.access = True
 
