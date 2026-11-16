@@ -182,7 +182,7 @@ def admin_ssh(opts: Options) -> int:
     if opts.demo:
         print(t("ssh.demo"))
         return 0
-    from kerberos.nodes.transport import SshTransport, Target
+    from kerberos.nodes.transport import SshTransport
     from kerberos.state import State
 
     state = State()
@@ -193,8 +193,7 @@ def admin_ssh(opts: Options) -> int:
     if not state.admin_key.exists():
         print(t("ssh.no_admin_key"), file=sys.stderr)
         return 2
-    target = Target(record.uuid, record.name, record.address, record.ssh_port)
-    return SshTransport(state).admin_shell(target)
+    return SshTransport(state).admin_shell(record.target(record.address))
 
 
 if __name__ == "__main__":

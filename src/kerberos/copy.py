@@ -53,6 +53,12 @@ TEXT: dict[str, str] = {
         "Клиенты переподключатся за секунды."
     ),
     "apply.rolled_back": "Не применилось, откатил: {reason}",
+    "apply.outside": (
+        "SSH слушает новый порт {port}. Проверьте вход с вашего компьютера в новом окне "
+        "терминала: {command}. KERBEROS работает на этом же сервере и фаервол хостера "
+        "отсюда не видит. Без ответа за три минуты всё вернётся само."
+    ),
+    "apply.outside.keys": "Enter: вошёл, порт оставить    Esc: не вышло, вернуть старый",
     "done.title": "Готово",
     "done.rollback": "Откатить: {command}",
     # K0: shell, menu, keys
@@ -108,7 +114,16 @@ TEXT: dict[str, str] = {
     "keys.field": "поле",
     # K1: S2 panel (§7)
     "s2.title": "Панель",
-    "panel.searching": "Ищу Remnawave на этом сервере…",
+    "panel.searching": "Ищу панель на этом сервере…",
+    "panel.choose": "Какая панель на этом сервере?",
+    "panel.choose.found": "найдена, версия {version}",
+    "panel.choose.none": "не найдена",
+    "panel.choose.hint": (
+        "С 3x-ui KERBEROS защищает этот сервер: панель и VPN на нём же. Для нескольких "
+        "серверов 3x-ui запустите KERBEROS на каждом."
+    ),
+    "panel.kind.remnawave": "Remnawave",
+    "panel.kind.3x-ui": "3x-ui",
     "panel.not_found": "Remnawave на этом сервере не нашёл. Укажите адрес API панели.",
     "panel.api_label": "Адрес API панели",
     "panel.api_hint": "Например, http://127.0.0.1:3000/api",
@@ -196,6 +211,8 @@ TEXT: dict[str, str] = {
     "access.reason.hostkey": "ключ сервера изменился",
     "access.reason.keygen": "не удалось создать ключ KERBEROS на сервере панели",
     "access.reason.failed": "ошибка установки: {detail}",
+    "access.local.installing": "Ставлю агента KERBEROS на этот сервер…",
+    "access.reason.local_key": "не нашёл ключ этого сервера /etc/ssh/ssh_host_ed25519_key.pub",
     "access.admin.title": "Ключ администратора",
     "access.admin.mine": "Мои ключи с сервера панели ({n})",
     "access.admin.create": "Создать ключ на сервере панели",
@@ -289,6 +306,14 @@ TEXT: dict[str, str] = {
     "check.panel.public.threat": "Страницу входа находят сканеры и подбирают пароль",
     "check.panel.public.how": (
         "закройте панель барьером: caddy-security, секретный путь или доступ по VPN"
+    ),
+    "check.xui.panel_exposed.title": "Панель 3x-ui открыта всем на порту {port}",
+    "check.xui.panel_exposed.threat": (
+        "Сканеры находят панель по порту и странице входа, а через неё весь сервер"
+    ),
+    "check.xui.panel_exposed.how": (
+        "в настройках 3x-ui смените порт, задайте секретный путь и сертификат; надёжнее "
+        "слушать только 127.0.0.1 и входить через SSH-туннель"
     ),
     "check.panel_server.ssh.title": "На сервер панели можно войти по паролю",
     "check.panel_server.ssh.threat": "Взлом сервера панели отдаёт управление всеми нодами",

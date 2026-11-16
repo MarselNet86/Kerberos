@@ -125,6 +125,16 @@ def install_script(public_key: str, agent: Optional[bytes] = None) -> str:
     )
 
 
+# 3x-ui (§7.6): KERBEROS sets itself up on its own server, without ssh: the
+# key line then admits only connections from this server to itself.
+LOCAL_CONNECTION = "127.0.0.1 0 127.0.0.1 22"
+
+
+def local_install_script(public_key: str, agent: Optional[bytes] = None) -> str:
+    prefix = f'import os\nos.environ["SSH_CONNECTION"] = "{LOCAL_CONNECTION}"\n'
+    return prefix + install_script(public_key, agent)
+
+
 def remove_script(public_key: str) -> str:
     return script({"mode": "remove", "publicKey": public_key, "agentPath": AGENT_PATH})
 

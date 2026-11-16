@@ -72,9 +72,10 @@ def target_of(app: App, run: dict, change: dict) -> Target:
     )
     node = node_of(run, target) or {}
     record = app.env.state.node(node.get("uuid", ""))
-    port = record.ssh_port if record else node.get("sshPort", 22)
-    address = record.address if record else node.get("address", "")
-    return Target(node.get("uuid", ""), node.get("name", ""), address, port)
+    if record is not None:
+        return record.target(record.address)
+    return Target(node.get("uuid", ""), node.get("name", ""), node.get("address", ""),
+                  node.get("sshPort", 22))  # fmt: skip
 
 
 def ask_diff(app: App, diff: str) -> bool:

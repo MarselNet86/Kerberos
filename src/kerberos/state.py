@@ -12,9 +12,12 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from kerberos.nodes.keys import known_hosts_name
+
+if TYPE_CHECKING:
+    from kerberos.nodes.transport import Target
 
 DEFAULT_ROOT = Path("/var/lib/kerberos")
 
@@ -34,9 +37,16 @@ class NodeRecord:
     panel_ip: str = ""
     access: str = "none"  # ok | none | denied
     extra: dict = field(default_factory=dict)
+    # 3x-ui (§7.6): the server reaches itself over SSH at this address, not its public one.
+    ssh_address: str = ""
+
+    def target(self, address: str) -> Target:
+        from kerberos.nodes.transport import Target
+
+        return Target(self.uuid, self.name, self.ssh_address or address, self.ssh_port)
 
 
-_CAMEL = {"ssh_port": "sshPort", "panel_ip": "panelIp"}
+_CAMEL = {"ssh_port": "sshPort", "panel_ip": "panelIp", "ssh_address": "sshAddress"}
 _SNAKE = {v: k for k, v in _CAMEL.items()}
 
 

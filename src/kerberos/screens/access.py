@@ -22,7 +22,7 @@ from rich.text import Text
 from kerberos.copy import t
 from kerberos.flow import BACK, NEXT
 from kerberos.nodes import bootstrap
-from kerberos.nodes.keys import parse_authorized_keys
+from kerberos.nodes.keys import parse_authorized_keys, parse_key
 from kerberos.nodes.transport import NodeAgentError, Target, TransportError
 from kerberos.panel.model import Node
 from kerberos.state import NodeRecord
@@ -32,6 +32,17 @@ if TYPE_CHECKING:
     from kerberos.app import App, Session
 
 OK, NONE, DENIED = "ok", "none", "denied"
+LOCAL_ADDRESS = "127.0.0.1"
+LOCAL_HOST_KEY = "/etc/ssh/ssh_host_ed25519_key.pub"
+
+
+def local_ssh_port(host: Any) -> int:
+    """The first port sshd of this server listens on (`sshd -T`), else 22."""
+    from kerberos.agent import parse_sshd_t
+
+    result = host.run(["sshd", "-T"], timeout=20)
+    ports = parse_sshd_t(result.stdout).get("port") if result.ok else None
+    return int(ports[0]) if ports else 22
 
 
 class AccessFailed(Exception):
@@ -42,8 +53,9 @@ class AccessFailed(Exception):
 
 
 def target_of(node: Node, record: Optional[NodeRecord]) -> Target:
-    port = record.ssh_port if record else 22
-    return Target(node.uuid, node.name, node.address, port)
+    if record is not None:
+        return record.target(node.address)
+    return Target(node.uuid, node.name, node.address, 22)
 
 
 def ensure_key(app: App) -> str:
@@ -82,6 +94,7 @@ class AccessScreen:
         self.status: dict[str, str] = session.data.setdefault("access", {})
         self.reasons: dict[str, str] = session.data.setdefault("access_reason", {})
         self.action = ""
+        self.local = session.snapshot.kind == "3x-ui"
 
     # -- drawing -------------------------------------------------------------
     def table(self) -> Table:
@@ -253,6 +266,44 @@ class AccessScreen:
             )
         )
 
+    def setup_local(self, node: Node, public_key: str) -> None:
+        """3x-ui (§7.6): this server is the node. No password and no question about
+        the host key: KERBEROS is root here, installs the agent itself and reads the
+        key from the server's own file. Agent calls then go over SSH to 127.0.0.1,
+        so access changes are still confirmed by a new connection (§11.3)."""
+        host, state = self.app.env.host, self.app.env.state
+        self.show(t("access.local.installing"))
+        result = host.run(["python3", "-"], input=bootstrap.local_install_script(public_key),
+                          timeout=120)  # fmt: skip
+        answer = bootstrap.parse_result(result.stdout)
+        if not result.ok or "error" in answer:
+            detail = str(answer.get("error") or result.stderr.strip()[:80] or result.code)
+            raise AccessFailed(NONE, t("access.reason.failed", detail=detail))
+        key = parse_key(host.read_text(LOCAL_HOST_KEY) or "")
+        if key is None:
+            raise AccessFailed(NONE, t("access.reason.local_key"))
+        port = local_ssh_port(host)
+        state.pin(LOCAL_ADDRESS, port, key.type, key.blob)
+        target = Target(node.uuid, node.name, LOCAL_ADDRESS, port)
+        try:
+            version = self.app.env.transport.agent(target, "version", fresh=True)
+        except (TransportError, NodeAgentError) as exc:
+            host.run(["python3", "-"], input=bootstrap.remove_script(public_key), timeout=60)
+            raise AccessFailed(NONE, t("access.reason.verify")) from exc
+        state.save_node(
+            NodeRecord(
+                uuid=node.uuid,
+                name=node.name,
+                address=node.address,
+                ssh_port=port,
+                fingerprint=key.fingerprint,
+                agent=str(version.get("agent", "")),
+                panel_ip=LOCAL_ADDRESS,
+                access=OK,
+                ssh_address=LOCAL_ADDRESS,
+            )
+        )
+
     def refresh(self, node: Node, record: NodeRecord) -> bool:
         """Known node: check the agent and update it (§8.3). False: set up again."""
         transport = self.app.env.transport
@@ -293,13 +344,19 @@ class AccessScreen:
                 if record and record.access == OK and self.refresh(node, record):
                     self.status[node.uuid] = OK
                     continue
-                self.setup(node, record, public_key)
+                if self.local:
+                    self.setup_local(node, public_key)
+                else:
+                    self.setup(node, record, public_key)
                 self.status[node.uuid] = OK
             except AccessFailed as exc:
                 self.status[node.uuid] = exc.status
                 self.reasons[node.uuid] = exc.reason
         self.action = ""
-        if self.session.mode == "fix" and "admin" not in self.session.data:
+        if self.local:
+            # The person's own keys are already on this server: nothing to copy (§8.5).
+            self.session.data.setdefault("admin", {"mode": "local", "keys": []})
+        elif self.session.mode == "fix" and "admin" not in self.session.data:
             self.session.data["admin"] = self.ask_admin()
         return self.summary()
 

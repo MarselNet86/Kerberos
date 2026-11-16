@@ -128,7 +128,8 @@ def confirm_edges(app: App, session: Session, item: PlanItem) -> None:
 
     node = session.snapshot.node(item.node_uuid or "")
     record = app.env.state.node(node.uuid)
-    target = Target(node.uuid, node.name, node.address, record.ssh_port if record else 22)
+    target = record.target(node.address) if record else Target(node.uuid, node.name,
+                                                                   node.address, 22)  # fmt: skip
     counts: dict = {}
     for path in item.params["paths"]:
         try:
@@ -473,6 +474,7 @@ def step_apply(app: App, session: Session) -> Any:
 
     engine = Engine(app, session, chosen, on_event)
     engine.ask_diff = lambda diff: ask_overwrite(app, diff)
+    engine.ask_outside = lambda port, command: ask_outside(app, port, command)
     session.data["engine"] = engine
     app.busy = True
 
@@ -502,6 +504,14 @@ def step_apply(app: App, session: Session) -> Any:
 
         schedule(app, session.panel, session.data["run"], launcher())
     return NEXT
+
+
+def ask_outside(app: App, port: int, command: str) -> bool:
+    """§7.6: the new SSH port of this server, tried by the person from their computer."""
+    body = Group(Notice("warning", t("apply.outside", port=port, command=app.mask(command))),
+                 Text(t("apply.outside.keys"), style="muted"))  # fmt: skip
+    app.draw(t("s8.title"), body)
+    return app.term.read_key() == "enter"
 
 
 def ask_overwrite(app: App, diff: str) -> bool:
