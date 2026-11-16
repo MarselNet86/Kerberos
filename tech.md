@@ -1,10 +1,11 @@
 # tech.md: KERBEROS
 
-**Версия:** v10 · 2026-11-16
+**Версия:** v11 · 2026-11-16
 **Владелец:** автор репозитория, он же тимлид и единственный разработчик. Сессии разработки работают по этому файлу и по `CLAUDE.md`.
 
 ## Changelog
 
+- v11 (K6, уточнения и аддитивно): в механике изменений агента есть шаги по порядку (запись файла, команда) для исправлений, где файлы и команды чередуются: сайт пишет конфиг :80, выпускает сертификат и только потом конфиг :8445 (§9.3). nginx слушает `127.0.0.1:8445 ssl http2`: директива `http2 on` есть только с nginx 1.25.1, а в Ubuntu 22.04 стоит 1.18. Заглушек четыре со своей структурой HTML; KERBEROS выбирает ту, которой нет на других нодах (`site.same_template`). Self-steal в S7: домен вводится клавишей `d`, строка ждёт DNS и проверяет его раз в 10 секунд; отмечается, когда DNS совпал, а `a` не отмечает строки без домена. Каждый шаг self-steal — своё изменение в журнале: `self_steal.site`, `node.letsencrypt_mount`, `self_steal.profile`, `self_steal.squads`, `self_steal.hosts`; записанный профиль лежит в `runs/<runId>/panel/profile-<uuid>-written.json` (0600), не в `run.json`: в нём ключ Reality. Существующие shortId Reality сохраняются как есть, новый ключ берётся из системного источника случайности. Проверка шага 5 повторяется до шести раз с паузой 5 секунд: панель перезапускает Xray. Финализация: файл `runs/<runId>/finalize.token` (JSON `{uuid, token, api}`, 0600), таймер `systemd-run --on-active=24h --unit kerberos-finalize-<runId>`, переключатель «автоматически» в S7 — клавиша `f`. Копии хостов встают в конец списка (Q4: переупорядочивание через API не используется), отчёт об этом пишет. `Change.error` может нести и коды KERBEROS: `confirm_failed`, `recheck_failed`, `port_closed`, `check_failed`, `node_offline`, `host_mismatch`, `changed_in_panel` (§13).
 - v10 (K5, уточнения): drop-in сокета для `ssh.port` называется `zz-kerberos.conf`: drop-in применяются по имени файла, и генератор Ubuntu кладёт свой `addresses.conf`, который иначе перекрыл бы наш. В drop-in идут все текущие адреса `ListenStream` (IPv4 и IPv6) с новым портом. Вторая фаза в механике агента: `apply` заранее бэкапит файлы, которые тронет `confirm`; `confirm` пишет их и выполняет свои команды, при сбое откатывает изменение целиком. В режиме `sshd_config` вторая фаза комментирует незакомментированные строки `Port` основного `sshd_config`. Порт ниже 1024 отклоняется (`bad_params`), занятый — `port_busy`. Если новый порт не ответил, KERBEROS откатывает изменение через старый порт и пишет в отчёт причину `port_closed` (фаервол хостера).
 - v9 (K4, аддитивно и уточнения): исправление `access.admin_keys` ставит выбранные в S4 ключи администратора (§8.5) и идёт первым в порядке §10.1. Новый код ошибки агента `command_failed`: команда на ноде не выполнилась (§9.2). `Prober.auth_methods`: какие способы входа SSH предлагает постороннему, для перепроверки `ssh.key_only` (§4). Агент хранит sha256 записанных файлов и отказывает в откате (`change_conflict`), если файл изменили позже, например более позднее изменение KERBEROS (§9.3, §11.4). Ожидающее подтверждения изменение отмечено в `/var/lib/kerberos/pending`; новый `apply` при нём отказывает с `change_conflict`. Правила nft ставятся файлами `/etc/kerberos/<name>.nft` и юнитами `kerberos-<name>.service` (§10.3). Откат пишет отдельный запуск с `mode: rollback`. `Run` получает необязательные поля `findingsAfter`, `interrupted`, `rolledBackRun` (§13).
 - v8 (K3, аддитивно и уточнения): агент вызывает ещё `ss` и `ip` из iproute2 (§3.1). Порт `Prober` для проверок с сервера панели: TLS без SNI, HTTP(S) к ноде, DNS, ping (§4). `AgentFacts`: необязательные поля `listening[].firewalled` (порт закрыт правилом nft или ufw) и `mptcp.sockets` (§9.2). `ports.public` не считает лишними TLS-порты сайтов nginx: на них CDN ходит к origin. `reality.foreign_sni`: находка, если `dest` не локальный или ни одно имя из `serverNames` не резолвится в IP ноды (старые имена в сутки финализации не дают находку). S5 спрашивает про whois, только если нод две и больше. На S6 пробел открывает подробности, Enter идёт дальше.
@@ -648,7 +649,9 @@ class Change(TypedDict):
     params: dict                       # e.g. {domain, reserveNodeUuid | None} for self_steal, {port} for ssh.port
     before: str | None                 # path of the panel snapshot in runs/<runId>/panel/
     details: dict                      # agent details, created host uuids, new port, fingerprints
-    error: str | None                  # error code from §9.2 or §7.5
+    error: str | None                  # error code from §9.2 or §7.5, or of KERBEROS itself:
+                                       # confirm_failed, recheck_failed, port_closed, check_failed,
+                                       # node_offline, host_mismatch, changed_in_panel
     startedAt: str
     finishedAt: str | None
 
@@ -820,7 +823,7 @@ Definition of Done задачи: `tools/check.sh` зелёный, для изм�
 | Q1 | Применяют ли Happ и Incy `ping-type` из заголовков подписки; нужен ли для этого Provider ID | проверяется на устройствах в K7, итог вносится в §10.5 |
 | Q2 | Включать ли старые хосты при откате после финализации, когда клиенты уже на новых | откат всегда включает старые хосты; человек видит это в плане отката |
 | Q3 | Отправлять ли отчёт в Telegram ботом панели (токен в `.env` панели) | нет в v1; бэклог |
-| Q4 | Есть ли в панели переупорядочивание хостов через API в обеих версиях | проверяется в K6 |
+| Q4 | Есть ли в панели переупорядочивание хостов через API в обеих версиях | K6: KERBEROS не переупорядочивает, копии встают в конец, отчёт это пишет; проверить на живых 2.8.x и 3.4.x |
 | Q5 | Одинаковы ли эндпоинты шаблонов подписки и внутренних сквадов в 2.8.x и 3.4.x | сверено на живой 2.8.1; 3.4.x проверяется в K7 |
 | Q6 | Пустой shortId первым в шаблоне профиля (так в проверенном конфиге) | оставляем как в конфиге; `reality.empty_shortid` в бэклоге |
 
