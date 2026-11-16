@@ -108,6 +108,24 @@ def main() -> int:
               lambda f: f["nodeApi"]["panelOnly"],
               lambda f: f["nodeApi"]["panelOnly"] == before["nodeApi"]["panelOnly"])  # fmt: skip
 
+    # Self-steal needs a real domain of the stand with its A record on this VM (§22).
+    domain_file = os.path.join(HERE, "..", "..", "domain")
+    domain = open(domain_file).read().strip() if os.path.exists(domain_file) else ""
+    if domain:
+        def has_site(f: dict) -> bool:
+            return any(domain in s["serverNames"] for s in f["nginx"]["sites"])
+
+        cycle("self_steal.site", {"domain": domain, "siteSeed": 1},
+              lambda f: has_site(f) and any(c["domain"] == domain for c in f["certbot"]["certs"]),
+              lambda f: not has_site(f))  # fmt: skip
+    else:
+        print("skip  self_steal.site: no stand domain for this VM")
+    if os.path.exists("/opt/remnanode/docker-compose.yml"):
+        cycle("node.letsencrypt_mount", {},
+              lambda f: f["remnanode"]["letsencryptMounted"],
+              lambda f: f["remnanode"]["letsencryptMounted"]
+              == before["remnanode"]["letsencryptMounted"])  # fmt: skip
+
     old = {k["fingerprint"] for k in before["hostKeys"]}
     cycle("hostkeys.regenerate", {},
           lambda f: not ({k["fingerprint"] for k in f["hostKeys"]} & old),

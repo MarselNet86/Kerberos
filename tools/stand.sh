@@ -12,6 +12,8 @@
 #   STAND_UBUNTU_2604=root@192.0.2.23
 #   STAND_DEBIAN_12=root@192.0.2.24
 #   STAND_DEBIAN_13=root@192.0.2.25
+# Optional domain per VM for self-steal (its A record points to the VM):
+#   STAND_DEBIAN_13_DOMAIN=deb13.stand.example.com
 # Stand VMs only: never production servers (CLAUDE.md, rule 9).
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -63,6 +65,10 @@ run_vms() {
     fi
     tar czf - "${PAYLOAD[@]}" | ssh "${ssh_opts[@]}" "$target" \
       'rm -rf /tmp/kerberos-stand && mkdir -p /tmp/kerberos-stand && tar xzf - -C /tmp/kerberos-stand'
+    domain_var="${VARS[$i]}_DOMAIN"
+    if [ -n "${!domain_var:-}" ]; then
+      printf '%s\n' "${!domain_var}" | ssh "${ssh_opts[@]}" "$target" 'cat > /tmp/kerberos-stand/domain'
+    fi
     ssh "${ssh_opts[@]}" "$target" \
       'python3 -m pytest --version >/dev/null 2>&1 || DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-pytest >/dev/null'
     if ssh "${ssh_opts[@]}" "$target" 'cd /tmp/kerberos-stand && python3 -m pytest -q -p no:cacheprovider tests/agent'; then
