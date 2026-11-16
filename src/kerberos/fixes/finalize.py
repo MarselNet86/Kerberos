@@ -51,6 +51,7 @@ def finalize_items(client: PanelClient, store: RunStore, pairs: list) -> list:
                 config = finalize_profile(profile.config, item["domain"])
                 if config != profile.config:
                     client.patch_profile(profile.uuid, config)
+                    remember_final(store, run, item, config)
         except PanelError as exc:
             item["error"] = exc.code
             failed.append(item)
@@ -60,6 +61,20 @@ def finalize_items(client: PanelClient, store: RunStore, pairs: list) -> list:
         run.setdefault("finalized", []).append({**item, "at": iso(store.clock)})
         store.save(run)
     return failed
+
+
+def remember_final(store: RunStore, run: dict, item: dict, config: dict) -> None:
+    """A later rollback compares the panel with the finalized profile: not a hand edit."""
+    from kerberos.fixes.panel_changes import digest, save_snapshot
+
+    change = next((c for c in run["changes"] if c["changeId"] == item["changeId"]), None)
+    if change is None:
+        return
+    # The profile holds the Reality private key: a 0600 snapshot, never run.json.
+    change["details"]["writtenPath"] = save_snapshot(
+        store, run["runId"], f"profile-{item['profileUuid']}-final", config
+    )
+    change["details"]["written"] = digest(config)
 
 
 def finalize_xui(client: Any, store: RunStore, run: dict, item: dict) -> None:
