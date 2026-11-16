@@ -54,6 +54,8 @@ def apply_node_api(node: FakeNode, params: dict, change_id: str) -> tuple[dict, 
     facts = node.state["facts"]
     if facts["remnanode"].get("network") == "bridge":
         raise NodeAgentError("bridge_network", "remnanode publishes its port through Docker")
+    if facts["nodeApi"].get("panelPeer") is False:
+        raise NodeAgentError("panel_not_peer", "the panel uses another address")
     saved = copy.deepcopy(facts["nodeApi"])
     facts["nodeApi"]["panelOnly"] = True
     _table(facts, "inet kerberos_node_api", True)

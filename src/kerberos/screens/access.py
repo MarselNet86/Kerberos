@@ -23,7 +23,7 @@ from kerberos.copy import t
 from kerberos.flow import BACK, NEXT
 from kerberos.nodes import bootstrap
 from kerberos.nodes.keys import parse_authorized_keys, parse_key
-from kerberos.nodes.transport import NodeAgentError, Target, TransportError
+from kerberos.nodes.transport import NodeAgentError, Target, TransportError, ssh_host
 from kerberos.panel.model import Node
 from kerberos.state import NodeRecord
 from kerberos.ui.widgets import Checklist, Menu, Notice, TextInput
@@ -52,10 +52,15 @@ class AccessFailed(Exception):
         self.reason = reason
 
 
-def target_of(node: Node, record: Optional[NodeRecord]) -> Target:
+def target_of(node: Node, record: Optional[NodeRecord], resolve: Any = None) -> Target:
+    """Where SSH goes: a node given by name on the IPv4 of the name (§8.2), resolved
+    again on every run, so a changed A record is followed."""
     if record is not None:
-        return record.target(node.address)
-    return Target(node.uuid, node.name, node.address, 22)
+        target = record.target(node.address)
+        if resolve is None or record.ssh_address == LOCAL_ADDRESS:
+            return target
+        return Target(target.uuid, target.name, ssh_host(node.address, resolve), target.port)
+    return Target(node.uuid, node.name, ssh_host(node.address, resolve), 22)
 
 
 def ensure_key(app: App) -> str:
@@ -162,6 +167,18 @@ class AccessScreen:
         return int(value) if value else None
 
     # -- one node --------------------------------------------------------------
+    def ssh_target(self, node: Node, record: Optional[NodeRecord]) -> Target:
+        """§8.2: the IPv4 of the node's name. A node set up by name before keeps its pinned
+        key under the address: it is the same server, ssh still compares the key."""
+        prober = self.app.env.prober
+        target = target_of(node, record, prober.resolve if prober is not None else None)
+        state = self.app.env.state
+        if record is not None and not record.ssh_address and target.address != node.address:
+            blob = state.pinned(node.address, target.port)
+            if blob and state.pinned(target.address, target.port) is None:
+                state.pin(target.address, target.port, "ssh-ed25519", blob)
+        return target
+
     def pin_host_key(self, node: Node, target: Target, record: Optional[NodeRecord]) -> Target:
         transport, state = self.app.env.transport, self.app.env.state
         while True:
@@ -243,7 +260,7 @@ class AccessScreen:
 
     def setup(self, node: Node, record: Optional[NodeRecord], public_key: str) -> None:
         transport, state = self.app.env.transport, self.app.env.state
-        target = self.pin_host_key(node, target_of(node, record), record)
+        target = self.pin_host_key(node, self.ssh_target(node, record), record)
         self.login(node, target)
         try:
             answer = self.install(node, target, public_key)
@@ -263,6 +280,7 @@ class AccessScreen:
                 agent=str(version.get("agent", "")),
                 panel_ip=str(answer.get("panelIp", "")),
                 access=OK,
+                ssh_address=target.address if target.address != node.address else "",
             )
         )
 
@@ -307,7 +325,7 @@ class AccessScreen:
     def refresh(self, node: Node, record: NodeRecord) -> bool:
         """Known node: check the agent and update it (§8.3). False: set up again."""
         transport = self.app.env.transport
-        target = target_of(node, record)
+        target = self.ssh_target(node, record)
         self.show(t("access.checking_agent", node=self.app.mask(node.name)))
         try:
             answer = transport.agent(target, "version")
@@ -317,6 +335,8 @@ class AccessScreen:
                 answer = transport.agent(target, f"update {local}", data=bootstrap.agent_source())
             record.agent = str(answer.get("agent", record.agent))
             record.access = OK
+            if target.address != (record.ssh_address or node.address):
+                record.ssh_address = target.address
             self.app.env.state.save_node(record)
             return True
         except TransportError as exc:

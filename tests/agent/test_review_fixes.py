@@ -344,3 +344,44 @@ def test_stale_rollback_of_a_port_goes_back_to_the_confirmed_port(socket_node, r
     assert listens(socket_node) == [24622]
     code, answer = call(socket_node, ["rollback", change])
     assert answer["state"] == "rollback_pending"
+
+
+# -- 5. node_api.panel_only cut the panel off its node -------------------------------------
+REMNANODE_HOST = json.dumps([{"HostConfig": {"NetworkMode": "host"},
+                              "Config": {"Env": ["NODE_PORT=2222"]}}])  # fmt: skip
+
+
+def established(*peers):
+    return "".join(f"0 0 [::ffff:203.0.113.10]:2222 {peer}\n" for peer in peers)
+
+
+@pytest.fixture
+def remnanode(node, recorder):
+    recorder.on(["docker", "inspect", "remnanode"], agent.Result(0, REMNANODE_HOST))
+    return node
+
+
+def test_panel_peer_through_an_ipv4_mapped_socket(remnanode, recorder):
+    recorder.on(["ss", "-Htn"], agent.Result(0, established("[::ffff:198.51.100.5]:41022")))
+    api = agent.collect_facts(remnanode)["nodeApi"]
+    assert api["panelPeer"] is True and api["otherPeers"] == 0
+
+
+def test_panel_over_ipv6_ssh_is_not_the_peer_of_the_node_api(remnanode, recorder):
+    """The name of the node has A and AAAA: SSH came over IPv6, the backend over IPv4."""
+    remnanode.environ["SSH_CONNECTION"] = "2001:db8::5 50000 2001:db8::10 22"
+    recorder.on(["ss", "-Htn"], agent.Result(0, established("198.51.100.5:41022")))
+    api = agent.collect_facts(remnanode)["nodeApi"]
+    assert api["panelPeer"] is False and api["otherPeers"] == 1
+    _change, code, answer = apply(remnanode, "node_api.panel_only", {"port": 2222})
+    assert code == 1 and answer["error"]["code"] == "panel_not_peer"
+    assert read(remnanode, "/etc/kerberos/node-api.nft") is None
+
+
+def test_node_api_rule_when_the_panel_is_connected(remnanode, recorder):
+    recorder.on(["ss", "-Htn"], agent.Result(0, established("[::ffff:198.51.100.5]:41022",
+                                                            "192.0.2.99:5000")))  # fmt: skip
+    _change, code, answer = apply(remnanode, "node_api.panel_only",
+                                  {"port": 2222, "panelIp": "198.51.100.5"})  # fmt: skip
+    assert code == 0, answer
+    assert "ip saddr 198.51.100.5 counter accept" in read(remnanode, "/etc/kerberos/node-api.nft")

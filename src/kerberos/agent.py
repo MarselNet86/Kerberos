@@ -45,7 +45,7 @@ ERROR_CODES = frozenset(
     """bad_params unknown_command sha_mismatch no_admin_key sshd_test_failed ssh_port
     port_busy bridge_network docker_published mptcp_absent port80_busy certbot_failed
     nginx_test_failed realip_enabled apt_failed change_conflict no_backup backup_damaged
-    not_implemented command_failed""".split()
+    not_implemented command_failed panel_not_peer""".split()
 )
 
 FIX_ID = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*$")
@@ -688,6 +688,22 @@ def panel_address(system: System) -> str:
     return parts[0] if parts else ""
 
 
+def plain_ip(value: str) -> str:
+    """An IPv4 address mapped into IPv6 (::ffff:198.51.100.5) as plain IPv4."""
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return value
+    mapped = getattr(address, "ipv4_mapped", None)
+    return str(mapped or address)
+
+
+def node_api_peers(system: System, port: int) -> set:
+    """Addresses with an established connection to the node API right now."""
+    out = system.run(["ss", "-Htn", "state", "established", f"( sport = :{port} )"])
+    return {plain_ip(c["peer"]) for c in parse_ss_connections(out.stdout)}
+
+
 PRIVSEP_DIR = "/run/sshd"
 
 
@@ -791,12 +807,9 @@ def collect_facts(system: System) -> dict:
         item["firewalled"] = firewalled
         listening.append(item)
     node_port = remnanode.get("nodePort")
-    panel_ip = panel_address(system)
-    other_peers = 0
-    if node_port:
-        out = system.run(["ss", "-Htn", "state", "established", f"( sport = :{node_port} )"])
-        peers = {c["peer"] for c in parse_ss_connections(out.stdout)}
-        other_peers = len([p for p in peers if p != panel_ip])
+    panel_ip = plain_ip(panel_address(system))
+    peers = node_api_peers(system, node_port) if node_port else set()
+    other_peers = len([p for p in peers if p != panel_ip])
     jail = parse_fail2ban(fail2ban_files(system), ssh["ports"])
     f2b_installed = system.exists("/usr/bin/fail2ban-client")
     f2b_active = system.run(["systemctl", "is-active", "fail2ban"]).stdout.strip() == "active"
@@ -842,6 +855,9 @@ def collect_facts(system: System) -> dict:
             "port": node_port,
             "panelOnly": bool(node_port) and node_port in ruleset.dropped("tcp"),
             "otherPeers": other_peers,
+            # The panel talks to the node API from the address KERBEROS comes from: the
+            # rule of node_api.panel_only keeps it (§10.3).
+            "panelPeer": bool(panel_ip) and panel_ip in peers,
         },
         "nftTables": ruleset.tables,
         "hostKeys": host_keys,
@@ -1596,6 +1612,10 @@ def fix_node_api(system: System, params: dict) -> Plan:
     remnanode = parse_remnanode(system.run(["docker", "inspect", "remnanode"]).stdout)
     if remnanode.get("network") == "bridge":
         raise AgentError("bridge_network", "remnanode publishes its port through Docker")
+    if plain_ip(panel) not in node_api_peers(system, port):
+        # The panel reaches the node from another address (IPv6 SSH, IPv4 backend):
+        # the rule would cut the panel off its node.
+        raise AgentError("panel_not_peer", f"no connection to port {port} from {panel}")
     family = "ip6" if ":" in panel else "ip"
     plan = Plan("node_api.panel_only")
     nft_service(plan, "node-api", "inet kerberos_node_api", [

@@ -110,6 +110,7 @@
   "nodeApi": {
     "otherPeers": 1,
     "panelOnly": false,
+    "panelPeer": true,
     "port": 2222
   },
   "os": {

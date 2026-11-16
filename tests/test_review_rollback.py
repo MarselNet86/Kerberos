@@ -184,3 +184,61 @@ def test_xui_rollback_of_the_port_is_tried_from_outside(answer, code):
     else:
         assert port["state"] == "confirmed" and port["error"] == "port_closed"
         assert ssh["ports"] == [new] and app.env.state.node("local").ssh_port == new
+
+
+# -- 5. a node given by name is reached on its IPv4 (§8.2) ----------------------------------
+NL1_NAME = "nl-1.example.com"
+TO_S4 = login_keys() + ["enter", "enter"]
+HOST_KEYS = ["enter", "enter", "enter", "enter", "enter", "esc"]  # see tests/test_s4.py
+
+
+def check_by_name(nodes, state=None, extra=HOST_KEYS):
+    from kerberos.demo.fleet import build_panel
+
+    panel = build_panel()
+    next(n for n in panel.nodes if n["name"] == "nl-1")["address"] = NL1_NAME
+    keys = TO_S4 + extra + ["enter", "x", "q", "enter"]
+    app, term = make_app(keys, nodes=nodes, state=state, panel=panel)
+    app.env.prober.dns[NL1_NAME] = ["2001:db8::10", NL1]  # A and AAAA
+    app.run("check")
+    return app, term
+
+
+def test_ssh_host_takes_the_ipv4_of_a_name():
+    from kerberos.nodes.transport import ssh_host
+
+    dns = {NL1_NAME: ["2001:db8::10", NL1], "v6.example.com": ["2001:db8::11"]}
+    assert ssh_host(NL1_NAME, lambda name: dns.get(name, [])) == NL1
+    assert ssh_host("v6.example.com", lambda name: dns.get(name, [])) == "v6.example.com"
+    assert ssh_host("198.51.100.20", lambda name: []) == "198.51.100.20"
+    assert ssh_host(NL1_NAME) == NL1_NAME
+
+
+def test_s4_reaches_a_node_name_on_its_ipv4():
+    nodes = build_nodes()
+    app, _term = check_by_name(nodes)
+    record = app.env.state.find_node("nl-1")
+    assert record.access == "ok" and record.address == NL1_NAME
+    assert record.ssh_address == NL1 and record.target(record.address).address == NL1
+    assert app.env.state.pinned(NL1, 22) == nodes[0].host_key.blob
+    assert ("resolve", NL1_NAME) in app.env.prober.calls
+
+
+def test_node_set_up_by_name_before_moves_to_its_ipv4_without_questions():
+    nodes = build_nodes()
+    app, _term = check_by_name(nodes)
+    state = app.env.state
+    record = state.find_node("nl-1")
+    record.ssh_address = ""  # as KERBEROS before K13 left it: the name, pinned by the name
+    state.save_node(record)
+    blob = state.pinned(NL1, 22)
+    lines = state.known_hosts.read_text().splitlines()
+    state.known_hosts.write_text("\n".join(x for x in lines if not x.startswith(NL1 + " ")) + "\n")
+    state.pin(NL1_NAME, 22, "ssh-ed25519", blob)
+    app, term = check_by_name(nodes, state, extra=["esc"])
+    assert state.find_node("nl-1").ssh_address == NL1
+    assert state.pinned(NL1, 22) == blob
+    assert app.env.transport.interactive_logins == 0
+    question = t("access.hostkey", node="nl-1", fingerprint="@").split("@")[0].strip()
+    assert seen(check_by_name(build_nodes())[1], question), "the question looks like this"
+    assert not seen(term, question)
