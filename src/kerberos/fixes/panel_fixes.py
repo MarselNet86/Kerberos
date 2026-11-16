@@ -175,12 +175,14 @@ class PanelFixes:
     def fail(self, item: Any, code: str) -> None:
         """A step of the fix failed: the change it belongs to is undone and finished."""
         change = self.current
-        rolled = True
         if change is not None and change["finishedAt"] is None:
             rolled = self.settle(change, code)
         elif change is None:
             self.engine.failed += 1
-        # A change finished already (the shared templates) was counted when it was settled.
+            rolled = True
+        else:
+            # Finished already (the shared templates): counted when it was settled.
+            rolled = change.get("error") != ROLLBACK_FAILED
         self.engine.event("apply", item, "failed", code if rolled else ROLLBACK_FAILED)
 
     def abandon(self, item: Any, exc: BaseException) -> None:

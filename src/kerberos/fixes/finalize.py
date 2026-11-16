@@ -138,11 +138,12 @@ def drop_saved_token(store: RunStore, transport: Any, clock: Clock, run_id: str)
     path = store.path(run_id) / TOKEN_FILE
     try:
         saved = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return
-    client = PanelClient(saved["api"], transport, clock)
-    client.set_token(saved["token"])
-    forget_token(client, saved["uuid"], path)
+        api, token, token_uuid = saved["api"], saved["token"], saved["uuid"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return  # no token, or one KERBEROS cannot read: nothing it could delete
+    client = PanelClient(api, transport, clock)
+    client.set_token(token)
+    forget_token(client, token_uuid, path)
 
 
 def unattended(store: RunStore, transport: Any, clock: Clock, run_id: Optional[str]) -> int:

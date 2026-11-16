@@ -137,3 +137,14 @@ def test_menu_keeps_the_outcome_when_the_person_quits_on_s9():
     keys = ["down", "enter"] + TO_PLAN + APPLY + ["q", "enter"]  # q on S9 itself
     app, _term = make_app(keys, panel=panel, nodes=list(nodes.values()), height=46)
     assert app.run() == EXIT_PARTIAL
+
+
+def test_timer_with_an_unreadable_token_file_does_not_crash(tmp_path):
+    from kerberos.clock import FakeClock
+    from kerberos.state import State
+
+    store = RunStore(State(tmp_path), FakeClock())
+    run = store.new_run("fix", {"version": "2.8.1"}, [])
+    store.save(run)
+    (store.path(run["runId"]) / "finalize.token").write_text('{"uuid": "only"}')
+    assert unattended(store, None, FakeClock(), run["runId"]) == 0
