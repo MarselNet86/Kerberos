@@ -158,7 +158,7 @@ def test_key_only_waits_for_confirmation_with_a_timer(node, recorder):
         "PermitRootLogin prohibit-password\n"
     )
     assert ["systemd-run", "--on-active=180", "--unit", f"kerberos-undo-{change}",
-            "/usr/local/sbin/kerberos-agent", "rollback", change] in recorder.calls  # fmt: skip
+            "/usr/local/sbin/kerberos-agent", "undo", change] in recorder.calls  # fmt: skip
     assert read(node, agent.PENDING_FILE).strip() == change
     _c, code, answer = apply(node, "mptcp.guard", {})
     assert code == 1 and answer["error"]["code"] == "change_conflict"
