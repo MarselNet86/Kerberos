@@ -112,6 +112,7 @@ def main() -> int:
     domain_file = os.path.join(HERE, "..", "..", "domain")
     domain = open(domain_file).read().strip() if os.path.exists(domain_file) else ""
     if domain:
+
         def has_site(f: dict) -> bool:
             return any(domain in s["serverNames"] for s in f["nginx"]["sites"])
 

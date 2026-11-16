@@ -572,9 +572,22 @@ def used_templates(data: CheckInput) -> list:
     return used
 
 
+CATCH_ALL_KEYS = {"type", "network", "outboundTag", "balancerTag", "ruleTag"}
+
+
+def is_catch_all(rule: dict) -> bool:
+    """The final rule: everything left goes to a proxy or a balancer."""
+    return (
+        isinstance(rule, dict)
+        and set(rule) <= CATCH_ALL_KEYS
+        and (str(rule.get("outboundTag", "")).lower() != "direct")
+    )
+
+
 def ru_direct(template_json: dict) -> dict:
     rules = (template_json.get("routing") or {}).get("rules") or []
-    before_final = rules[:-1] if len(rules) > 1 else rules
+    # Rules before the final catch-all; a template without one (no reserve) has all.
+    before_final = rules[:-1] if rules and is_catch_all(rules[-1]) else rules
     found = {"geoip:ru": False, "geosite:category-ru": False}
     for rule in before_final:
         if not isinstance(rule, dict) or str(rule.get("outboundTag", "")).lower() != "direct":

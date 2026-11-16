@@ -19,7 +19,8 @@ def by_node(data, items):
     names = {n.node.uuid: n.node.name for n in data.nodes}
     result = {}
     for item in items:
-        result.setdefault(names[item.node_uuid], []).append(item)
+        if item.node_uuid is not None:
+            result.setdefault(names[item.node_uuid], []).append(item)
     return result
 
 
@@ -29,13 +30,14 @@ def test_order_follows_section_10_1():
         order = [NODE_ORDER.index(i.fix_id) for i in node_items]
         assert order == sorted(order)
     names = [n.node.name for n in data.nodes]
+    node_items = [i for i in items if i.node_uuid is not None]
     seen = [
-        names.index(by)
-        for by in [
-            next(n.node.name for n in data.nodes if n.node.uuid == i.node_uuid) for i in items
-        ]
+        names.index(next(n.node.name for n in data.nodes if n.node.uuid == i.node_uuid))
+        for i in node_items
     ]
     assert seen == sorted(seen)
+    first_panel = next(k for k, i in enumerate(items) if i.node_uuid is None)
+    assert all(i.node_uuid is None for i in items[first_panel:]), "panel fixes after the nodes"
 
 
 def test_admin_key_goes_before_key_only_when_chosen():

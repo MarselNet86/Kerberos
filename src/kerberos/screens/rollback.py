@@ -44,6 +44,7 @@ def label(app: App, run: dict, change: dict) -> str:
         ports=ports,
         port=change["params"].get("port", ""),
         domain=change["params"].get("domain", ""),
+        reserve=(node_of(run, f"node:{change['params'].get('reserve')}") or {}).get("name", ""),
     )
     return f"{app.mask(name)}: {app.mask(text)}"
 
@@ -91,7 +92,9 @@ def roll_back(app: App, run: dict, changes: list, client=None) -> list:
     """Reverse order; returns the changes that did not go back."""
     failed = []
     store = RunStore(app.env.state, app.env.clock)
-    for change in sorted(changes, key=lambda c: c["startedAt"], reverse=True):
+    # Reverse journal order: changes of one second share a timestamp.
+    position = {id(c): i for i, c in enumerate(run["changes"])}
+    for change in sorted(changes, key=lambda c: position.get(id(c), -1), reverse=True):
         if change["fixId"] in PANEL_FIXES:
             reason = (
                 undo(client, change, ask=lambda diff: ask_diff(app, diff))

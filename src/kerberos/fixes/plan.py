@@ -29,7 +29,7 @@ NODE_ORDER = (
     "self_steal",
     "watch.install",
 )
-PANEL_ORDER = ("sub.template", "sub.ping_type", "host.fingerprint", "xhttp.uplink_get")
+PANEL_ORDER = ("reserve", "sub.template", "sub.ping_type", "host.fingerprint", "xhttp.uplink_get")
 
 # Fixes this version of KERBEROS can apply; the rest stay findings in the report.
 IMPLEMENTED = {
@@ -42,6 +42,9 @@ IMPLEMENTED = {
     "ssh.key_only",
     "ssh.port",
     "self_steal",
+    "sub.template",
+    "sub.ping_type",
+    "host.fingerprint",
 }
 ACCESS_FIXES = {"ssh.key_only", "ssh.port", "hostkeys.regenerate"}
 RISK_RANK = {"high": 0, "medium": 1, "low": 2, "info": 3}
@@ -114,6 +117,7 @@ def build_plan(
             continue
         kind, _, ref = finding["target"].partition(":")
         if kind != "node":
+            panel_item(items, finding, data)
             continue
         node = data.node_data(ref)
         if node is None or node.facts is None or node.access != "ok":
@@ -163,6 +167,48 @@ def build_plan(
         )
     node_index = {n.node.uuid: i for i, n in enumerate(data.nodes)}
     return sorted(items.values(), key=lambda i: order_key(i, node_index))
+
+
+def panel_item(items: dict, finding: Finding, data: CheckInput) -> None:
+    """Fixes in the panel: subscription settings, one host, one template's hosts."""
+    key = (finding["target"], finding["fixId"])
+    item = items.get(key)
+    if item is None:
+        item = PlanItem(finding["fixId"], finding["target"], None, {}, finding["risk"])
+        kind, _, ref = finding["target"].partition(":")
+        if kind == "host":
+            item.params = {"host": ref, "remark": finding["evidence"].get("host", "")}
+        if kind == "template":
+            hosts, paired = template_hosts(data, ref)
+            item.params = {"template": ref, "name": finding["evidence"].get("template", ""),
+                           "hosts": hosts, "paired": paired}  # fmt: skip
+        items[key] = item
+    elif RISK_RANK[finding["risk"]] < RISK_RANK[item.risk]:
+        item.risk = finding["risk"]
+    if finding["checkId"] not in item.checks:
+        item.checks.append(finding["checkId"])
+
+
+def template_hosts(data: CheckInput, template_uuid: str) -> tuple[list, list]:
+    """Enabled hosts of the chosen nodes on a template; those whose node has a reserve."""
+    from kerberos.checks.rules import reserves_of
+
+    hosts, paired = [], []
+    for node in data.nodes:
+        has_reserve = bool(reserves_of(data, node))
+        for host in data.snapshot.node_hosts(node.node):
+            if host.is_disabled or host.template_uuid != template_uuid or host.uuid in hosts:
+                continue
+            hosts.append(host.uuid)
+            if has_reserve:
+                paired.append(host.uuid)
+    return hosts, paired
+
+
+def reserve_item(main: PlanItem, spare: PlanItem) -> PlanItem:
+    """S7: the pair of a main and its reserve, applied after both got their domains."""
+    return PlanItem("reserve", main.target, main.node_uuid, {"reserve": spare.node_uuid},
+                    "medium", ["reserve.missing"], selected=True)  # fmt: skip
 
 
 def site_layouts_in_use(data: CheckInput) -> set:

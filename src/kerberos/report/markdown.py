@@ -72,6 +72,7 @@ def render(run: Run, mask: Optional[Callable[[str], str]] = None) -> str:
                         ports=ports,
                         port=change["params"].get("port", ""),
                         domain=change["params"].get("domain", ""),
+                        reserve=names.get(change["params"].get("reserve", ""), ""),
                     ),
                 )
             )

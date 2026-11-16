@@ -69,7 +69,9 @@ def test_port_closed_by_the_hoster_is_rolled_back():
 def test_rollback_returns_the_old_port():
     nodes = {n.name: n for n in build_nodes()}
     app, _term, _code = run_fix(ALL_AND_APPLY + ["enter"], nodes)
-    app.env.terminal.feed("enter", "enter", "enter", "x")
+    app.env.terminal.feed(
+        "enter", "enter", "enter", *list("admin"), "enter", *list("pw"), "enter", "x"
+    )
     assert app.run("rollback") == EXIT_OK
     assert nodes["nl-1"].state["facts"]["ssh"]["ports"] == [22]
     assert app.env.state.find_node("nl-1").ssh_port == 22

@@ -95,6 +95,7 @@ def test_dns_must_match_before_applying():
                                                                 "q", "enter"]  # fmt: skip
     app, term, _code = run_fix(keys, panel, nodes)
     assert seen(term, t("plan.domain.wait", record="A late.example.com → 203.0.113.10"))
+    assert seen(term, t("plan.domain.waiting"))
     assert seen(term, t("plan.need_domain"))
     assert all(m[1] != "/config-profiles" for m in panel.mutations)
 
@@ -139,7 +140,12 @@ def test_certificate_failure_changes_nothing_in_the_panel():
     app, term, code = run_fix(domain_keys(NL1_SELF_STEAL, "nl-1.example.com") + APPLY,
                               panel, nodes)  # fmt: skip
     assert code == EXIT_PARTIAL
-    assert not any(p in ("/config-profiles", "/hosts") for _m, p, _b in panel.mutations)
+    touched = {(m, p) for m, p, _b in panel.mutations}
+    assert not touched & {
+        ("PATCH", "/config-profiles"),
+        ("POST", "/hosts"),
+        ("POST", "/hosts/bulk/disable"),
+    }
     assert seen(term, t("apply.rolled_back", reason=t("error.certbot_failed")))
 
 

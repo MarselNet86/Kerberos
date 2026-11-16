@@ -187,8 +187,9 @@ class SelfSteal:
         ]
         change["details"] = {"created": [], "disabled": [], "atEnd": True}
         self.engine.save()
+        template = self.template_uuid(change)
         for source in sources:
-            self.create(change, copy_fields(source, self.domain))
+            self.create(change, copy_fields(source, self.domain, template_uuid=template))
         hysteria = next((i for i in patched.inbounds if i.type == "hysteria"), None)
         vless = {i.uuid for i in patched.inbounds if i.type == "vless"}
         reality_sources = [h for h in sources if h.inbound_uuid in vless]
@@ -197,16 +198,27 @@ class SelfSteal:
         )
         if hysteria and reality_sources and not has_hy2_host:
             remark = f"{reality_sources[0].remark} Hysteria2".strip()
-            self.create(
-                change,
-                hysteria_host(reality_sources[0], self.domain, patched.uuid, hysteria.uuid, remark),
+            fields = hysteria_host(
+                reality_sources[0], self.domain, patched.uuid, hysteria.uuid, remark
             )
+            fields["xrayJsonTemplateUuid"] = template
+            self.create(change, fields)
         # Old hosts go off only now, after every copy exists and was read back.
         old = [h.uuid for h in sources]
         if old:
             self.panel_step(change, lambda: self.client.disable_hosts(old))
             change["details"]["disabled"] = old
         self.applied(change)
+
+    def template_uuid(self, change: Change) -> Any:
+        """§10.9: copies get «KERBEROS» in a pair with a reserve, else «без резерва»."""
+        paired = self.item.params.get("reserve") or self.item.params.get("reserveOf")
+        try:
+            templates = self.engine.panel_fixes.templates()
+        except PanelError as exc:
+            self.engine.finish(change, "failed", exc.code)
+            raise StepFailed(exc.code) from exc
+        return templates["reserve" if paired else "single"]
 
     def belongs(self, host: Any) -> bool:
         profile = self.session.snapshot.node_profile(self.node)
