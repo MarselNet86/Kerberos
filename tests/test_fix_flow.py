@@ -182,4 +182,5 @@ def test_s9_snapshot_and_s7_rows():
     assert_snapshot("s9", text.replace(run["runId"], "<run>"))
     s7 = next(f for f in term.frames if t("plan.title") in f.splitlines()[0])
     assert t("fix.mptcp.guard.label") in s7
-    assert t("plan.selected", n=ALL_CHANGES, total=ALL_CHANGES + 4) in s7  # ssh.port unmarked
+    # ssh.port (4 nodes) and self-steal (4 nodes, waiting for a domain) are not marked
+    assert t("plan.selected", n=ALL_CHANGES, total=ALL_CHANGES + 8) in s7

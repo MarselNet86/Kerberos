@@ -77,7 +77,7 @@ def make_app(
     env.panel_transport = panel if panel is not None else build_panel()
     env.state = state or State(Path(tempfile.mkdtemp(prefix="kerberos-test-")))
     env.transport = FakeTransport(nodes if nodes is not None else build_nodes(), env.state)
-    env.prober = build_prober()
+    env.prober = build_prober(env.panel_transport, list(env.transport.nodes.values()))
     env.prober.auth = auth_methods_of(list(env.transport.nodes.values()))
     env.whois = build_whois()
     return App(env), term
