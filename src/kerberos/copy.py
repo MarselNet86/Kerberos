@@ -71,8 +71,7 @@ TEXT: dict[str, str] = {
     ),
     "apply.outside.keys": "Enter: вошёл, порт оставить    Esc: не вышло, вернуть старый",
     "done.title": "Готово",
-    "done.rollback": "Откатить: {command}",
-    "done.rollback.label": "Откатить командой:",
+    "done.rollback": "Откатить командой:",
     # K0: shell, menu, keys
     "app.version": "версия {version}",
     "mode.reports": "Отчёты прошлых запусков",

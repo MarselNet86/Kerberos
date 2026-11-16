@@ -123,7 +123,7 @@ def test_s9_at_80x24_pins_the_new_ssh_port_summary_and_rollback_command():
     assert t("s9.applied", ok=len(run["changes"]), total=len(run["changes"])) in first
     lines = body_lines(first)
     rollback = f"sudo {LAUNCHER} rollback {run['runId']}"
-    assert t("done.rollback.label") in lines[-2] and lines[-1].strip() == rollback
+    assert t("done.rollback") in lines[-2] and lines[-1].strip() == rollback
     assert s9[1] != first and t("s9.ssh_port", node="nl-1", port=port) in s9[1], "PgDn scrolls"
 
 

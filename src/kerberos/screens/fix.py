@@ -787,7 +787,7 @@ def step_done(app: App, session: Session) -> Any:
                 command = f"sudo {launcher()} finalize {run['runId']}"
                 bottom += command_lines(t("s9.finalize"), command)
         if run["changes"]:
-            bottom += command_lines(t("done.rollback.label"), rollback_command(run["runId"]))
+            bottom += command_lines(t("done.rollback"), rollback_command(run["runId"]))
         if bottom and not compact:
             bottom.insert(0, Text(""))
         return Stack(*top, listing, *bottom, flex=len(top))
