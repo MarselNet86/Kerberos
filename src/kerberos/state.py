@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 from kerberos.nodes.keys import known_hosts_name
 
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
     from kerberos.nodes.transport import Target
 
 DEFAULT_ROOT = Path("/var/lib/kerberos")
+LOCK_STEP = 5.0  # seconds between two tries of a lock that is busy
 
 
 class Locked(Exception):
@@ -80,17 +82,29 @@ class State:
         os.chmod(self.root, 0o700)
 
     @contextmanager
-    def lock(self) -> Iterator[None]:
-        """One KERBEROS at a time (flock on /var/lib/kerberos/lock)."""
+    def lock(
+        self, wait: float = 0.0, sleep: Callable[[float], None] = time.sleep
+    ) -> Iterator[None]:
+        """One KERBEROS at a time (flock on /var/lib/kerberos/lock).
+
+        `wait`: seconds to wait for another KERBEROS to finish before giving up.
+        """
         import fcntl
 
         self.ensure()
         fd = os.open(self.root / "lock", os.O_RDWR | os.O_CREAT, 0o600)
         try:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except OSError as exc:
-                raise Locked() from exc
+            waited = 0.0
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError as exc:
+                    if waited >= wait:
+                        raise Locked() from exc
+                    step = min(LOCK_STEP, wait - waited)
+                    sleep(step)
+                    waited += step
             yield
         finally:
             os.close(fd)
