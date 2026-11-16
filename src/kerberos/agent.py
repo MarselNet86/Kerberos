@@ -17,6 +17,7 @@ and recorded command outputs.
 from __future__ import annotations
 
 import base64
+import calendar
 import colorsys
 import contextlib
 import fcntl
@@ -972,6 +973,7 @@ def cmd_edge_sources(system: System, args: list, data: dict) -> dict:
 CHANGES_DIR = STATE_DIR + "/changes"
 PENDING_FILE = STATE_DIR + "/pending"
 UNDO_DELAY = 180
+APT_TIMEOUT = 600
 SSHD_CONF = "/etc/ssh/sshd_config.d/10-kerberos.conf"
 AUTHORIZED_KEYS = "/root/.ssh/authorized_keys"
 HOST_KEY_NAMES = ("rsa", "ecdsa", "ed25519")
@@ -995,6 +997,7 @@ class Plan:
         self.confirm_files: dict = {}  # path -> (text, mode), written by `confirm`
         self.confirm_commands: list = []  # (argv, error code), run by `confirm`
         self.steps: list = []  # ordered writes and runs after files and commands
+        self.stage = False  # a confirmed change goes back through the first phase
 
     def write(self, path: str, text: Optional[str], mode: int = 0o644) -> None:
         self.files[path] = (text, mode)
@@ -1075,26 +1078,55 @@ def mode_of(system: System, path: str) -> Optional[int]:
         return None
 
 
-def backup(system: System, change_id: str, plan: Plan) -> dict:
-    """Copy every file the change touches before anything happens (§9.3)."""
+def save_files(system: System, change_id: str, paths: list, folder: str) -> list:
+    """Copies of `paths` as they are now, in the change's folder: how to put them back."""
     entries = []
-    paths = list(plan.files) + [p for p in plan.created + plan.keep if p not in plan.files]
-    paths = list(dict.fromkeys(paths))
     for index, path in enumerate(paths):
         data = system.read_bytes(path)
         entry = {"path": path, "existed": data is not None, "mode": mode_of(system, path),
                  "backup": None, "sha256": None}  # fmt: skip
         if data is not None:
-            name = f"files/{index}"
+            name = f"{folder}/{index}"
             system.write_bytes(f"{change_dir(change_id)}/{name}", data, 0o600)
             entry["backup"] = name
             entry["sha256"] = sha256_bytes(data)
         entries.append(entry)
-    return {
+    return entries
+
+
+def put_back(system: System, change_id: str, entries: list) -> None:
+    for entry in entries:
+        path = entry["path"]
+        if entry["existed"]:
+            data = system.read_bytes(f"{change_dir(change_id)}/{entry['backup']}")
+            if data is None or sha256_bytes(data) != entry["sha256"]:
+                raise AgentError("backup_damaged", path)
+            system.write_bytes(path, data, entry["mode"] if entry["mode"] is not None else 0o644)
+        elif system.exists(path):
+            os.remove(system.path(path))
+
+
+def write_files(system: System, files: dict) -> None:
+    for path, (text, mode) in files.items():
+        if text is None:
+            if system.exists(path):
+                os.remove(system.path(path))
+        else:
+            system.write(path, text, mode)
+
+
+def run_step(system: System, argv: list) -> Result:
+    return system.run(argv, timeout=APT_TIMEOUT if argv[:1] == ["apt-get"] else 120)
+
+
+def backup(system: System, change_id: str, plan: Plan) -> dict:
+    """Copy every file the change touches before anything happens (§9.3)."""
+    paths = list(plan.files) + [p for p in plan.created + plan.keep if p not in plan.files]
+    record = {
         "changeId": change_id,
         "fixId": plan.fix_id,
         "state": "applying",
-        "files": entries,
+        "files": save_files(system, change_id, list(dict.fromkeys(paths)), "files"),
         "undoBefore": plan.undo_before,
         "undoAfter": plan.undo_after,
         "access": plan.access,
@@ -1105,44 +1137,103 @@ def backup(system: System, change_id: str, plan: Plan) -> dict:
         },
         "written": {},
         "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(system.now())),
+        # Which change came later: `at` has one-second steps, changes of a run share them.
+        "order": system.now(),
     }
+    if plan.stage:
+        # The layout of the first phase: a confirmed change goes back through it.
+        record["stage"] = {
+            "files": {p: [text, mode] for p, (text, mode) in plan.files.items()},
+            "commands": [[argv, code] for argv, code in plan.commands],
+        }
+    return record
 
 
 def restore(system: System, record: dict) -> list:
-    """Files back to their bytes and modes; undo commands around it."""
+    """Files back to their bytes and modes; undo commands around it. Returns the undo
+    commands that failed: the files are back then, but a service may not be."""
     problems = []
     for argv in record.get("undoBefore", []):
-        if not system.run(argv).ok:
+        if not run_step(system, argv).ok:
             problems.append(" ".join(argv))
-    for entry in record["files"]:
-        path = entry["path"]
-        if entry["existed"]:
-            data = system.read_bytes(f"{change_dir(record['changeId'])}/{entry['backup']}")
-            if data is None or sha256_bytes(data) != entry["sha256"]:
-                raise AgentError("backup_damaged", path)
-            system.write_bytes(path, data, entry["mode"] if entry["mode"] is not None else 0o644)
-        elif system.exists(path):
-            os.remove(system.path(path))
+    put_back(system, record["changeId"], record["files"])
     for argv in record.get("undoAfter", []):
-        if not system.run(argv).ok:
+        if not run_step(system, argv).ok:
             problems.append(" ".join(argv))
     return problems
 
 
+def undo_error(error: AgentError, problems: list) -> AgentError:
+    """The change did not happen and its undo left a command failed: the node needs a look."""
+    if not problems:
+        return error
+    return AgentError("command_failed", f"{error.code}; undo failed: {'; '.join(problems)}")
+
+
 def install_packages(system: System, packages: list) -> None:
+    """At most APT_TIMEOUT for the whole install, so KERBEROS knows how long to wait."""
     if not packages:
         return
     argv = ["apt-get", "install", "-y", "-q", *packages]
-    if system.run(argv, timeout=600).ok:
+    deadline = time.monotonic() + APT_TIMEOUT
+
+    def left() -> float:
+        return max(1.0, deadline - time.monotonic())
+
+    if system.run(argv, timeout=left()).ok:
         return
-    system.run(["apt-get", "update", "-q"], timeout=600)
-    if not system.run(argv, timeout=600).ok:
+    system.run(["apt-get", "update", "-q"], timeout=left())
+    if not system.run(argv, timeout=left()).ok:
         raise AgentError("apt_failed", " ".join(packages))
 
 
 def pending_change(system: System) -> Optional[str]:
     value = (system.read(PENDING_FILE) or "").strip()
     return value or None
+
+
+def clear_pending(system: System, change_id: str) -> None:
+    if pending_change(system) == change_id:
+        system.write(PENDING_FILE, "", 0o600)
+
+
+def set_pending(system: System, record: dict, state: str) -> None:
+    record["state"] = state
+    record["pendingSince"] = system.now()
+    system.write(PENDING_FILE, record["changeId"] + "\n", 0o600)
+
+
+WAITING = ("pending_confirm", "rollback_pending")
+UNDO_MARGIN = 60
+
+
+def parse_at(value: Any) -> Optional[float]:
+    try:
+        return float(calendar.timegm(time.strptime(str(value), "%Y-%m-%dT%H:%M:%SZ")))
+    except ValueError:
+        return None
+
+
+def timer_lost(system: System, record: dict) -> bool:
+    """The change waits longer than its timer could: a reboot took the transient timer
+    or its undo failed. Then nobody will ever settle it but the next apply."""
+    since = record.get("pendingSince")
+    since = parse_at(record.get("at")) if since is None else since
+    if since is None or system.now() - since < UNDO_DELAY + UNDO_MARGIN:
+        return False
+    unit = f"kerberos-undo-{record['changeId']}.timer"
+    state = system.run(["systemctl", "show", "-p", "SubState", "--value", unit]).stdout.strip()
+    return state not in ("waiting", "running")
+
+
+def start_timer(system: System, change_id: str, again: bool = False) -> bool:
+    unit = f"kerberos-undo-{change_id}"
+    if again:
+        # The unit name of the apply: an undo that failed earlier leaves it loaded.
+        system.run(["systemctl", "reset-failed", f"{unit}.timer", f"{unit}.service"])
+    # `undo`, not `rollback`: a change confirmed meanwhile must stay.
+    return system.run(["systemd-run", f"--on-active={UNDO_DELAY}", "--unit", unit,
+                       AGENT_PATH, "undo", change_id]).ok  # fmt: skip
 
 
 def cmd_apply(system: System, args: list, data: dict) -> dict:
@@ -1158,22 +1249,18 @@ def cmd_apply(system: System, args: list, data: dict) -> dict:
     waiting = pending_change(system)
     if waiting:
         other = load_record(system, waiting)
-        if other is not None and other["state"] == "pending_confirm":
-            raise AgentError("change_conflict", f"change {waiting} waits for confirmation")
+        if other is not None and other["state"] in WAITING:
+            if not timer_lost(system, other):
+                raise AgentError("change_conflict", f"change {waiting} waits for confirmation")
+            cmd_undo(system, [waiting], None)  # what its timer would have done
     plan = builder(system, data)
     install_packages(system, plan.packages)
     record = backup(system, change_id, plan)
     save_record(system, record)
     try:
-        for path, (text, mode) in plan.files.items():
-            if text is None:
-                if system.exists(path):
-                    os.remove(system.path(path))
-            else:
-                system.write(path, text, mode)
+        write_files(system, plan.files)
         for argv, code in plan.commands:
-            result = system.run(argv, timeout=600 if argv[:1] == ["apt-get"] else 120)
-            if not result.ok:
+            if not run_step(system, argv).ok:
                 raise AgentError(code, " ".join(argv))
         for step in plan.steps:
             if step[0] == "write":
@@ -1182,24 +1269,19 @@ def cmd_apply(system: System, args: list, data: dict) -> dict:
                 raise AgentError(step[2], " ".join(step[1]))
         if plan.after is not None:
             record["details"].update(plan.after(system))
-    except AgentError:
-        restore(system, record)
+    except AgentError as exc:
+        problems = restore(system, record)
         record["state"] = "failed"
         save_record(system, record)
-        raise
+        raise undo_error(exc, problems) from exc
     record["written"] = {e["path"]: file_sha(system, e["path"]) for e in record["files"]}
     if plan.access:
-        unit = f"kerberos-undo-{change_id}"
-        # `undo`, not `rollback`: a change confirmed meanwhile must stay.
-        timer = system.run(["systemd-run", f"--on-active={UNDO_DELAY}", "--unit", unit,
-                            AGENT_PATH, "undo", change_id])  # fmt: skip
-        if not timer.ok:
-            restore(system, record)
+        if not start_timer(system, change_id):
+            problems = restore(system, record)
             record["state"] = "failed"
             save_record(system, record)
-            raise AgentError("command_failed", "systemd-run")
-        record["state"] = "pending_confirm"
-        system.write(PENDING_FILE, change_id + "\n", 0o600)
+            raise undo_error(AgentError("command_failed", "systemd-run"), problems)
+        set_pending(system, record, "pending_confirm")
     else:
         record["state"] = "applied"
     save_record(system, record)
@@ -1215,46 +1297,78 @@ def cmd_confirm(system: System, args: list, data: Any) -> dict:
     record = load_record(system, change_id)
     if record is None:
         raise AgentError("no_backup", change_id)
+    if record["state"] == "rollback_pending":
+        return finish_rollback(system, record)
+    if record["state"] == "rolled_back" and record.get("rolledBackBy") == "confirm":
+        return answer_of(record)  # the answer of a confirm got lost: it is done
     if record["state"] in ("confirmed", "applied"):
         return answer_of(record, "noop")
     if record["state"] != "pending_confirm":
         raise AgentError("change_conflict", f"change is {record['state']}")
     second = record.get("confirm") or {}
     try:
-        for path, (text, mode) in (second.get("files") or {}).items():
-            if text is None:
-                if system.exists(path):
-                    os.remove(system.path(path))
-            else:
-                system.write(path, text, mode)
+        write_files(system, second.get("files") or {})
         for argv, code in second.get("commands") or []:
             if not system.run(argv).ok:
                 raise AgentError(code, " ".join(argv))
-    except AgentError:
+    except AgentError as exc:
+        # backup_damaged here leaves the timer armed: it tries the rollback once more.
+        problems = restore(system, record)
         stop_timer(system, change_id)
-        restore(system, record)
         record["state"] = "failed"
-        if pending_change(system) == change_id:
-            system.write(PENDING_FILE, "", 0o600)
+        clear_pending(system, change_id)
         save_record(system, record)
-        raise
+        raise undo_error(exc, problems) from exc
     stop_timer(system, change_id)
     record["written"] = {e["path"]: file_sha(system, e["path"]) for e in record["files"]}
     record["state"] = "confirmed"
-    if pending_change(system) == change_id:
-        system.write(PENDING_FILE, "", 0o600)
+    clear_pending(system, change_id)
     save_record(system, record)
     return answer_of(record)
 
 
 def cmd_undo(system: System, args: list, data: Any) -> dict:
-    """The undo timer: roll back only a change that still waits for its confirmation."""
+    """The undo timer: roll back only a change that still waits for its confirmation;
+    a rollback that waits for its own goes back to the confirmed change."""
     record = load_record(system, args[0])
     if record is None:
         raise AgentError("no_backup", args[0])
+    if record["state"] == "rollback_pending":
+        return back_to_confirmed(system, record)
     if record["state"] != "pending_confirm":
         return answer_of(record, "noop")
     return cmd_rollback(system, args, data)
+
+
+def other_records(system: System, change_id: str):
+    base = system.path(CHANGES_DIR)
+    for name in sorted(os.listdir(base)) if os.path.isdir(base) else []:
+        if name != change_id and CHANGE_ID.match(name):
+            try:
+                other = load_record(system, name)
+            except AgentError:
+                continue
+            if other is not None:
+                yield other
+
+
+def came_later(other: dict, record: dict) -> bool:
+    """Same second, or records without `order`: the other one counts as later."""
+    if "order" in other and "order" in record:
+        return other["order"] >= record["order"]
+    return str(other.get("at", "")) >= str(record.get("at", ""))
+
+
+IN_FORCE = ("applied", "confirmed", "pending_confirm", "rollback_pending")
+
+
+def key_only_after(system: System, record: dict) -> Optional[str]:
+    """A later ssh.key_only in force: without the administrator key the person is locked out."""
+    for other in other_records(system, record["changeId"]):
+        if other["fixId"] == "ssh.key_only" and other["state"] in IN_FORCE:
+            if came_later(other, record):
+                return other["changeId"]
+    return None
 
 
 def cmd_rollback(system: System, args: list, data: Any) -> dict:
@@ -1264,18 +1378,91 @@ def cmd_rollback(system: System, args: list, data: Any) -> dict:
         raise AgentError("no_backup", change_id)
     if record["state"] == "rolled_back":
         return answer_of(record, "noop")
+    if record["state"] == "rollback_pending":
+        return answer_of(record)  # waits for `confirm` over the old port, or for `undo`
     if record["state"] in ("applied", "confirmed"):
         for path, sha in record.get("written", {}).items():
             if file_sha(system, path) != sha:
                 raise AgentError("change_conflict", f"{path} changed after KERBEROS")
-    if record["state"] == "pending_confirm":
-        stop_timer(system, change_id)
+    if record["fixId"] == "access.admin_keys" and record["state"] in IN_FORCE:
+        later = key_only_after(system, record)
+        if later:
+            raise AgentError("change_conflict", f"ssh.key_only {later} needs this key")
+    if record["state"] == "confirmed" and record.get("stage"):
+        return stage_rollback(system, record)
+    was = record["state"]
+    # backup_damaged here leaves a timer armed: it tries the rollback once more.
     problems = restore(system, record)
+    if was == "pending_confirm":
+        stop_timer(system, change_id)
     record["state"] = "rolled_back"
     record["details"]["undoProblems"] = problems
-    if pending_change(system) == change_id:
-        system.write(PENDING_FILE, "", 0o600)
+    clear_pending(system, change_id)
     save_record(system, record)
+    if problems:
+        raise AgentError("command_failed", "undo failed: " + "; ".join(problems))
+    return answer_of(record)
+
+
+# -- a confirmed SSH port goes back the way it came (§9.3, K13) ------------------
+def stage_rollback(system: System, record: dict) -> dict:
+    """First phase: SSH listens on the old and the new port again, the undo timer runs.
+    KERBEROS proves the old port with a new connection and calls `confirm`, which puts
+    the old layout back; without it `undo` returns to the confirmed one, new port only."""
+    change_id = record["changeId"]
+    record["confirmedFiles"] = save_files(
+        system, change_id, [e["path"] for e in record["files"]], "confirmed"
+    )
+    save_record(system, record)
+    stage = record["stage"]
+    try:
+        write_files(system, stage["files"])
+        ensure_privsep(system)
+        for argv, code in stage["commands"]:
+            if not run_step(system, argv).ok:
+                raise AgentError(code, " ".join(argv))
+        if not start_timer(system, change_id, again=True):
+            raise AgentError("command_failed", "systemd-run")
+    except AgentError as exc:
+        problems = layout_of_confirm(system, record)
+        save_record(system, record)
+        raise undo_error(exc, problems) from exc
+    set_pending(system, record, "rollback_pending")
+    save_record(system, record)
+    return answer_of(record)
+
+
+def layout_of_confirm(system: System, record: dict) -> list:
+    """The files of the confirmed change and the commands that made them work."""
+    put_back(system, record["changeId"], record.get("confirmedFiles") or [])
+    ensure_privsep(system)
+    return [" ".join(argv) for argv, _code in (record.get("confirm") or {}).get("commands") or []
+            if not run_step(system, argv).ok]  # fmt: skip
+
+
+def back_to_confirmed(system: System, record: dict) -> dict:
+    problems = layout_of_confirm(system, record)
+    stop_timer(system, record["changeId"])
+    record["state"] = "confirmed"
+    clear_pending(system, record["changeId"])
+    save_record(system, record)
+    if problems:
+        raise AgentError("command_failed", "undo failed: " + "; ".join(problems))
+    return answer_of(record)
+
+
+def finish_rollback(system: System, record: dict) -> dict:
+    """Second phase: the old port answered a new connection; only the old layout stays."""
+    # backup_damaged leaves the timer armed: it brings back the confirmed layout.
+    problems = restore(system, record)
+    stop_timer(system, record["changeId"])
+    record["state"] = "rolled_back"
+    record["rolledBackBy"] = "confirm"
+    record["details"]["undoProblems"] = problems
+    clear_pending(system, record["changeId"])
+    save_record(system, record)
+    if problems:
+        raise AgentError("command_failed", "undo failed: " + "; ".join(problems))
     return answer_of(record)
 
 
@@ -1580,6 +1767,7 @@ def fix_ssh_port(system: System, params: dict) -> Plan:
         raise AgentError("port_busy", str(port))
     plan = Plan("ssh.port")
     plan.access = True
+    plan.stage = True
     if parse_ufw(system.run(["ufw", "status", "verbose"]).stdout)["state"] == "active":
         plan.run(["ufw", "allow", f"{port}/tcp"])
         plan.undo_after.append(["ufw", "delete", "allow", f"{port}/tcp"])
