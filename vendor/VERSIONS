@@ -1,0 +1,9 @@
+# Vendored by tools/vendor.py; do not edit by hand.
+
+rich==15.0.0 sha256=33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb
+
+# Not vendored: pygments, markdown-it-py, mdurl, typing_extensions.
+# Rich 15 needs pygments only for rich.syntax and rich.traceback and
+# markdown-it-py (with mdurl) only for rich.markdown; it needs no
+# typing_extensions on Python 3.9+. KERBEROS imports none of these modules,
+# and tests run the app under `python3 -I -S` with vendor/ alone.

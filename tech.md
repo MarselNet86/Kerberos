@@ -1,10 +1,11 @@
 # tech.md: KERBEROS
 
-**Версия:** v2 · 2026-11-16
+**Версия:** v3 · 2026-11-16
 **Владелец:** автор репозитория, он же тимлид и единственный разработчик. Сессии разработки работают по этому файлу и по `CLAUDE.md`.
 
 ## Changelog
 
+- v3 (K0, уточнения): пакет приложения лежит в `src/kerberos/`: файл-launcher `kerberos` и каталог `kerberos/` не могут лежать рядом в корне репозитория. Пути вида `kerberos/agent.py` в этом файле означают `src/kerberos/agent.py`; команды `./kerberos` и `python3 -m kerberos` не меняются. Launcher сам кладёт `src/` и `vendor/` в `sys.path`: под `-I` Python не читает `PYTHONPATH` (§5.2). В `vendor/` только Rich, решение записано в `vendor/VERSIONS` (§3). §10.9: эталонные sha256 шаблонов, тест сверяет файлы с ними.
 - v2 (аддитивно, решение владельца): поддержка Ubuntu 26.04 и Debian 13 наравне с Ubuntu 22.04, 24.04 и Debian 12; особенности ОС в §3.1. GitHub Actions не используются (лимиты владельца): проверки идут локально через `tools/check.sh`, агент проверяется на пяти ОС через `tools/stand.sh` (§18); Definition of Done и K0 обновлены.
 - v1: первая версия. KERBEROS: скрипт защиты, который ставится на сервер панели Remnawave и ставит меры защиты на выбранные ноды. Режимы «Проверка» и «Исправление», вход в панель из окна, первичный доступ к нодам из окна, self-steal с копиями хостов и выключением старых, проверенные конфиги профиля и подписки (`templates/`, §10.9) с выбором резерва, отчёт и откат. Меры и конфиги взяты с живого парка автора, ноябрь 2026 (§24).
 
@@ -102,8 +103,8 @@ KERBEROS: скрипт защиты VPN-серверов для владельц
 Структура репозитория после K0:
 
 ```
-kerberos                 # launcher: проверяет python3, root, TTY; exec python3 -I -S -m kerberos
-kerberos/                # пакет приложения
+kerberos                 # launcher: проверяет root и python3; запускает python3 -I -S с src/ и vendor/ в sys.path
+src/kerberos/            # пакет приложения; в src/, потому что рядом с файлом kerberos каталог kerberos/ не положить
   __main__.py            # CLI §5.3
   app.py                 # сценарий экранов S1–S9
   copy.py                # тексты §15, единственное место строк интерфейса
@@ -142,8 +143,8 @@ sudo /opt/kerberos/kerberos
 
 1. Если не root: перезапускает себя через `sudo -- "$0" "$@"` с пояснением одной строкой (§3.1).
 2. Ищет `python3` версии 3.9 и выше. Нет: объясняет и предлагает `apt-get install -y python3` после подтверждения (единственная возможная установка пакета на сервере панели).
-3. Без TTY запускает только `report` и `finalize`; для остальных команд пишет «Запустите KERBEROS в терминале».
-4. `exec python3 -I -S -m kerberos "$@"` с `PYTHONPATH=<repo>:<repo>/vendor`.
+3. Без TTY запускает только `report` и `finalize`; для остальных команд пишет «Запустите KERBEROS в терминале». Проверяет это уже Python (`__main__`), чтобы текст жил в `copy.py`.
+4. `exec python3 -I -S` с `<repo>/src` и `<repo>/vendor` первыми в `sys.path` и запуск `kerberos.__main__`. Пути launcher кладёт в `sys.path` сам: под `-I` Python не читает `PYTHONPATH`.
 
 ### 5.3 Команды
 
@@ -532,6 +533,11 @@ HTTP-джейлы не включаются: они банили бы edge-се�
 | `templates/profile.json` | профиль ноды: Reality (self-steal на `127.0.0.1:8445`) и Hysteria2 (сертификат и masquerade на свой домен) на 443, DNS через DoH Google, `DIRECT`/`BLOCK`, блок частных адресов и торрентов | профиль конфигурации ноды в панели |
 | `templates/subscription-reserve.json` | шаблон XRAY_JSON с резервом: балансировщик `se-auto` (`random`, `fallbackTag: reserve`), `injectHosts` по тегу хоста, `burstObservatory` раз в 60 с | хосты основных нод, у которых выбран резерв |
 | `templates/subscription-single.json` | шаблон XRAY_JSON без резерва: те же DNS и правила, трафик идёт в `proxy` без балансировщика и проб | хосты нод, для которых человек выбрал «Без резерва» |
+
+Эталонные sha256 (тест `tests/test_templates.py` сверяет с ними файлы; правка шаблона меняет и эти строки):
+- `templates/profile.json` `385baf3ce13015aa2cd0d3cd461da526bdac4578f6a534f9e596f9604f950b0e`
+- `templates/subscription-reserve.json` `63a137eccd462bdc05d61ef9dda7bf8d3aada559ba7e1be79abd0340c0a20170`
+- `templates/subscription-single.json` `ae3cda4d1366002a04a2b95766c8c538c4b32102c49e0b5a13ff8a536a601d28`
 
 Оба шаблона подписки: российские домены, `geosite:category-ru`, `geoip:ru`, банки и госсервисы идут напрямую; домены нод идут напрямую и резолвятся локально; `max.ru` и `oneme.ru` блокируются; DNS через DoH Cloudflare и Google, российские домены через DoH Яндекса.
 

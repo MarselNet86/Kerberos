@@ -1,0 +1,18 @@
+# Development settings only: KERBEROS runs from the repository without installation.
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+extend-exclude = ["vendor"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+# Optional[...] and Union[...] stay: the agent and runtime code target Python 3.9.
+ignore = ["UP007", "UP045"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["kerberos"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q -p no:cacheprovider"
