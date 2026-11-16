@@ -11,6 +11,7 @@ from typing import Optional
 from kerberos.app import App, Env
 from kerberos.clock import FakeClock
 from kerberos.demo.fleet import build_host, build_nodes, build_panel
+from kerberos.demo.nodes import build_prober, build_whois
 from kerberos.host import FakeHost
 from kerberos.mask import Masker
 from kerberos.nodes.fake import FakeNode, FakeTransport
@@ -76,4 +77,6 @@ def make_app(
     env.panel_transport = panel if panel is not None else build_panel()
     env.state = state or State(Path(tempfile.mkdtemp(prefix="kerberos-test-")))
     env.transport = FakeTransport(nodes if nodes is not None else build_nodes(), env.state)
+    env.prober = build_prober()
+    env.whois = build_whois()
     return App(env), term

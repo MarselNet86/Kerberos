@@ -23,7 +23,7 @@ def test_snapshot_reads_both_host_forms(shape):
     client = client_for(panel)
     snap = client.snapshot("2.8.1", "panel.example.com")
     assert snap.host_shape == shape
-    assert len(snap.nodes) == 6 and len(snap.hosts) == 9
+    assert len(snap.nodes) == 6 and len(snap.hosts) == 10
     cdn = next(h for h in snap.hosts if h.remark == "FI CDN")
     assert cdn.tags == ["FI1"]
     assert cdn.xhttp_extra["uplinkHTTPMethod"] == "POST"
