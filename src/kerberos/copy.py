@@ -128,6 +128,8 @@ TEXT: dict[str, str] = {
         "серверов 3x-ui запустите KERBEROS на каждом."
     ),
     "panel.xui.found": "Нашёл 3x-ui {version} на этом сервере",
+    "panel.xui.found.unknown": "Нашёл 3x-ui на этом сервере",
+    "panel.xui.manual": "Панель 3x-ui по указанному адресу",
     "panel.xui.port": "Панель на порту {port}",
     "panel.xui.not_found": "3x-ui на этом сервере не нашёл. Укажите адрес панели.",
     "panel.xui.url_label": "Адрес панели 3x-ui с секретным путём",
@@ -151,6 +153,7 @@ TEXT: dict[str, str] = {
     "panel.kind.remnawave": "Remnawave",
     "panel.kind.3x-ui": "3x-ui",
     "panel.not_found": "Remnawave на этом сервере не нашёл. Укажите адрес API панели.",
+    "panel.manual": "Панель Remnawave по адресу {api}",
     "panel.api_label": "Адрес API панели",
     "panel.api_hint": "Например, http://127.0.0.1:3000/api",
     "panel.api_invalid": "нужен адрес вида http://127.0.0.1:3000/api",
@@ -167,9 +170,23 @@ TEXT: dict[str, str] = {
     "panel.err.token": "Токен не подходит",
     "panel.err.password_off": "Вход по паролю в панели выключен",
     "panel.err.forbidden": "У токена нет прав: {operation}",
-    "panel.err.server": "Панель отвечает ошибкой {status}: {operation}",
+    "panel.err.server": (
+        "Панель отвечает ошибкой {status}. Обычно она перезапускается: подождите минуту "
+        "и нажмите Enter."
+    ),
     "panel.err.timeout": "Панель не отвечает: {operation}",
-    "panel.err.unreachable": "Панель не принимает соединения: {api}",
+    "panel.err.unreachable": (
+        "Панель не принимает соединения по адресу {api}. Проверьте, что контейнер "
+        "remnawave запущен, и нажмите Enter."
+    ),
+    "panel.xui.err.unreachable": (
+        "Панель не принимает соединения по адресу {api}. Проверьте, что служба x-ui "
+        "запущена, и нажмите Enter."
+    ),
+    "panel.err.unreachable.any": (
+        "Панель не принимает соединения по адресу {api}. Проверьте, что она запущена, "
+        "и нажмите Enter."
+    ),
     "panel.err.no_response": (
         "Панель не ответила на {operation}. Объект мог создаться, "
         "поэтому KERBEROS не повторяет запрос."
@@ -648,7 +665,10 @@ TEXT: dict[str, str] = {
     "state.confirmed": "применено и подтверждено",
     "state.failed": "не применено",
     "state.rolled_back": "откачено",
-    "error.confirm_failed": "новое соединение не подтвердило доступ",
+    "error.confirm_failed": (
+        "новое соединение не подтвердило доступ, прежние настройки возвращены; "
+        "запустите «Исправление» ещё раз"
+    ),
     "error.recheck_failed": "после изменения проверка не прошла",
     "error.no_admin_key": "нет ключа администратора",
     "error.bridge_network": "нода в сети Docker bridge",

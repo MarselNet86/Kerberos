@@ -11,8 +11,10 @@ from helpers import flat, login_keys, make_app, row_of, seen, typed
 from kerberos.copy import plural, t
 from kerberos.demo.fleet import build_nodes, build_panel
 from kerberos.fixes.journal import RunStore
-from kerberos.flow import EXIT_OK
+from kerberos.flow import EXIT_OK, EXIT_PANEL
+from kerberos.host import FakeHost
 from kerberos.nodes.keys import PublicKey, demo_blob, fingerprint
+from kerberos.panel.discover import XUI_DB
 
 TO_S4 = login_keys() + ["enter", "enter"]  # S2 summary, S3
 INTRO = ["enter"]  # «Проверка»: what S4 installs, before the first node
@@ -208,6 +210,23 @@ def fix_then(extra_nodes=None):
     return app, term, nodes, store_of(app).runs()[0]
 
 
+# -- 15: an address typed by hand is not «found» ---------------------------------------
+def test_typed_api_address_is_not_called_found():
+    keys = ["enter"] + login_keys() + ["esc", "esc", "esc"]
+    app, term = make_app(keys, host=FakeHost(), panel=strict_panel())
+    app.run("check")
+    assert seen(term, t("panel.manual", api="http://127.0.0.1:3000/api"))
+    assert not seen(term, "Нашёл Remnawave ?")
+
+
+def test_typed_3xui_address_is_not_called_found():
+    app, term = make_app(["enter"] + XUI_LOGIN + ["esc"], panel_kind="3x-ui")
+    del app.env.host.databases[XUI_DB]
+    app.run("check")
+    assert seen(term, t("panel.xui.manual"))
+    assert not seen(term, "Нашёл 3x-ui ?")
+
+
 # -- 17: the 3x-ui path speaks of this server -------------------------------------------
 def test_s1_names_both_panels():
     app, term = make_app(QUIT)
@@ -232,6 +251,30 @@ def test_3xui_without_own_keys_says_password_login_stays():
     app.env.host.files["/root/.ssh/authorized_keys"] = ""
     app.run("check")
     assert seen(term, t("access.admin.local.none"))
+
+
+# -- 23: errors say what to do ----------------------------------------------------------
+def test_panel_errors_say_what_to_do():
+    panel = strict_panel()
+    panel.fail("GET", "/auth/status", 503, times=4)
+    app, term = make_app(["esc"], panel=panel)
+    assert app.run("check") == EXIT_PANEL
+    assert "подождите минуту и нажмите Enter" in flat(term.last)
+    panel = strict_panel()
+    panel.fail("GET", "/auth/status", "refused", times=10)
+    app, term = make_app(["esc"], panel=panel)
+    assert app.run("check") == EXIT_PANEL
+    message = flat(term.last)
+    assert "http://127.0.0.1:3000/api" in message and "remnawave запущен" in message
+
+
+def test_lost_confirmation_says_the_old_settings_are_back():
+    nodes = {n.name: n for n in build_nodes()}
+    nodes["de-1"].state["confirm_fails"] = True
+    app, term = make_app(TO_PLAN + ["enter", "enter", "enter"], nodes=list(nodes.values()),
+                         height=40)  # fmt: skip
+    app.run("fix")
+    assert seen(term, "прежние настройки возвращены; запустите «Исправление» ещё раз")
 
 
 # -- 24: numbers agree with words, small slips -----------------------------------------
