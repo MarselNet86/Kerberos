@@ -170,11 +170,13 @@ def test_rollback_that_fails_exits_with_5(fail_on):
     assert run["mode"] == "rollback"
 
 
-def test_s9_snapshot_and_s7_rows():
+def test_s9_snapshot_and_s7_rows(monkeypatch):
     import re
 
     from helpers import assert_snapshot
 
+    # Where the repository is checked out must not wrap the rollback line.
+    monkeypatch.setattr("kerberos.screens.fix.launcher", lambda: "/opt/kerberos/kerberos")
     app, term, _code = fix_run(APPLY + ["enter"], height=40)
     run = last_run(app)
     s9 = next(

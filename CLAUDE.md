@@ -46,6 +46,7 @@ python3 -I -S -c "import sys; sys.path[:0] = ['src', 'vendor']; import kerberos"
 python3 tools/vendor.py          # refresh vendor/ to the pinned versions
 tools/check.sh                   # ruff, pytest on Python 3.9 and 3.14 via uv, run without site-packages, template hashes
 tools/stand.sh                   # agent tests and apply/rollback on the five stand VMs (§17, §18)
+python3 tools/screenshots.py     # README screenshots in docs/screens/ from the masked demo
 ```
 
 ## Правила сессии
