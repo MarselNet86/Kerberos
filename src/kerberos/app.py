@@ -214,13 +214,12 @@ class App:
 
     def s1_body(self, menu: Menu) -> Callable[[int, int], RenderableType]:
         def body(_width: int, _height: int) -> RenderableType:
-            logo = Text("\n".join(LOGO), style="accent")
             return Group(
                 Text(""),
-                logo,
+                Text(LOGO, style="logo"),
                 Text(""),
                 Text(t("app.tagline"), style="bold"),
-                Text(t("cli.version", version=__version__), style="muted"),
+                Text(t("app.version", version=__version__), style="muted"),
                 Text(""),
                 menu,
             )
