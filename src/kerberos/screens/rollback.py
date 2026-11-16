@@ -89,13 +89,62 @@ def ask_diff(app: App, diff: str) -> bool:
     return app.term.read_key() == "enter"
 
 
+def nodes_of(change: dict) -> set:
+    """The nodes a change belongs to: its target node and the nodes in its parameters."""
+    kind, _, ref = change["target"].partition(":")
+    refs = {ref} if kind == "node" else set()
+    return refs | {change["params"][k] for k in ("node", "reserve") if change["params"].get(k)}
+
+
+def agent_rollback(app: App, target: Target, change: dict) -> tuple:
+    """(error, back): back when the node's files are as before the change."""
+    try:
+        app.env.transport.agent(target, f"rollback {change['changeId']}")
+    except TransportError as exc:
+        return exc.kind, False
+    except NodeAgentError as exc:
+        # command_failed: the files are back, an undo command failed: a look by hand.
+        return exc.code, exc.code == "command_failed"
+    return None, True
+
+
+def port_rollback(app: App, run: dict, target: Target, change: dict) -> tuple:
+    """§9.3 (K13): a confirmed SSH port goes back the way it came (nodes/ssh_port.py)."""
+    from kerberos.nodes.ssh_port import roll_back_port
+
+    address = (node_of(run, f"node:{target.uuid}") or {}).get("address", "")
+
+    def ask(port: int) -> bool:
+        return ask_old_port(app, port, f"ssh -p {port} root@{address}")
+
+    return roll_back_port(app.env, target, change, ask)
+
+
+def ask_old_port(app: App, port: int, command: str) -> bool:
+    """3x-ui (§7.6): the old SSH port is tried by the person from their computer."""
+    body = Group(Notice("warning", t("rb.outside", port=port, command=app.mask(command))),
+                 Text(t("rb.outside.keys"), style="muted"))  # fmt: skip
+    app.draw(t("rb.title"), body)
+    return app.term.read_key() == "enter"
+
+
 def roll_back(app: App, run: dict, changes: list, client=None) -> list:
-    """Reverse order; returns the changes that did not go back."""
+    """Reverse order; returns the changes that did not go back.
+
+    A change that does not go back stops its node: the node's earlier changes stay, as
+    a later change may need them (ssh.key_only needs the administrator key)."""
     failed = []
+    blocked: set = set()
     store = RunStore(app.env.state, app.env.clock)
     # Reverse journal order: changes of one second share a timestamp.
     position = {id(c): i for i, c in enumerate(run["changes"])}
     for change in sorted(changes, key=lambda c: position.get(id(c), -1), reverse=True):
+        nodes = nodes_of(change)
+        if nodes & blocked:
+            change["error"] = "rollback_skipped"
+            failed.append(change)
+            store.save(run)
+            continue
         if change["fixId"] in PANEL_FIXES:
             reason = (
                 undo(client, change, ask=lambda diff: ask_diff(app, diff))
@@ -105,6 +154,7 @@ def roll_back(app: App, run: dict, changes: list, client=None) -> list:
             if reason:
                 change["error"] = reason
                 failed.append(change)
+                blocked |= nodes
                 store.save(run)
                 continue
             run["pending"] = [p for p in run.get("pending", [])
@@ -114,23 +164,25 @@ def roll_back(app: App, run: dict, changes: list, client=None) -> list:
             store.save(run)
             continue
         target = target_of(app, run, change)
-        try:
-            app.env.transport.agent(target, f"rollback {change['changeId']}")
-        except (NodeAgentError, TransportError) as exc:
-            change["error"] = getattr(exc, "code", None) or getattr(exc, "kind", "failed")
+        if change["fixId"] == "ssh.port" and change["state"] == "confirmed":
+            error, back = port_rollback(app, run, target, change)
+        else:
+            error, back = agent_rollback(app, target, change)
+        if back:
+            previous = change["details"].get("previousKey")
+            if change["fixId"] == "hostkeys.regenerate" and previous:
+                app.env.state.pin(target.address, target.port, "ssh-ed25519", previous)
+            if change["fixId"] == "ssh.port" and change["details"].get("oldPorts"):
+                record = app.env.state.node(target.uuid)
+                if record is not None:
+                    record.ssh_port = change["details"]["oldPorts"][0]
+                    app.env.state.save_node(record)
+            change["state"] = "rolled_back"
+            change["finishedAt"] = iso(app.env.clock)
+        if error:
+            change["error"] = error
             failed.append(change)
-            store.save(run)
-            continue
-        previous = change["details"].get("previousKey")
-        if change["fixId"] == "hostkeys.regenerate" and previous:
-            app.env.state.pin(target.address, target.port, "ssh-ed25519", previous)
-        if change["fixId"] == "ssh.port" and change["details"].get("oldPorts"):
-            record = app.env.state.node(target.uuid)
-            if record is not None:
-                record.ssh_port = change["details"]["oldPorts"][0]
-                app.env.state.save_node(record)
-        change["state"] = "rolled_back"
-        change["finishedAt"] = iso(app.env.clock)
+            blocked |= nodes
         store.save(run)
     return failed
 

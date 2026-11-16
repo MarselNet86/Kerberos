@@ -9,11 +9,12 @@ KERBEROS never sees it.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import subprocess
 from dataclasses import dataclass
-from typing import Optional, Protocol
+from typing import Callable, Optional, Protocol
 
 from kerberos.host import CommandResult
 from kerberos.nodes.keys import PublicKey, scan_key
@@ -22,6 +23,11 @@ from kerberos.state import State
 RUN_DIR = "/run/kerberos"
 AGENT_TIMEOUT = 120
 APT_TIMEOUT = 600
+# Commands that change a node may install packages (the agent gives apt at most
+# APT_TIMEOUT in all), run certbot and wait for the agent's lock: KERBEROS waits longer
+# than the agent can work, or a slow apt looks like a failure while it goes on.
+CHANGE_TIMEOUT = APT_TIMEOUT + 600
+CHANGE_COMMANDS = ("apply", "confirm", "rollback", "undo", "update")
 
 
 class TransportError(Exception):
@@ -75,6 +81,19 @@ class NodeTransport(Protocol):
     def admin_shell(self, target: Target) -> int: ...
 
     def close(self) -> None: ...
+
+
+def ssh_host(address: str, resolve: Optional[Callable[[str], list]] = None) -> str:
+    """§8.2: a node given by name is reached on the IPv4 of the name. Over IPv6 the node
+    would see the panel server at another address than the panel's own connections to
+    the node API, and node_api.panel_only would let the wrong one in."""
+    try:
+        ipaddress.ip_address(address)
+        return address
+    except ValueError:
+        pass
+    found = [str(a) for a in (resolve(address) if resolve is not None else [])]
+    return next((a for a in found if ":" not in a), address)
 
 
 def classify(stderr: str) -> str:
@@ -208,6 +227,8 @@ class SshTransport:
         )
         if not fresh:
             self._used[f"{target.address}:{target.port}"] = target
+        if command.split(" ", 1)[0] in CHANGE_COMMANDS:
+            timeout = max(timeout, CHANGE_TIMEOUT)
         try:
             proc = subprocess.run(
                 self._agent_argv(target, command, fresh),

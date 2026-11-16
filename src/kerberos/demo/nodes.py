@@ -59,7 +59,7 @@ def base_facts(address: str) -> dict:
         },  # fmt: skip
         "fail2ban": {"installed": False, "sshdJail": False, "jailPorts": []},
         "mptcp": {"enabled": True, "ipOptionsDrop": False, "sockets": 0},
-        "nodeApi": {"port": 2222, "panelOnly": False, "otherPeers": 0},
+        "nodeApi": {"port": 2222, "panelOnly": False, "otherPeers": 0, "panelPeer": True},
         "nftTables": ["ip nat", "ip filter"],
         "hostKeys": [host_key(address)],
         "firewall": {"ufw": "inactive"},

@@ -88,7 +88,7 @@ def xui_node() -> FakeNode:
         ("tcp", "0.0.0.0", 3306, "mysqld"), ("tcp", "127.0.0.1", 62789, "xray"),
     )  # fmt: skip
     facts["listening"] = [s for s in facts["listening"] if s["port"] != 2222]
-    facts["nodeApi"] = {"port": None, "panelOnly": False, "otherPeers": 0}
+    facts["nodeApi"] = {"port": None, "panelOnly": False, "otherPeers": 0, "panelPeer": False}
     facts["remnanode"] = {"present": False, "network": None, "xrayVersion": None,
                           "nodePort": None, "letsencryptMounted": True}  # fmt: skip
     node.state["facts"] = facts

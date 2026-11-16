@@ -64,15 +64,28 @@ run_vms() {
       continue
     fi
     # No extended attributes: macOS tar adds its own, GNU tar on the VM warns about them.
-    tar --no-xattrs -czf - "${PAYLOAD[@]}" | ssh "${ssh_opts[@]}" "$target" \
-      'rm -rf /tmp/kerberos-stand && mkdir -p /tmp/kerberos-stand && tar xzf - -C /tmp/kerberos-stand'
+    # One VM that does not answer is recorded; the others still run (set -e stops at
+    # nothing inside an if).
+    if ! tar --no-xattrs -czf - "${PAYLOAD[@]}" | ssh "${ssh_opts[@]}" "$target" \
+      'rm -rf /tmp/kerberos-stand && mkdir -p /tmp/kerberos-stand && tar xzf - -C /tmp/kerberos-stand'; then
+      record "${NAMES[$i]}" copy "FAILED: the checkout did not reach the VM"
+      failed=1
+      continue
+    fi
     domain_var="${VARS[$i]}_DOMAIN"
     if [ -n "${!domain_var:-}" ]; then
-      printf '%s\n' "${!domain_var}" | ssh "${ssh_opts[@]}" "$target" 'cat > /tmp/kerberos-stand/domain'
+      if ! printf '%s\n' "${!domain_var}" | ssh "${ssh_opts[@]}" "$target" 'cat > /tmp/kerberos-stand/domain'; then
+        record "${NAMES[$i]}" domain "FAILED: self-steal runs without the domain"
+        failed=1
+      fi
     fi
     # A fresh VM may still run cloud-init (host keys, packages): wait for it first.
-    ssh "${ssh_opts[@]}" "$target" \
-      'command -v cloud-init >/dev/null 2>&1 && cloud-init status --wait >/dev/null 2>&1; true'
+    if ! ssh "${ssh_opts[@]}" "$target" \
+      'command -v cloud-init >/dev/null 2>&1 && cloud-init status --wait >/dev/null 2>&1; true'; then
+      record "${NAMES[$i]}" cloud-init "FAILED: the VM does not answer"
+      failed=1
+      continue
+    fi
     # A fresh cloud image has no package lists yet: update before installing.
     if ! ssh "${ssh_opts[@]}" "$target" 'python3 -m pytest --version >/dev/null 2>&1 || {
         export DEBIAN_FRONTEND=noninteractive

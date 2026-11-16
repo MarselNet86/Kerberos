@@ -119,6 +119,7 @@ def test_apt_failure(node, recorder):
 
 
 def test_node_api_rules_and_bridge_refusal(node, recorder):
+    recorder.on(["ss", "-Htn"], agent.Result(0, "0 0 203.0.113.10:2222 198.51.100.5:41022\n"))
     _change, code, answer = apply(
         node, "node_api.panel_only", {"port": 2222, "panelIp": "198.51.100.5"}
     )
