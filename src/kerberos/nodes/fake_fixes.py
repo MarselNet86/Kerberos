@@ -147,6 +147,7 @@ def apply_ssh_port(node: FakeNode, params: dict, change_id: str) -> tuple:
         raise NodeAgentError("port_busy", str(new))
     saved = copy.deepcopy({k: facts[k] for k in ("ssh", "fail2ban", "listening")})
     saved_main = node.ssh_port
+    saved_extra = list(node.state.get("extra_ports", []))
     old = list(facts["ssh"]["ports"])
     facts["ssh"]["ports"] = old + [new]
     node.state.setdefault("extra_ports", []).append(new)
@@ -169,10 +170,23 @@ def apply_ssh_port(node: FakeNode, params: dict, change_id: str) -> tuple:
     def undo() -> None:
         facts.update(copy.deepcopy(saved))
         node.ssh_port = saved_main
-        node.state["extra_ports"] = [p for p in node.state.get("extra_ports", []) if p != new]
+        node.state["extra_ports"] = list(saved_extra)
+
+    def stage() -> None:
+        """Rollback of the confirmed port, first phase: the old ports listen again."""
+        facts["ssh"]["ports"] = old + [new]
+        extra = node.state.setdefault("extra_ports", [])
+        extra += [p for p in old if p not in extra]
+        facts["listening"] += [copy.deepcopy(s) for s in saved["listening"]
+                               if s["process"] == "sshd" and s["port"] in old]  # fmt: skip
+
+    def unstage() -> None:
+        """No new connection on the old port: back to the confirmed layout."""
+        confirm()
+        node.state["extra_ports"] = [p for p in node.state["extra_ports"] if p not in old]
 
     details = {"newPort": new, "oldPorts": old, "socket": facts["ssh"].get("socketActivated")}
-    return details, undo, confirm
+    return details, undo, confirm, stage, unstage
 
 
 def apply_site(node: FakeNode, params: dict, change_id: str) -> tuple[dict, Callable]:
@@ -302,7 +316,8 @@ def give_fixes(node: FakeNode, model: dict = MODEL) -> None:
         second = result[2] if len(result) > 2 else None
         state = "pending_confirm" if fix_id in ACCESS else "applied"
         changes[change_id] = {"fixId": fix_id, "state": state, "details": details, "undo": undo,
-                              "confirm": second}  # fmt: skip
+                              "confirm": second, "stage": result[3] if len(result) > 3 else None,
+                              "unstage": result[4] if len(result) > 4 else None}  # fmt: skip
         return _answer(change_id, changes[change_id])
 
     def confirm(n: FakeNode, args: list, _data: Any) -> dict:
@@ -311,6 +326,15 @@ def give_fixes(node: FakeNode, model: dict = MODEL) -> None:
             raise NodeAgentError("no_backup", args[0])
         if n.state.get("confirm_fails"):
             raise TransportError("timeout", "the new connection did not come up")
+        if record["state"] == "rollback_pending":
+            record["undo"]()  # the old port answered: only the old layout stays
+            record["state"] = "rolled_back"
+            record["by_confirm"] = True
+            return _answer(args[0], record)
+        if record["state"] == "rolled_back" and record.get("by_confirm"):
+            return _answer(args[0], record)
+        if record["state"] in ("rolled_back", "failed"):
+            raise NodeAgentError("change_conflict", f"change is {record['state']}")
         if record["state"] != "pending_confirm":
             return _answer(args[0], record, "noop")
         if record.get("confirm"):
@@ -326,11 +350,39 @@ def give_fixes(node: FakeNode, model: dict = MODEL) -> None:
             raise TransportError("timeout", "no answer")
         if record["state"] == "rolled_back":
             return _answer(args[0], record, "noop")
+        if record["state"] == "rollback_pending":
+            return _answer(args[0], record)
+        if record["fixId"] == "access.admin_keys" and later_key_only(args[0]):
+            raise NodeAgentError("change_conflict", "a later ssh.key_only needs this key")
+        if record["state"] == "confirmed" and record.get("stage"):
+            record["stage"]()  # §9.3: a confirmed SSH port goes back in two phases
+            record["state"] = "rollback_pending"
+            return _answer(args[0], record)
         record["undo"]()
         record["state"] = "rolled_back"
         return _answer(args[0], record)
 
+    def undo(n: FakeNode, args: list, _data: Any) -> dict:
+        record = changes.get(args[0])
+        if record is None:
+            raise NodeAgentError("no_backup", args[0])
+        if record["state"] == "rollback_pending":
+            record["unstage"]()
+            record["state"] = "confirmed"
+            return _answer(args[0], record)
+        if record["state"] != "pending_confirm":
+            return _answer(args[0], record, "noop")
+        record["undo"]()
+        record["state"] = "rolled_back"
+        return _answer(args[0], record)
+
+    def later_key_only(change_id: str) -> bool:
+        ids = list(changes)
+        return any(changes[other]["fixId"] == "ssh.key_only" and changes[other]["state"]
+                   in ("applied", "confirmed", "pending_confirm")
+                   for other in ids[ids.index(change_id) + 1:])  # fmt: skip
+
     def plan(n: FakeNode, args: list, _params: Any) -> dict:
         return {"files": [], "commands": [], "packages": []}
 
-    node.handlers.update(apply=apply, confirm=confirm, rollback=rollback, plan=plan)
+    node.handlers.update(apply=apply, confirm=confirm, rollback=rollback, undo=undo, plan=plan)
