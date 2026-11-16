@@ -2,7 +2,7 @@
 
 import ipaddress
 
-from hypothesis import given
+from hypothesis import example, given
 from hypothesis import strategies as st
 
 from kerberos.mask import Masker, is_doc_domain, is_doc_ip
@@ -34,6 +34,7 @@ domains = st.builds(lambda a, b, tld: f"{a}.{b}.{tld}", labels, labels, tlds).fi
 
 
 @given(real_v4(), st.text(alphabet=" абв,:;()", max_size=5))
+@example("0.0.0.2", "::")
 def test_v4_is_replaced_by_documentation_address(ip, filler):
     m = Masker(True)
     out = m(f"ssh root@{ip}{filler} -p 22")

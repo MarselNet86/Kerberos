@@ -32,7 +32,9 @@ GENERIC_TLDS = frozenset(
 )
 
 _V4_RE = re.compile(r"(?<![\d.])((?:\d{1,3}\.){3}\d{1,3})(?!\d|\.\d)")
-_V6_RE = re.compile(r"(?<![\w:])((?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4})(?![\w:])")
+# An IPv6 match never starts right after a dot: "0.0.0.2::" is an IPv4 address and
+# punctuation, not the IPv6 address "2::" glued to a leftover "0.0.0.".
+_V6_RE = re.compile(r"(?<![\w:.])((?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4})(?![\w:])")
 _DOMAIN_RE = re.compile(
     r"(?<![\w.-])((?:[A-Za-z0-9\u0400-\u04ff](?:[A-Za-z0-9\u0400-\u04ff-]{0,61}"
     r"[A-Za-z0-9\u0400-\u04ff])?\.)+([A-Za-z\u0400-\u04ff][A-Za-z0-9\u0400-\u04ff-]{1,62}))"
