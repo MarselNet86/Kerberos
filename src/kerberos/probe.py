@@ -8,6 +8,7 @@ only network calls besides the panel API, SSH and the consented whois.
 
 from __future__ import annotations
 
+import re
 import socket
 import ssl
 import subprocess
@@ -39,6 +40,8 @@ class Prober(Protocol):
     def resolve(self, name: str) -> list[str]: ...
 
     def ping(self, ip: str) -> bool: ...
+
+    def auth_methods(self, ip: str, port: int) -> Optional[list[str]]: ...
 
 
 def cert_names(cert: dict) -> list[str]:
@@ -125,6 +128,21 @@ class LiveProber:
             return False
         return proc.returncode == 0
 
+    def auth_methods(self, ip: str, port: int) -> Optional[list[str]]:
+        """What the SSH server offers to a stranger: §10.3 wants only publickey."""
+        argv = [
+            "ssh", "-F", "/dev/null", "-o", "BatchMode=yes",
+            "-o", "PreferredAuthentications=none", "-o", "StrictHostKeyChecking=no",
+            "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=10",
+            "-o", "LogLevel=ERROR", "-p", str(port), f"kerberos-probe@{ip}", "true",
+        ]  # fmt: skip
+        try:
+            proc = subprocess.run(argv, capture_output=True, text=True, timeout=30, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        match = re.search(r"Permission denied \(([^)]*)\)", proc.stderr)
+        return match.group(1).split(",") if match else None
+
 
 @dataclass
 class FakeProber:
@@ -132,6 +150,7 @@ class FakeProber:
     pages: dict = field(default_factory=dict)  # (ip, port, host, path) -> HttpResult
     dns: dict = field(default_factory=dict)  # name -> [ip]
     pings: dict = field(default_factory=dict)  # ip -> bool
+    auth: Optional[object] = None  # callable(ip, port) -> methods, or None
     calls: list = field(default_factory=list)
 
     def tls_names(self, ip: str, port: int = 443, sni: Optional[str] = None) -> TlsResult:
@@ -151,3 +170,7 @@ class FakeProber:
     def ping(self, ip: str) -> bool:
         self.calls.append(("ping", ip))
         return self.pings.get(ip, False)
+
+    def auth_methods(self, ip: str, port: int) -> Optional[list[str]]:
+        self.calls.append(("auth", ip, port))
+        return self.auth(ip, port) if callable(self.auth) else None
