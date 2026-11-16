@@ -202,8 +202,13 @@ def main() -> int:
 
     # Taken right before the cycle: the keys of a fresh cloud VM may change at first boot.
     old = {k["fingerprint"] for k in facts()["hostKeys"]}
+
+    def renewed(f: dict) -> set:
+        """A DSA key of the image stays as it is (tech.md §10.3); every other key is new."""
+        return {k["fingerprint"] for k in f["hostKeys"] if k["type"] not in ("ssh-dss", "DSA")}
+
     cycle("hostkeys.regenerate", {},
-          lambda f: not ({k["fingerprint"] for k in f["hostKeys"]} & old),
+          lambda f: bool(renewed(f)) and not (renewed(f) & old),
           lambda f: {k["fingerprint"] for k in f["hostKeys"]} == old, confirm=True,
           describe=lambda f: json.dumps(sorted(k["fingerprint"][-8:] for k in f["hostKeys"])
                                         + ["was"] + sorted(o[-8:] for o in old)))  # fmt: skip
