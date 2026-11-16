@@ -74,9 +74,11 @@ def step(app: App, session: Session) -> Any:
     snapshot = session.snapshot
     assert snapshot is not None
     if snapshot.kind == "3x-ui":
-        # One server, the one KERBEROS runs on: nothing to choose (§7.6).
+        # One server, the one KERBEROS runs on: nothing to choose (§7.6). Esc on S4
+        # passes through to S2 instead of opening S4 again.
         session.selected = [n.uuid for n in snapshot.nodes]
-        return NEXT
+        return BACK if session.data.pop("back_from_access", False) else NEXT
+    session.data.pop("back_from_access", None)
     nodes = snapshot.nodes
     disabled = {i for i, n in enumerate(nodes) if n.is_disabled}
     if session.selected:

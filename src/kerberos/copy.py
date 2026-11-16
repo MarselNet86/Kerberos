@@ -79,6 +79,8 @@ TEXT: dict[str, str] = {
     "keys.help": "помощь",
     "keys.quit": "выход",
     "keys.scroll": "прокрутка",
+    "keys.skip": "пропустить",
+    "keys.skip_node": "пропустить ноду",
     "keys.space": "Пробел",
     "quit.title": "Выход",
     "quit.confirm": "Выйти из KERBEROS?",
@@ -195,7 +197,19 @@ TEXT: dict[str, str] = {
     "nodes.need_one": "Отметьте хотя бы одну ноду",
     # K2: S4 access to the nodes (§8)
     "access.title": "Доступ к нодам",
+    "access.title.local": "Доступ к этому серверу",
+    "access.intro": (
+        "Чтобы проверить ноды изнутри, KERBEROS поставит на каждую свой агент (один файл) "
+        "и ключ, который работает только с этого сервера. Настройки SSH, фаервола и VPN "
+        "«Проверка» не меняет."
+    ),
+    "access.intro.local": (
+        "Чтобы проверить этот сервер изнутри, KERBEROS поставит на него свой агент "
+        "(один файл) и ключ, который работает только отсюда. Настройки SSH, фаервола и VPN "
+        "«Проверка» не меняет."
+    ),
     "access.col.node": "Нода",
+    "access.col.server": "Сервер",
     "access.col.address": "Адрес",
     "access.col.status": "Доступ",
     "access.col.type": "Тип",
@@ -211,10 +225,19 @@ TEXT: dict[str, str] = {
     "access.yes": "Да, это мой сервер",
     "access.no": "Нет, пропустить ноду",
     "access.skip": "Пропустить ноду",
-    "access.hostkey_changed": (
-        "Ключ сервера {node} изменился. KERBEROS не будет к нему подключаться, "
-        "пока вы не подтвердите новый ключ"
+    # The command stands on a line of its own: a wrap inside it would break a copy.
+    "access.hostkey_hint": (
+        "Сверить можно в консоли хостера:\nssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub"
     ),
+    "access.hostkey_same": (
+        "Такой же ключ у {nodes}: так бывает у серверов из одного образа хостера."
+    ),
+    "access.hostkey_changed": (
+        "Ключ сервера {node} изменился. Так бывает после переустановки сервера, но так же "
+        "выглядит перехват соединения. Подтверждайте, только если переустанавливали сервер "
+        "или меняли ключи."
+    ),
+    "access.hostkey_old": "Был: {fingerprint}",
     "access.hostkey_new": "Новый ключ: {fingerprint}",
     "access.accept_new": "Подтвердить новый ключ",
     "access.trying_keys": "Пробую войти ключами root сервера панели…",
@@ -225,7 +248,11 @@ TEXT: dict[str, str] = {
     "access.verify": "Проверяю вход ключом KERBEROS новым соединением…",
     "access.checking_agent": "Проверяю агента на {node}…",
     "access.updating": "Обновляю агента на {node}…",
-    "access.summary": "Доступ есть у {ok} из {total} нод",
+    "access.summary": "Доступ есть у {ok} из {total:ноды|нод|нод}",
+    "access.summary.local": "Доступ к этому серверу есть",
+    "access.summary.local.none": (
+        "Доступа к этому серверу нет: KERBEROS проверит его только со стороны панели"
+    ),
     "access.panel_only": "Ноды без доступа проверяются только со стороны панели.",
     "access.reason.unreachable": "не отвечает по SSH",
     "access.reason.login": "не удалось войти",
@@ -236,9 +263,10 @@ TEXT: dict[str, str] = {
     "access.reason.keygen": "не удалось создать ключ KERBEROS на сервере панели",
     "access.reason.failed": "ошибка установки: {detail}",
     "access.local.installing": "Ставлю агента KERBEROS на этот сервер…",
-    "access.admin.chosen.local": (
-        "Ключ администратора: ваши ключи уже на этом сервере; без них вход по паролю останется"
+    "access.admin.local.some": (
+        "На этом сервере есть ваши ключи ({n}): вход по паролю можно выключить."
     ),
+    "access.admin.local.none": "Ваших ключей на этом сервере нет: вход по паролю останется.",
     "access.reason.local_key": "не нашёл ключ этого сервера /etc/ssh/ssh_host_ed25519_key.pub",
     "access.admin.title": "Ключ администратора",
     "access.admin.mine": "Мои ключи с сервера панели ({n})",

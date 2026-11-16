@@ -6,13 +6,13 @@ the names of the sections below) through the fake terminal.
 
 from datetime import datetime
 
-from helpers import flat, login_keys, make_app, row_of, typed
+from helpers import flat, login_keys, make_app, row_of, seen, typed
 
 from kerberos.copy import plural, t
 from kerberos.demo.fleet import build_nodes, build_panel
 from kerberos.fixes.journal import RunStore
 from kerberos.flow import EXIT_OK
-from kerberos.nodes.keys import demo_blob, fingerprint
+from kerberos.nodes.keys import PublicKey, demo_blob, fingerprint
 
 TO_S4 = login_keys() + ["enter", "enter"]  # S2 summary, S3
 INTRO = ["enter"]  # «Проверка»: what S4 installs, before the first node
@@ -89,6 +89,116 @@ def test_s1_check_item_promises_only_what_check_keeps():
     assert t("mode.check") in term.frames[0]
 
 
+def test_check_explains_what_s4_installs_before_the_first_node():
+    app, term = run_check()
+    intro = first(term, t("access.intro"))
+    question = first(term, t("access.hostkey", node="nl-1", fingerprint=SHARED))
+    assert intro is not None and question is not None and intro < question
+    assert "Enter" in footer(term.frames[intro]) and "Esc" in footer(term.frames[intro])
+    assert first(term, t("access.intro")) == intro, "shown once"
+    assert app.env.state.find_node("nl-1").access == "ok", "Enter goes on as before"
+
+
+def test_esc_on_the_intro_goes_back_before_anything_is_installed():
+    nodes = build_nodes()
+    app, term = make_app(TO_S4 + ["esc", "esc", "esc"], nodes=nodes)
+    assert app.run("check") == EXIT_OK
+    intro = first(term, t("access.intro"))
+    assert intro is not None and t("nodes.title") in term.frames[intro + 1]
+    assert all(n.agent_sha is None for n in nodes)
+    assert not any("kerberos-agent" in k for n in nodes for k in n.authorized_keys)
+    assert not any(cmd.startswith(("open_root", "root ")) for _a, cmd in app.env.transport.log)
+
+
+def test_fix_mode_asks_no_intro():
+    app, term = make_app(TO_S4 + ALL_NODES + ["esc"] + QUIT)
+    app.run("fix")
+    assert first(term, t("access.intro")) is None
+    assert seen(term, t("access.admin.chosen.skip"))
+
+
+def test_3xui_check_says_what_it_installs_and_esc_returns_to_s2():
+    app, term = make_app(CHOOSE_XUI + XUI_LOGIN + ["enter", "esc", "esc"], panel_kind=None)
+    assert app.run("check") == EXIT_OK
+    intro = first(term, t("access.intro.local"))
+    assert intro is not None
+    assert t("panel.xui.ok", inbounds=2) in flat(term.frames[intro + 1]), "back on S2"
+    node = app.env.transport.nodes["127.0.0.1"]
+    assert not any("command=" in k for k in node.authorized_keys)
+    assert app.env.state.node("local") is None
+    assert term.remaining == []
+
+
+# -- 7: a changed host key is not accepted by one Enter -------------------------------
+def test_changed_host_key_is_skipped_by_default_and_shows_the_old_key():
+    nodes = build_nodes()
+    app, _ = run_check(nodes)
+    state = app.env.state
+    nodes[0].host_key = PublicKey("ssh-ed25519", demo_blob("reinstalled"))
+    # The intro, Enter on the changed key of nl-1, Esc on the port of kz-1.
+    app, term = run_check(nodes, state, extra=INTRO + ["enter", "esc"])
+    assert state.pinned("203.0.113.10", 22) == demo_blob("hoster-image")
+    asked = first(term, t("access.hostkey_old", fingerprint=SHARED))
+    assert asked is not None
+    frame = term.frames[asked]
+    assert t("access.hostkey_changed", node="nl-1") in flat(frame)
+    new = fingerprint(demo_blob("reinstalled"))
+    assert t("access.hostkey_new", fingerprint=new) in flat(frame)
+    pointer = next(line for line in frame.splitlines() if "›" in line)
+    assert t("access.skip") in pointer
+    after = [cmd for addr, cmd in app.env.transport.log if addr == "203.0.113.10"]
+    assert all(cmd.startswith(("keyscan", "version")) for cmd in after), after
+
+
+def test_first_host_key_question_says_how_to_check_and_who_shares_the_key():
+    app, term = run_check()
+    nl1 = term.frames[first(term, t("access.hostkey", node="nl-1", fingerprint=SHARED))]
+    assert words(t("access.hostkey_hint")) in flat(nl1)
+    command = t("access.hostkey_hint").splitlines()[-1]
+    assert any(line.strip() == command for line in nl1.splitlines()), "never wrapped"
+    assert t("access.hostkey_same", nodes="nl-1") not in flat(nl1)
+    nl2 = term.frames[first(term, t("access.hostkey", node="nl-2", fingerprint=SHARED))]
+    assert t("access.hostkey_same", nodes="nl-1") in flat(nl2)
+    de1 = fingerprint(demo_blob("de-1"))
+    de1_frame = term.frames[first(term, t("access.hostkey", node="de-1", fingerprint=de1))]
+    assert "nl-1" not in flat(de1_frame).split(words(t("access.hostkey_hint")))[1]
+
+
+def test_s4_question_and_answers_fit_when_the_node_table_does_not():
+    # A short window stands for a long fleet: the node rows give way, the question stays.
+    keys = TO_S4 + INTRO + ALL_NODES + ["enter", "x"] + QUIT
+    app, term = make_app(keys, width=80, height=20, panel=strict_panel())
+    app.run("check")
+    frame = term.frames[first(term, t("access.hostkey_same", nodes="nl-1"))]
+    assert t("access.yes") in frame and t("access.no") in frame
+    assert "nl-2" in frame and t("pager.position", start=1, end=2, total=5) in frame
+    assert all(len(line) <= 80 for line in frame.splitlines())
+
+
+# -- 10: Esc on the questions of S4 is named, and the admin question comes back --------
+def test_s4_questions_name_esc_in_the_footer():
+    app, term = run_check()
+    question = term.frames[first(term, t("access.hostkey", node="nl-1", fingerprint=SHARED))]
+    assert "Esc " + t("keys.skip_node") in footer(question)
+    port = term.frames[first(term, t("access.port_label", node="kz-1"))]
+    assert "Esc " + t("keys.skip_node") in footer(port)
+    assert t("access.skip") not in footer(port), "lowercase in the footer"
+
+
+def test_admin_key_question_comes_back_when_s4_is_entered_again():
+    keys = TO_S4 + ALL_NODES + ["esc"]  # the admin question: Esc skips it
+    keys += ["esc", "enter", "esc"]  # summary → S3 → S4 again; the port of kz-1 again
+    keys += ["up", "up", "enter", "enter"]  # the question again: «Мои ключи», the checklist
+    app, term = make_app(keys + QUIT)
+    app.run("fix")
+    asked = [i for i, f in enumerate(term.frames) if t("access.admin.later") in flat(f)]
+    starts = [i for i in asked if i - 1 not in asked]
+    assert len(starts) == 2
+    footer_of_question = footer(term.frames[asked[0]])
+    assert "Esc " + t("keys.skip") in footer_of_question
+    assert seen(term, t("access.admin.chosen.mine"))
+
+
 # -- 12: the result of a rollback, its scores and how runs are named -------------------
 def fix_then(extra_nodes=None):
     nodes = {n.name: n for n in build_nodes()}
@@ -105,12 +215,38 @@ def test_s1_names_both_panels():
     assert "Remnawave" in term.frames[0] and "3x-ui" in term.frames[0]
 
 
+def test_3xui_access_speaks_of_this_server_and_of_the_own_keys():
+    keys = CHOOSE_XUI + XUI_LOGIN + ["enter"] + INTRO + QUIT
+    app, term = make_app(keys, panel_kind=None)
+    app.run("check")
+    summary = term.frames[first(term, t("access.summary.local"))]
+    assert t("access.title.local") in title(summary)
+    assert t("access.admin.local.some", n=1) in flat(summary)
+    assert t("access.col.server") in summary
+    assert not any("нод" in title(f) for f in term.frames if t("access.title.local") in f)
+
+
+def test_3xui_without_own_keys_says_password_login_stays():
+    keys = CHOOSE_XUI + XUI_LOGIN + ["enter"] + INTRO + QUIT
+    app, term = make_app(keys, panel_kind=None)
+    app.env.host.files["/root/.ssh/authorized_keys"] = ""
+    app.run("check")
+    assert seen(term, t("access.admin.local.none"))
+
+
 # -- 24: numbers agree with words, small slips -----------------------------------------
 def test_plural_forms():
     forms = ("нода", "ноды", "нод")
     expected = {1: "нода", 2: "ноды", 4: "ноды", 5: "нод", 11: "нод", 12: "нод", 14: "нод",
                 21: "нода", 22: "ноды", 25: "нод", 101: "нода", 111: "нод", 0: "нод"}  # fmt: skip
     assert {n: plural(n, *forms) for n in expected} == expected
+
+
+def test_one_node_is_one_node():
+    keys = login_keys() + ["enter", "a", "space", "enter"] + INTRO + ["enter"] + QUIT
+    app, term = make_app(keys, panel=strict_panel())
+    app.run("check")
+    assert seen(term, "Доступ есть у 1 из 1 ноды")
 
 
 def test_quit_dialog_has_a_capital_title():
