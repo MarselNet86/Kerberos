@@ -3,8 +3,9 @@
 
 Runs as root on a disposable stand VM only (tools/stand.sh copies it there).
 It installs the agent from this checkout and drives it the way KERBEROS does,
-then checks the effect through the agent's own facts. Never run it on a
-production server: it changes SSH, nftables and fail2ban.
+then checks the effect through the agent's own facts and, for SSH, through new
+connections to the ports. Never run it on a production server: it changes SSH,
+nftables, fail2ban and, on Ubuntu 22.04, switches ufw on for a moment.
 """
 
 from __future__ import annotations
@@ -70,6 +71,89 @@ def cycle(fix_id: str, params: dict, applied, restored, confirm: bool = False,
                json.dumps(answer))  # fmt: skip
         now = facts()
         report(f"{fix_id} restored #{round_no}", restored(now), describe(now) if describe else "")
+
+
+def ssh_answers(port: int) -> bool:
+    """A new TCP connection to the port gets the banner of sshd: SSH really listens there."""
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=10) as conn:
+            conn.settimeout(10)
+            return conn.recv(64).startswith(b"SSH-")
+    except OSError:
+        return False
+
+
+def ufw_rules() -> str:
+    return subprocess.run(["ufw", "status"], capture_output=True, text=True).stdout
+
+
+def ssh_port_cycle(before: dict, ufw: bool = False) -> None:
+    """ssh.port the way KERBEROS drives it (§10.3, §9.3): the new port must answer a new
+    connection before confirm; a confirmed port goes back in two phases, the first time
+    through `undo` (the old port did not answer), the second time to the end."""
+    old = before["ssh"]["ports"]
+    port = next(p for p in range(24622, 32767)
+                if all(s["port"] != p for s in before["listening"]))  # fmt: skip
+    name = "ssh.port with ufw" if ufw else "ssh.port"
+    for round_no in (1, 2):
+        change = str(uuid.uuid4())
+        code, answer = agent("apply", "ssh.port", change, payload={"port": port})
+        report(f"{name} apply #{round_no}", answer.get("state") == "pending_confirm",
+               json.dumps(answer))  # fmt: skip
+        if code != 0:
+            return
+        report(f"{name} new port answers before confirm", ssh_answers(port))
+        report(f"{name} old port still answers", all(ssh_answers(p) for p in old))
+        if ufw:
+            report(f"{name} ufw lets the new port in", f"{port}/tcp" in ufw_rules())
+        code, answer = agent("confirm", change)
+        report(f"{name} confirm #{round_no}", answer.get("state") == "confirmed")
+        report(f"{name} only the new port", ssh_answers(port)
+               and not any(ssh_answers(p) for p in old))  # fmt: skip
+        report(f"{name} facts", facts()["ssh"]["ports"] == [port])
+        code, again = agent("apply", "ssh.port", change, payload={"port": port})
+        report(f"{name} same changeId is noop", again.get("state") == "noop")
+        code, answer = agent("rollback", change)
+        report(f"{name} rollback waits for the old port", answer.get("state")
+               == "rollback_pending", json.dumps(answer))  # fmt: skip
+        report(f"{name} both ports again", ssh_answers(port) and all(ssh_answers(p) for p in old))
+        timers = subprocess.run(["systemctl", "list-timers", "--all", "--no-pager"],
+                                capture_output=True, text=True).stdout  # fmt: skip
+        report(f"{name} undo timer of the rollback", f"kerberos-undo-{change}" in timers)
+        if round_no == 1:
+            code, answer = agent("undo", change)
+            report(f"{name} undo keeps the confirmed port", answer.get("state") == "confirmed"
+                   and ssh_answers(port) and not any(ssh_answers(p) for p in old))  # fmt: skip
+            code, answer = agent("rollback", change)
+            report(f"{name} rollback again", answer.get("state") == "rollback_pending")
+        report(f"{name} old port answers a new connection", all(ssh_answers(p) for p in old))
+        code, answer = agent("confirm", change)
+        report(f"{name} rollback #{round_no}", answer.get("state") == "rolled_back",
+               json.dumps(answer))  # fmt: skip
+        report(f"{name} restored #{round_no}", facts()["ssh"]["ports"] == old
+               and all(ssh_answers(p) for p in old) and not ssh_answers(port))  # fmt: skip
+        if ufw:
+            report(f"{name} ufw rule gone", f"{port}/tcp" not in ufw_rules())
+
+
+def ufw_variant(before: dict) -> None:
+    """Ubuntu 22.04 only: ssh.port with ufw active. The SSH ports are let in first and ufw
+    is switched off again at the end, so the VM stays reachable."""
+    if shutil.which("ufw") is None or before["firewall"]["ufw"] == "active":
+        print("skip  ssh.port with ufw: no ufw, or it is in use already")
+        return
+    for port in before["ssh"]["ports"]:
+        subprocess.run(["ufw", "allow", f"{port}/tcp"], capture_output=True, check=False)
+    try:
+        enabled = subprocess.run(["ufw", "--force", "enable"], capture_output=True, check=False)
+        report("ufw switched on for the test", enabled.returncode == 0)
+        if enabled.returncode == 0:
+            ssh_port_cycle(facts(), ufw=True)
+    finally:
+        subprocess.run(["ufw", "--force", "disable"], capture_output=True, check=False)
+        for port in before["ssh"]["ports"]:
+            subprocess.run(["ufw", "--force", "delete", "allow", f"{port}/tcp"],
+                           capture_output=True, check=False)  # fmt: skip
 
 
 def listen(port: int) -> socket.socket:
@@ -213,11 +297,9 @@ def main() -> int:
           describe=lambda f: json.dumps(sorted(k["fingerprint"][-8:] for k in f["hostKeys"])
                                         + ["was"] + sorted(o[-8:] for o in old)))  # fmt: skip
 
-    port = next(p for p in range(24622, 32767)
-                if all(s["port"] != p for s in before["listening"]))  # fmt: skip
-    cycle("ssh.port", {"port": port},
-          lambda f: f["ssh"]["ports"] == [port],
-          lambda f: f["ssh"]["ports"] == before["ssh"]["ports"], confirm=True)  # fmt: skip
+    ssh_port_cycle(before)
+    if (before["os"]["id"], before["os"]["version"]) == ("ubuntu", "22.04"):
+        ufw_variant(before)
 
     if before["ssh"]["adminKeys"]:
         cycle("ssh.key_only", {},
