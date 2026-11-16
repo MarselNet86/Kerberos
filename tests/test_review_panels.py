@@ -72,3 +72,21 @@ def test_3xui_xray_binary_name_does_not_block_self_steal():
     assert steal.blocked is None and not seen(term, t("plan.blocked.port443"))
     assert is_xray("xray") and is_xray("rw-core") and is_xray("xray-linux-arm6")
     assert not is_xray("nginx") and not is_xray(None)
+
+
+# -- agent 5: node_api.panel_only waits for the panel to be seen at KERBEROS's address ----------
+def test_node_api_rule_is_blocked_when_the_panel_comes_from_elsewhere():
+    from demo_input import demo_input
+
+    from kerberos.checks import run_checks
+    from kerberos.fixes.plan import build_plan
+
+    _env, data = demo_input()
+    nl1 = next(n for n in data.nodes if n.node.name == "nl-1")
+    fi1 = next(n for n in data.nodes if n.node.name == "fi-1")
+    nl1.facts["nodeApi"]["panelPeer"] = False  # the backend connects over another address
+    fi1.facts["nodeApi"].pop("panelPeer", None)  # an agent that cannot tell: not blocked
+    plan = {(i.node_uuid, i.fix_id): i for i in build_plan(run_checks(data), data, None, {})}
+    assert plan[(nl1.node.uuid, "node_api.panel_only")].blocked == "panel_peer"
+    assert plan[(nl1.node.uuid, "node_api.panel_only")].selected is False
+    assert plan[(fi1.node.uuid, "node_api.panel_only")].blocked is None

@@ -168,6 +168,12 @@ def build_plan(
             and (facts.get("remnanode") or {}).get("network") == "bridge"
         ):
             item.blocked = "bridge_network"
+        if item.fix_id == "node_api.panel_only" and item.blocked is None:
+            # §10.3: the rule lets in only the address KERBEROS comes from. When the panel
+            # reaches the node from another one (IPv6 against IPv4, another interface), the
+            # rule would cut the panel off. No such fact (an older agent): not known, not blocked.
+            if (facts.get("nodeApi") or {}).get("panelPeer") is False:
+                item.blocked = "panel_peer"
         if item.fix_id == "ssh.key_only" and not (facts.get("ssh") or {}).get("adminKeys"):
             mode = (admin or {}).get("mode", "skip")
             if mode in ("mine", "create"):
