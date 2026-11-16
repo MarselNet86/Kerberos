@@ -58,11 +58,20 @@ def render(run: Run, mask: Optional[Callable[[str], str]] = None) -> str:
                 t(
                     "report.change",
                     state=t(f"state.{change['state']}"),
-                    node=target_label({"target": change["target"], "evidence": {}}, names),
+                    node=target_label(
+                        {
+                            "target": f"node:{change['params']['node']}"
+                            if change["params"].get("node")
+                            else change["target"],
+                            "evidence": {},
+                        },
+                        names,
+                    ),
                     fix=t(
                         f"fix.{change['fixId']}.label",
                         ports=ports,
                         port=change["params"].get("port", ""),
+                        domain=change["params"].get("domain", ""),
                     ),
                 )
             )

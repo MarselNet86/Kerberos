@@ -100,9 +100,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if not tty:
         if opts.command == "report":
             return print_report(opts)
-        if opts.command in WITHOUT_TTY:
-            print(t("app.soon"))
-            return 0
+        if opts.command == "finalize":
+            return finalize_unattended(opts)
         print(t("cli.no_tty"), file=sys.stderr)
         return 2
 
@@ -144,6 +143,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     except Locked:
         print(t("lock.busy"), file=sys.stderr)
         return 2
+
+
+def finalize_unattended(opts: Options, state=None) -> int:
+    """`kerberos finalize` from the systemd timer: no terminal, the saved token."""
+    from kerberos.clock import SystemClock
+    from kerberos.fixes.finalize import unattended
+    from kerberos.fixes.journal import RunStore
+    from kerberos.panel.client import urllib_transport
+    from kerberos.state import State
+
+    clock = SystemClock()
+    return unattended(RunStore(state or State(), clock), urllib_transport, clock, opts.arg)
 
 
 def print_report(opts: Options, state=None) -> int:

@@ -415,6 +415,6 @@ def attach(env, state_root: Optional[Path] = None) -> None:
     root = state_root or Path(tempfile.mkdtemp(prefix="kerberos-demo-"))
     env.state = State(root)
     env.transport = FakeTransport(build_nodes(), env.state)
-    env.prober = build_prober()
+    env.prober = build_prober(env.panel_transport, list(env.transport.nodes.values()))
     env.prober.auth = auth_methods_of(list(env.transport.nodes.values()))
     env.whois = build_whois()

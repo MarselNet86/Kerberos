@@ -99,6 +99,13 @@ class Engine:
 
     # -- one change ------------------------------------------------------------
     def apply(self, item: PlanItem) -> None:
+        if item.fix_id == "self_steal":
+            from kerberos.fixes.self_steal import SelfSteal
+
+            self.event("backup", item, "running")
+            self.event("backup", item, "ok")
+            SelfSteal(self, item).run()
+            return
         target = self.target(item.node_uuid or "")
         change: Change = {
             "changeId": str(uuid.uuid4()),

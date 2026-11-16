@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -17,7 +18,7 @@ from kerberos.fixes.plan import PlanItem, build_plan, follow_admin_key
 from kerberos.flow import BACK, EXIT_INTERRUPTED, EXIT_OK, EXIT_PARTIAL, NEXT
 from kerberos.screens.check import report_header, show_pager, write_report
 from kerberos.ui.keys import hotkey
-from kerberos.ui.widgets import Checklist, Consent, Notice, ProgressBoard
+from kerberos.ui.widgets import Checklist, Consent, Notice, ProgressBoard, TextInput
 
 if TYPE_CHECKING:
     from kerberos.app import App, Session
@@ -31,7 +32,67 @@ def warning_of(item: PlanItem) -> Optional[str]:
         return t("fix.key_only.warning")
     if item.fix_id == "ssh.port":
         return t("fix.ssh_port.warning", port=item.params.get("port"))
+    if item.fix_id == "self_steal":
+        return t("fix.self_steal.warning")
     return None
+
+
+def extra_warnings(app: App, session: Session, item: PlanItem) -> list[str]:
+    """Self-steal also replaces the profile and may restart the node container."""
+    if item.fix_id != "self_steal":
+        return []
+    texts = [t("fix.profile.warning")]
+    node = session.data["input"].node_data(item.node_uuid or "")
+    facts = node.facts if node else {}
+    if not (facts.get("remnanode") or {}).get("letsencryptMounted", True):
+        texts.append(t("fix.mount.warning", node=app.mask(node.node.name)))
+    return texts
+
+
+DOMAIN_RE = re.compile(
+    r"^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{1,62}$"
+)
+
+
+def dns_state(app: App, session: Session, item: PlanItem) -> None:
+    """§10.4: A must point to the node's IPv4, AAAA (if any) to its IPv6."""
+    domain = item.params.get("domain")
+    if not domain:
+        item.params["dns"] = "none"
+        return
+    node = session.data["input"].node_data(item.node_uuid or "")
+    addresses = app.env.prober.resolve(domain)
+    v4 = [a for a in addresses if ":" not in a]
+    v6 = [a for a in addresses if ":" in a]
+    want4 = node.ipv4
+    want6 = (node.facts or {}).get("ipv6", []) if node else []
+    ok = bool(want4) and v4 == [want4] and (not v6 or bool(set(v6) & set(want6)))
+    item.params["dns"] = "ok" if ok else "wait"
+    item.params["record"] = f"A {domain} → {want4}"
+    if ok and item.blocked is None:
+        item.selected = True
+
+
+def ask_domain(app: App, session: Session, item: PlanItem) -> None:
+    node = session.snapshot.node(item.node_uuid or "")
+    field = TextInput(
+        t("plan.domain.label", node=app.mask(node.name if node else "")),
+        hint=t("plan.domain.hint"),
+        validate=lambda v: None if DOMAIN_RE.match(v.strip().lower()) else t("plan.domain.invalid"),
+        value=item.params.get("domain") or "",
+    )
+
+    def handle(key: str) -> Optional[str]:
+        if key == "esc":
+            return ""
+        return field.handle(key)
+
+    keys = (("Enter", t("keys.next")), ("Esc", t("keys.back")))
+    value = app.interact(t("plan.title"), field, keys, handle, typing=True).strip().lower()
+    if value:
+        app.env.masker.register(value)
+        item.params["domain"] = value
+        dns_state(app, session, item)
 
 
 def launcher() -> str:
@@ -46,13 +107,18 @@ def fix_label(app: App, item: Any) -> str:
     fix_id = item.fix_id if isinstance(item, PlanItem) else item["fixId"]
     params = item.params if isinstance(item, PlanItem) else item["params"]
     ports = ", ".join(params.get("ports", []))
-    return app.mask(t(f"fix.{fix_id}.label", ports=ports, port=params.get("port", "")))
+    label = t(f"fix.{fix_id}.label", ports=ports, port=params.get("port", ""),
+              domain=params.get("domain") or "…")  # fmt: skip
+    return app.mask(label)
 
 
-def node_name(session: Session, target: str) -> str:
+def node_name(session: Session, target: str, params: Optional[dict] = None) -> str:
+    """The node a change belongs to; panel changes of self-steal carry it in params."""
     kind, _, ref = target.partition(":")
+    if kind != "node" and params and params.get("node"):
+        kind, ref = "node", params["node"]
     node = session.snapshot.node(ref) if kind == "node" else None
-    return node.name if node else target
+    return node.name if node else t("target.panel")
 
 
 def error_text(code: Optional[str]) -> str:
@@ -84,7 +150,15 @@ def step_plan(app: App, session: Session) -> Any:
         result = []
         for item in items:
             note = t(f"plan.blocked.{item.blocked}") if item.blocked else ""
-            if not note and warning_of(item):
+            if not note and item.fix_id == "self_steal":
+                state = item.params.get("dns")
+                if state == "ok":
+                    note = t("plan.domain.ok", domain=app.mask(item.params["domain"]))
+                elif state == "wait":
+                    note = t("plan.domain.wait", record=app.mask(item.params.get("record", "")))
+                else:
+                    note = t("plan.domain.none")
+            elif not note and warning_of(item):
                 note = t("plan.has_warning")
             risk = Text(f"● {t('risk.' + item.risk)}", style=f"risk.{item.risk}"
                         if item.risk != "info" else "muted")  # fmt: skip
@@ -101,14 +175,58 @@ def step_plan(app: App, session: Session) -> Any:
         tail: list[RenderableType] = [
             Text(t("plan.selected", n=len(checklist.selected), total=len(items)), style="muted")
         ]
-        checklist.viewport = max(4, height - 4)
+        if any(i.fix_id == "self_steal" for i in items):
+            auto = session.data.get("auto_finalize", False)
+            tail.append(Text(t("plan.finalize.auto" if auto else "plan.finalize.manual"),
+                             style="muted"))  # fmt: skip
+        if state["error"]:
+            tail.append(Notice("warning", state["error"]))
+        checklist.viewport = max(4, height - 4 - len(tail))
         return Group(Text(t("plan.title"), style="bold"), checklist, *tail)
 
+    state: dict = {"error": None, "next_dns": app.env.clock.monotonic() + 10}
+
+    def tick() -> Optional[str]:
+        # Waiting domains are resolved again every 10 seconds (§10.4).
+        if app.env.clock.monotonic() >= state["next_dns"]:
+            state["next_dns"] = app.env.clock.monotonic() + 10
+            for item in items:
+                if item.fix_id == "self_steal" and item.params.get("dns") == "wait":
+                    dns_state(app, session, item)
+                    if item.selected:
+                        checklist.selected.add(items.index(item))
+        return None
+
     def handle(key: str) -> Optional[str]:
+        state["error"] = None
         if key == "esc":
             return BACK
+        if hotkey(key) == "d" and items[checklist.cursor].fix_id == "self_steal":
+            item = items[checklist.cursor]
+            ask_domain(app, session, item)
+            if item.selected:
+                checklist.selected.add(checklist.cursor)
+            return None
+        if hotkey(key) == "f":
+            session.data["auto_finalize"] = not session.data.get("auto_finalize", False)
+            return None
         result = checklist.handle(key)
+        if hotkey(key) == "a":
+            # «Все» marks what can run now: self-steal waits for its domain and DNS.
+            checklist.selected -= {
+                i
+                for i, item in enumerate(items)
+                if item.fix_id == "self_steal" and item.params.get("dns") != "ok"
+            }
         if result == "done":
+            for i, item in enumerate(items):
+                if (
+                    i in checklist.selected
+                    and item.fix_id == "self_steal"
+                    and (item.params.get("dns") != "ok")
+                ):
+                    state["error"] = t("plan.need_domain")
+                    return None
             return "consent" if checklist.selected else None
         return None
 
@@ -116,11 +234,12 @@ def step_plan(app: App, session: Session) -> Any:
         ("↑↓", t("keys.select")),
         (t("keys.space"), t("keys.toggle")),
         ("a", t("keys.all")),
+        ("d", t("keys.domain")),
         ("Enter", t("keys.next")),
         ("Esc", t("keys.back")),
     )
     while True:
-        if app.interact(t("plan.title"), body, keys, handle) == BACK:
+        if app.interact(t("plan.title"), body, keys, handle, timeout=1, tick=tick) == BACK:
             return BACK
         for i, item in enumerate(items):
             item.selected = i in checklist.selected
@@ -140,9 +259,9 @@ def consent(app: App, session: Session, items: list[PlanItem]) -> bool:
         lines.append(Text(f"  {app.mask(name)}: " + "; ".join(labels)))
     warnings = []
     for item in chosen:
-        text = warning_of(item)
-        if text and text not in warnings:
-            warnings.append(text)
+        for text in [warning_of(item), *extra_warnings(app, session, item)]:
+            if text and text not in warnings:
+                warnings.append(text)
     for text in warnings:
         lines.append(Notice("warning", text))
     widget = Consent(Group(*lines), t("consent.accept"), t("consent.keys"))
@@ -198,6 +317,10 @@ def step_apply(app: App, session: Session) -> Any:
     finally:
         app.busy = False
     finish_run(app, session, engine)
+    if session.data.get("auto_finalize") and session.data["run"]["pending"]:
+        from kerberos.fixes.finalize import schedule
+
+        schedule(app, session.panel, session.data["run"], launcher())
     return NEXT
 
 
@@ -221,7 +344,7 @@ def finish_run(app: App, session: Session, engine: Engine) -> None:
 def change_lines(app: App, session: Session, run: dict) -> list[RenderableType]:
     lines: list[RenderableType] = []
     for change in run["changes"]:
-        name = app.mask(node_name(session, change["target"]))
+        name = app.mask(node_name(session, change["target"], change["params"]))
         label = fix_label(app, change)
         if change["state"] in ("applied", "confirmed"):
             lines.append(Text(f"✓ {name}: {label}", style="ok"))
@@ -229,7 +352,12 @@ def change_lines(app: App, session: Session, run: dict) -> list[RenderableType]:
             reason = error_text(change.get("error"))
             lines.append(Text(f"↺ {name}: {label}. " + t("apply.rolled_back", reason=reason),
                               style="risk.high"))  # fmt: skip
-        node = session.snapshot.node(change["target"].partition(":")[2])
+        node = session.snapshot.node(change["params"].get("node")
+                                     or change["target"].partition(":")[2])  # fmt: skip
+        if change["fixId"] == "self_steal.hosts" and change["state"] == "applied":
+            lines.append(Text("  " + t("s9.hosts", created=len(change["details"]["created"]),
+                                         disabled=len(change["details"]["disabled"])),
+                              style="muted"))  # fmt: skip
         if change["fixId"] == "ssh.port" and change["state"] == "confirmed" and node:
             port = change["details"].get("newPort")
             command = f"ssh -p {port} root@{app.mask(node.address)}"
@@ -263,6 +391,11 @@ def step_done(app: App, session: Session) -> Any:
             parts.append(Notice("warning", t("apply.interrupted")))
         lines = change_lines(app, session, run)
         parts += lines or [Text(t("s9.none"), style="muted")]
+        if run.get("pending"):
+            key = "s9.finalize.auto" if session.data.get("auto_finalize") else "s9.finalize"
+            parts += [Text(""), Text(t(key, n=len(run["pending"]),
+                                       command=f"sudo {launcher()} finalize {run['runId']}"),
+                                     style="accent")]  # fmt: skip
         if run["changes"]:
             parts += [Text(""), Text(t("done.rollback", command=rollback_command(run["runId"])),
                                      style="bold")]  # fmt: skip

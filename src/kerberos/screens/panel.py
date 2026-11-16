@@ -218,23 +218,32 @@ def register_sensitive(app: App, snapshot: PanelSnapshot) -> None:
                 masker.register(dest.rsplit(":", 1)[0])
 
 
+def open_panel(app: App) -> Any:
+    """Find the panel and sign in. A (location, client) pair, BACK or EXIT_PANEL."""
+    app.draw(t("s2.title"), Text(t("panel.searching")))
+    location = discover(app.env.host) if app.env.host is not None else None
+    if location is None:
+        api = ask_api(app)
+        if api is None:
+            return BACK
+        location = PanelLocation(api=api, version="?")
+    app.env.masker.register(location.panel_domain)
+    client = PanelClient(location.api, app.env.panel_transport, app.env.clock)
+    password_enabled = connect(app, client, location)
+    if password_enabled is None:
+        return EXIT_PANEL
+    form = login_form if password_enabled else token_form
+    if not form(app, client, location):
+        return BACK
+    return location, client
+
+
 def step(app: App, session: Session) -> Any:
     if session.snapshot is None:
-        app.draw(t("s2.title"), Text(t("panel.searching")))
-        location = discover(app.env.host) if app.env.host is not None else None
-        if location is None:
-            api = ask_api(app)
-            if api is None:
-                return BACK
-            location = PanelLocation(api=api, version="?")
-        app.env.masker.register(location.panel_domain)
-        client = PanelClient(location.api, app.env.panel_transport, app.env.clock)
-        password_enabled = connect(app, client, location)
-        if password_enabled is None:
-            return EXIT_PANEL
-        form = login_form if password_enabled else token_form
-        if not form(app, client, location):
-            return BACK
+        opened = open_panel(app)
+        if not isinstance(opened, tuple):
+            return opened
+        location, client = opened
         snapshot = load(app, client, location)
         if snapshot is None:
             return EXIT_PANEL

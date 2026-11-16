@@ -137,6 +137,9 @@ def give_agent(node: FakeNode) -> None:
         "fi-1.example.com": {"template": SITE_TEMPLATE, "altSvc": None, "status": 200},
     })  # fmt: skip
     node.state.setdefault("edges", [{"net": "192.0.2.0/24", "count": 5310}])
+    node.state.setdefault(
+        "site", {"de-1": "de-1.example.com", "fi-1": "fi-1.example.com"}.get(node.name)
+    )
     node.handlers["facts"] = lambda n, _a, _d: copy.deepcopy(n.state["facts"])
     node.handlers["watch"] = lambda n, _a, _d: copy.deepcopy(n.state["watch"])
     node.handlers["site-check"] = lambda n, _a, d: n.state["sites"].get(
@@ -177,9 +180,70 @@ DNS = {
 }
 
 
-def build_prober() -> FakeProber:
+class DemoProber(FakeProber):
+    """The outside view of the demo fleet follows the panel and the nodes.
+
+    TLS without SNI reaches Reality's dest: the own site when dest is the local
+    stub of the node's domain, the foreign site otherwise.
+    """
+
+    def __init__(self, panel=None, nodes=None, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.panel = panel
+        self.by_address = {n.address: n for n in nodes or []}
+
+    def _reality(self, ip: str) -> dict:
+        if self.panel is None:
+            return {}
+        node = next((n for n in self.panel.nodes if n["address"] == ip), None)
+        if node is None:
+            return {}
+        ref = (node.get("configProfile") or {}).get("activeConfigProfileUuid")
+        profile = next((p for p in self.panel.profiles if p["uuid"] == ref), None)
+        for inbound in (profile or {}).get("config", {}).get("inbounds", []):
+            stream = inbound.get("streamSettings") or {}
+            if stream.get("security") == "reality":
+                return stream.get("realitySettings") or {}
+        return {}
+
+    def _own_site(self, ip: str) -> str:
+        node = self.by_address.get(ip)
+        reality = self._reality(ip)
+        site = node.state.get("site") if node else None
+        if (
+            site
+            and reality.get("dest") == "127.0.0.1:8445"
+            and site in reality.get("serverNames", [])
+        ):
+            return site
+        return ""
+
+    def tls_names(self, ip: str, port: int = 443, sni=None) -> TlsResult:
+        self.calls.append(("tls", ip, port, sni))
+        if ip in self.by_address and port == 443:
+            site = self._own_site(ip)
+            return (
+                TlsResult(True, [site])
+                if site
+                else TlsResult(True, ["www.example.net", "example.net"])
+            )
+        return super().tls_names(ip, port, sni)
+
+    def http(self, ip: str, port: int, host: str, path: str = "/", *, tls: bool = True):
+        if ip in self.by_address and port == 443 and path == "/":
+            self.calls.append(("http", ip, port, host, path))
+            ok = self._own_site(ip) == host
+            return (
+                HttpResult(200, {"content-type": "text/html"}, "<html></html>")
+                if ok
+                else (HttpResult(None))
+            )
+        return super().http(ip, port, host, path, tls=tls)
+
+
+def build_prober(panel=None, nodes=None) -> FakeProber:
     foreign = TlsResult(True, ["www.example.net", "example.net"])
-    prober = FakeProber(dns=copy.deepcopy(DNS))
+    prober = DemoProber(panel, nodes, dns=copy.deepcopy(DNS))
     prober.tls = {
         "203.0.113.10": foreign,
         "203.0.113.11": foreign,

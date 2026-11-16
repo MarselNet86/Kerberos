@@ -205,6 +205,8 @@ class App:
                 from kerberos.screens.rollback import rollback_flow
 
                 return rollback_flow(self, arg)
+            if command == "finalize":
+                return self.finalize_flow(arg)
             self.notice("info", t("app.soon"))
             return EXIT_OK
         except QuitApp:
@@ -244,6 +246,15 @@ class App:
         app.notice("info", t("app.soon"))
         return NEXT
 
+    @staticmethod
+    def with_banner(body: Callable[[int, int], RenderableType], text: str) -> Callable:
+        """S1: «Есть незавершённое» above the logo (§6)."""
+
+        def framed(width: int, height: int) -> RenderableType:
+            return Group(Notice("warning", text), body(width, height))
+
+        return framed
+
     def s1_body(self, menu: Menu) -> Callable[[int, int], RenderableType]:
         def body(_width: int, _height: int) -> RenderableType:
             return Group(
@@ -258,18 +269,61 @@ class App:
 
         return body
 
+    def due_finalization(self) -> list:
+        from kerberos.fixes.finalize import due_items
+        from kerberos.fixes.journal import RunStore
+
+        if self.env.state is None:
+            return []
+        return due_items(RunStore(self.env.state, self.env.clock), self.env.clock.now())
+
+    def finalize_flow(self, run_id: Optional[str] = None) -> int:
+        """`kerberos finalize`: old server names leave the profiles that are due."""
+        from kerberos.fixes.finalize import due_items, finalize_items
+        from kerberos.fixes.journal import RunStore
+        from kerberos.flow import EXIT_PANEL
+        from kerberos.screens.panel import open_panel
+        from kerberos.ui.widgets import Consent
+
+        store = RunStore(self.env.state, self.env.clock)
+        pairs = due_items(store, self.env.clock.now(), run_id)
+        if not pairs:
+            self.notice("info", t("fin.none"), t("fin.title"))
+            return EXIT_OK
+        opened = open_panel(self)
+        if not isinstance(opened, tuple):
+            return EXIT_PANEL if opened == EXIT_PANEL else EXIT_OK
+        lines: list = [Text(t("fin.consent"))]
+        for _run, item in pairs:
+            lines.append(Text(f"  {self.mask(item['nodeName'])}: {self.mask(item['domain'])}"))
+        self.draw(t("fin.title"), Consent(Group(*lines), t("fin.accept"), t("consent.keys")))
+        if not Consent.handle(self.term.read_key() or ""):
+            return EXIT_OK
+        failed = finalize_items(opened[1], store, pairs)
+        if failed:
+            self.notice("error", t("fin.failed", n=len(failed)), t("fin.title"))
+            return EXIT_PANEL
+        self.notice("info", t("fin.done", n=len(pairs)), t("fin.title"))
+        return EXIT_OK
+
     def main_menu(self) -> int:
         """S1: logo, one phrase about the product, the mode menu."""
-        menu = Menu(
-            [
-                ("check", t("mode.check"), ""),
-                ("fix", t("mode.fix"), ""),
-                ("rollback", t("mode.rollback"), ""),
-                ("reports", t("mode.reports"), ""),
-            ]
-        )
+        items = [
+            ("check", t("mode.check"), ""),
+            ("fix", t("mode.fix"), ""),
+            ("rollback", t("mode.rollback"), ""),
+            ("reports", t("mode.reports"), ""),
+        ]
         while True:
-            choice = self.interact("", self.s1_body(menu), keys_menu(), menu.handle)
+            due = self.due_finalization()
+            menu = Menu(([("finalize", t("mode.finalize"), "")] if due else []) + items)
+            body = self.s1_body(menu)
+            if due:
+                body = self.with_banner(body, t("app.pending", n=len(due)))
+            choice = self.interact("", body, keys_menu(), menu.handle)
+            if choice == "finalize":
+                self.finalize_flow()
+                continue
             if choice in ("check", "fix"):
                 self.run_mode(choice)
             elif choice == "reports":

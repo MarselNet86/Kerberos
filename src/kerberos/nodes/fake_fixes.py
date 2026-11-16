@@ -169,6 +169,53 @@ def apply_ssh_port(node: FakeNode, params: dict, change_id: str) -> tuple:
     return details, undo, confirm
 
 
+def apply_site(node: FakeNode, params: dict, change_id: str) -> tuple[dict, Callable]:
+    from kerberos.agent import site_html, template_hash
+
+    facts = node.state["facts"]
+    domain, seed = params["domain"], params.get("siteSeed", 0)
+    if any(s["port"] == 80 and s.get("process") not in ("nginx", None) for s in facts["listening"]):
+        raise NodeAgentError("port80_busy", "port 80")
+    if node.state.get("certbot_fails"):
+        raise NodeAgentError("certbot_failed", "challenge failed")
+    saved = copy.deepcopy({k: facts[k] for k in ("nginx", "certbot")})
+    saved_site = node.state.get("site")
+    saved_sites = copy.deepcopy(node.state.get("sites", {}))
+    layout = template_hash(site_html(seed, domain))
+    facts["nginx"] = {"installed": True, "realip": facts["nginx"].get("realip", False),
+                      "sites": [s for s in facts["nginx"].get("sites", [])
+                                if domain not in s.get("serverNames", [])]
+                      + [{"file": "/etc/nginx/sites-enabled/kerberos-site", "serverNames": [domain],
+                          "listen": ["80", "[::]:80"]},
+                         {"file": "/etc/nginx/sites-enabled/kerberos-site", "serverNames": [domain],
+                          "listen": ["127.0.0.1:8445 ssl http2"]}]}  # fmt: skip
+    certs = [c for c in facts["certbot"].get("certs", []) if c["domain"] != domain]
+    facts["certbot"] = {
+        "installed": True,
+        "certs": certs + [{"domain": domain, "notAfter": "2027-02-14T00:00:00Z"}],
+    }
+    node.state["site"] = domain
+    node.state.setdefault("sites", {})[domain] = {"template": layout, "altSvc": None, "status": 200}
+
+    def undo() -> None:
+        facts.update(copy.deepcopy(saved))
+        node.state["site"] = saved_site
+        node.state["sites"] = saved_sites
+
+    return {"domain": domain, "template": layout, "siteSeed": seed}, undo
+
+
+def apply_mount(node: FakeNode, params: dict, change_id: str) -> tuple[dict, Callable]:
+    remnanode = node.state["facts"]["remnanode"]
+    before = remnanode.get("letsencryptMounted", False)
+    remnanode["letsencryptMounted"] = True
+
+    def undo() -> None:
+        remnanode["letsencryptMounted"] = before
+
+    return {}, undo
+
+
 MODEL: dict = {
     "mptcp.guard": apply_mptcp,
     "fail2ban.sshd": apply_fail2ban,
@@ -178,6 +225,8 @@ MODEL: dict = {
     "ssh.key_only": apply_key_only,
     "access.admin_keys": apply_admin_keys,
     "ssh.port": apply_ssh_port,
+    "self_steal.site": apply_site,
+    "node.letsencrypt_mount": apply_mount,
 }
 
 
