@@ -1,7 +1,6 @@
 """S1: logo, the phrase about the product and the mode menu (tech.md §6, K0)."""
 
-from conftest import assert_snapshot
-from helpers import make_app
+from helpers import assert_snapshot, make_app
 
 from kerberos.copy import t
 

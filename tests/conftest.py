@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
-
-import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 for path in (ROOT / "vendor", ROOT / "src"):
@@ -22,22 +19,3 @@ try:
     settings.load_profile("kerberos")
 except ImportError:  # the agent tests on stand VMs run without Hypothesis
     pass
-
-SNAPSHOTS = ROOT / "tests" / "snapshots"
-
-
-def assert_snapshot(name: str, text: str) -> None:
-    """Compare with tests/snapshots/<name>.txt; KERBEROS_UPDATE_SNAPSHOTS=1 rewrites it."""
-    path = SNAPSHOTS / f"{name}.txt"
-    if os.environ.get("KERBEROS_UPDATE_SNAPSHOTS") == "1":
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text + "\n", encoding="utf-8")
-        return
-    assert path.exists(), f"no snapshot {path}; run with KERBEROS_UPDATE_SNAPSHOTS=1"
-    expected = path.read_text(encoding="utf-8").rstrip("\n")
-    assert text == expected, f"snapshot {name} differs"
-
-
-@pytest.fixture
-def root() -> Path:
-    return ROOT
