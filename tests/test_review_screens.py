@@ -374,7 +374,7 @@ def test_full_report_on_s6_reads_without_markdown_and_is_masked():
 
 
 def test_full_report_follows_masking_on_the_screen(monkeypatch):
-    real = "198.18.0.10"  # not a documentation address: masking replaces it
+    real = "198.18.0.10"  # RFC 2544 benchmarking range: reserved, nobody's; masking replaces it
     monkeypatch.setattr(RunStore, "report_text", lambda self, run_id: f"| Нода | {real} |")
     app, term, _code = check_app(["m", "s", "esc", "q", "enter"], width=100, height=30)
     full = [f for f in term.frames if "Нода" in f and t("s6.title") in f.splitlines()[0]]
