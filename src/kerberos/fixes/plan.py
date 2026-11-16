@@ -233,13 +233,14 @@ def edge_paths(data: CheckInput, node) -> list[str]:
 
 def template_hosts(data: CheckInput, template_uuid: str) -> tuple[list, list]:
     """Enabled hosts of the chosen nodes on a template; those whose node has a reserve."""
-    from kerberos.checks.rules import reserves_of
+    from kerberos.checks.rules import host_template, reserves_of
 
     hosts, paired = [], []
     for node in data.nodes:
         has_reserve = bool(reserves_of(data, node))
         for host in data.snapshot.node_hosts(node.node):
-            if host.is_disabled or host.template_uuid != template_uuid or host.uuid in hosts:
+            if (host.is_disabled or host.uuid in hosts
+                    or host_template(data.snapshot, host) != template_uuid):  # fmt: skip
                 continue
             hosts.append(host.uuid)
             if has_reserve:

@@ -177,3 +177,25 @@ def test_names_only_the_nodes_know_are_masked():
     env.masker.enabled = True
     out = env.masker("shop.mysite.icu, mail.othersite.icu, зона othersite.icu")
     assert "mysite" not in out and "othersite" not in out
+
+
+# -- app 15: a host without its own template uses the panel's «Default» ------------------------
+def test_hosts_without_a_template_use_the_default_one():
+    from demo_input import demo_input
+
+    from kerberos.checks import spec
+    from kerberos.checks.rules import used_templates
+    from kerberos.fixes.plan import template_hosts
+
+    _env, data = demo_input()
+    default = next(tpl for tpl in data.snapshot.templates if tpl.name == "Default")
+    for host in data.snapshot.hosts:
+        host.template_uuid = None  # nobody picked a template per host
+    assert used_templates(data) == [default]
+    found = spec("sub.ru_direct").rule(data)
+    assert [(f["target"], f["ok"]) for f in found] == [(f"template:{default.uuid}", False)]
+    hosts, _paired = template_hosts(data, default.uuid)
+    nl1 = next(n for n in data.nodes if n.node.name == "nl-1")
+    assert {h.uuid for h in data.snapshot.node_hosts(nl1.node) if not h.is_disabled} <= set(hosts)
+    default.name = "Main"  # no template called Default: such hosts are skipped
+    assert used_templates(data) == []
