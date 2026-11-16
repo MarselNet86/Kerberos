@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import base64
 import colorsys
+import contextlib
+import fcntl
 import hashlib
 import html
 import ipaddress
@@ -645,8 +647,24 @@ def panel_address(system: System) -> str:
     return parts[0] if parts else ""
 
 
+PRIVSEP_DIR = "/run/sshd"
+
+
+def ensure_privsep(system: System) -> None:
+    """sshd -t and -T stop on a missing /run/sshd. With ssh.socket it exists only while
+    ssh.service runs, so a test right after a socket restart fails without it."""
+    os.makedirs(system.path(PRIVSEP_DIR), mode=0o755, exist_ok=True)
+
+
 def collect_ssh(system: System) -> dict:
-    values = parse_sshd_t(system.run(["sshd", "-T"]).stdout)
+    result = system.run(["sshd", "-T"])
+    if not result.ok:
+        ensure_privsep(system)
+        result = system.run(["sshd", "-T"])
+    values = parse_sshd_t(result.stdout)
+    if "passwordauthentication" not in values:
+        # No word from sshd: never report password login as off when it may be on.
+        values.update(passwordauthentication="yes", kbdinteractiveauthentication="yes")
     socket_active = system.run(["systemctl", "is-active", "ssh.socket"]).stdout.strip() == "active"
     ports = values.get("port") or [22]
     if socket_active:
@@ -1122,8 +1140,9 @@ def cmd_apply(system: System, args: list, data: dict) -> dict:
     record["written"] = {e["path"]: file_sha(system, e["path"]) for e in record["files"]}
     if plan.access:
         unit = f"kerberos-undo-{change_id}"
+        # `undo`, not `rollback`: a change confirmed meanwhile must stay.
         timer = system.run(["systemd-run", f"--on-active={UNDO_DELAY}", "--unit", unit,
-                            AGENT_PATH, "rollback", change_id])  # fmt: skip
+                            AGENT_PATH, "undo", change_id])  # fmt: skip
         if not timer.ok:
             restore(system, record)
             record["state"] = "failed"
@@ -1176,6 +1195,16 @@ def cmd_confirm(system: System, args: list, data: Any) -> dict:
         system.write(PENDING_FILE, "", 0o600)
     save_record(system, record)
     return answer_of(record)
+
+
+def cmd_undo(system: System, args: list, data: Any) -> dict:
+    """The undo timer: roll back only a change that still waits for its confirmation."""
+    record = load_record(system, args[0])
+    if record is None:
+        raise AgentError("no_backup", args[0])
+    if record["state"] != "pending_confirm":
+        return answer_of(record, "noop")
+    return cmd_rollback(system, args, data)
 
 
 def cmd_rollback(system: System, args: list, data: Any) -> dict:
@@ -1240,7 +1269,12 @@ def nft_table(table: str, rules: list) -> str:
     )
 
 
-def nft_service(plan: Plan, name: str, table: str, rules: list, about: str) -> None:
+def nft_service(plan: Plan, name: str, table: str, rules: list, about: str,
+                system: Optional[System] = None) -> None:  # fmt: skip
+    # Debian cloud images come without nft; the package stays after a rollback.
+    missing = system is not None and not system.exists("/usr/sbin/nft")
+    if missing and "nftables" not in plan.packages:
+        plan.packages.append("nftables")
     conf = f"/etc/kerberos/{name}.nft"
     unit = f"kerberos-{name}.service"
     plan.write(conf, nft_table(table, rules))
@@ -1262,7 +1296,7 @@ def fix_mptcp(system: System, params: dict) -> Plan:
     plan.run(["sysctl", "-w", "net.mptcp.enabled=0"])
     nft_service(plan, "mptcp", "inet kerberos_mptcp",
                 ["ip protocol tcp ip hdrlength > 5 counter drop"],
-                "drop TCP packets with IP options (MPTCP guard)")  # fmt: skip
+                "drop TCP packets with IP options (MPTCP guard)", system)  # fmt: skip
     plan.undo_after.append(["sysctl", "-w", f"net.mptcp.enabled={current.strip() or '0'}"])
     return plan
 
@@ -1330,7 +1364,7 @@ def fix_node_api(system: System, params: dict) -> Plan:
     nft_service(plan, "node-api", "inet kerberos_node_api", [
         f"tcp dport {port} {family} saddr {panel} counter accept",
         f"tcp dport {port} counter drop",
-    ], "the node API only for the panel")  # fmt: skip
+    ], "the node API only for the panel", system)  # fmt: skip
     plan.details = {"port": port, "panelIp": panel}
     return plan
 
@@ -1361,12 +1395,14 @@ def fix_ports(system: System, params: dict) -> Plan:
     ports = sorted({(int(p), proto) for proto, p in existing} | set(wanted))
     rules = [f'iifname != "lo" {proto} dport {port} drop' for port, proto in ports]
     plan = Plan("ports.drop")
-    nft_service(plan, "ports", "inet kerberos_ports", rules, "drop ports nobody should reach")
+    nft_service(plan, "ports", "inet kerberos_ports", rules, "drop ports nobody should reach",
+                system)  # fmt: skip
     plan.details = {"ports": [f"{p}/{proto}" for p, proto in wanted]}
     return plan
 
 
-def ssh_reload(plan: Plan) -> None:
+def ssh_reload(plan: Plan, system: System) -> None:
+    ensure_privsep(system)
     plan.run(["sshd", "-t"], "sshd_test_failed")
     plan.run(["systemctl", "try-reload-or-restart", "ssh.service"])
     plan.undo_after.append(["systemctl", "try-reload-or-restart", "ssh.service"])
@@ -1385,7 +1421,7 @@ def fix_hostkeys(system: System, params: dict) -> Plan:
             if path not in plan.files:
                 plan.created.append(path)
     plan.run(["ssh-keygen", "-A"])
-    ssh_reload(plan)
+    ssh_reload(plan, system)
     plan.access = True
 
     def new_keys(system_: System) -> dict:
@@ -1407,12 +1443,18 @@ def fix_key_only(system: System, params: dict) -> Plan:
              "PermitRootLogin prohibit-password", *kept]  # fmt: skip
     plan = Plan("ssh.key_only")
     plan.write(SSHD_CONF, "\n".join(lines) + "\n")
-    ssh_reload(plan)
+    ssh_reload(plan, system)
     plan.access = True
     return plan
 
 
 SOCKET_DROPIN = "/etc/systemd/system/ssh.socket.d/zz-kerberos.conf"
+# systemd gives up on a socket restarted more than five times in ten seconds
+# (start-limit-hit) and new SSH logins stop: the counter goes to zero first.
+SOCKET_RESTART = (
+    ["systemctl", "reset-failed", "ssh.socket", "ssh.service"],
+    ["systemctl", "restart", "ssh.socket"],
+)
 SSHD_MAIN = "/etc/ssh/sshd_config"
 JAIL_FILE = "/etc/fail2ban/jail.d/zz-kerberos.local"
 
@@ -1475,16 +1517,18 @@ def fix_ssh_port(system: System, params: dict) -> Plan:
         hosts = list(dict.fromkeys(host for host, _p in listen)) or ["0.0.0.0", "[::]"]
         plan.write(SOCKET_DROPIN, socket_dropin(hosts, old + [port]))
         plan.run(["systemctl", "daemon-reload"])
-        plan.run(["systemctl", "restart", "ssh.socket"])
+        for argv in SOCKET_RESTART:
+            plan.run(argv)
         plan.on_confirm(SOCKET_DROPIN, socket_dropin(hosts, [port]))
         plan.on_confirm(argv=["systemctl", "daemon-reload"])
-        plan.on_confirm(argv=["systemctl", "restart", "ssh.socket"])
-        plan.undo_after += [["systemctl", "daemon-reload"], ["systemctl", "restart", "ssh.socket"]]
+        for argv in SOCKET_RESTART:
+            plan.on_confirm(argv=argv)
+        plan.undo_after += [["systemctl", "daemon-reload"], *SOCKET_RESTART]
     else:
         old = parse_sshd_t(system.run(["sshd", "-T"]).stdout).get("port") or [22]
         current = system.read(SSHD_CONF) or ""
         plan.write(SSHD_CONF, with_ports(current, old + [port]))
-        ssh_reload(plan)
+        ssh_reload(plan, system)
         plan.on_confirm(SSHD_CONF, with_ports(current, [port]))
         main = system.read(SSHD_MAIN)
         if main is not None and re.search(r"(?m)^\s*Port\s+\d+", main, re.I):
@@ -2862,8 +2906,35 @@ COMMANDS: dict[str, tuple[Callable[[System, list[str], Any], dict], tuple, Optio
     "apply": (cmd_apply, (FIX_ID, CHANGE_ID), "json"),
     "confirm": (cmd_confirm, (CHANGE_ID,), None),
     "rollback": (cmd_rollback, (CHANGE_ID,), None),
+    "undo": (cmd_undo, (CHANGE_ID,), None),
     "update": (cmd_update, (SHA256,), "bytes"),
 }
+
+
+# Changes go one at a time: the undo timer and a confirm over SSH may meet.
+LOCK_FILE = STATE_DIR + "/agent.lock"
+LOCK_WAIT = 150.0
+LOCKED = {"apply", "confirm", "rollback", "undo", "update"}
+
+
+@contextlib.contextmanager
+def agent_lock(system: System):
+    path = system.path(LOCK_FILE)
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        deadline = time.monotonic() + LOCK_WAIT
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError as exc:
+                if time.monotonic() >= deadline:
+                    raise AgentError("change_conflict", "another change is running") from exc
+                time.sleep(0.2)
+        yield
+    finally:
+        os.close(fd)
 
 
 def dispatch(system: System, words: list[str], stdin: bytes) -> dict:
@@ -2873,6 +2944,14 @@ def dispatch(system: System, words: list[str], stdin: bytes) -> dict:
     if name not in COMMANDS:
         raise AgentError("unknown_command", name)
     handler, patterns, stdin_kind = COMMANDS[name]
+    if name in LOCKED:
+        with agent_lock(system):
+            return dispatch_args(system, name, args, patterns, stdin_kind, stdin, handler)
+    return dispatch_args(system, name, args, patterns, stdin_kind, stdin, handler)
+
+
+def dispatch_args(system: System, name: str, args: list, patterns: tuple,
+                  stdin_kind: Optional[str], stdin: bytes, handler: Callable) -> dict:  # fmt: skip
     if len(args) != len(patterns) or not all(p.match(a) for p, a in zip(patterns, args)):
         raise AgentError("bad_params", f"{name} expects {len(patterns)} valid arguments")
     data: Any = None
