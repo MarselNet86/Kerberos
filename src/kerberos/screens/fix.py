@@ -34,6 +34,10 @@ def warning_of(item: PlanItem) -> Optional[str]:
         return t("fix.ssh_port.warning", port=item.params.get("port"))
     if item.fix_id == "self_steal":
         return t("fix.self_steal.warning")
+    if item.fix_id == "cdn.edge_only":
+        return t("fix.edge_only.warning")
+    if item.fix_id == "xhttp.padding":
+        return t("fix.padding.warning")
     return None
 
 
@@ -117,6 +121,52 @@ def choose_reserve(app: App, session: Session, items: list[PlanItem], main: Plan
     items.append(reserve_item(main, spare))
 
 
+def confirm_edges(app: App, session: Session, item: PlanItem) -> None:
+    """§10.6: the /24 nets the tunnel path was reached from; the person confirms the list."""
+    from kerberos.nodes.transport import NodeAgentError, Target, TransportError
+
+    node = session.snapshot.node(item.node_uuid or "")
+    record = app.env.state.node(node.uuid)
+    target = Target(node.uuid, node.name, node.address, record.ssh_port if record else 22)
+    counts: dict = {}
+    for path in item.params["paths"]:
+        try:
+            answer = app.env.transport.agent(target, "edge-sources", {"path": path})
+        except (NodeAgentError, TransportError) as exc:
+            code = getattr(exc, "code", None) or getattr(exc, "kind", "")
+            app.notice("error", t("plan.edges.failed", reason=error_text(code)), t("plan.title"))
+            return
+        for row in answer.get("nets") or []:
+            if isinstance(row, dict) and isinstance(row.get("net"), str):
+                counts[row["net"]] = counts.get(row["net"], 0) + int(row.get("count") or 0)
+    if not counts:
+        app.notice("warning", t("plan.edges.empty"), t("plan.title"))
+        return
+    nets = sorted(counts, key=lambda net: (-counts[net], net))
+    chosen = set(item.params.get("nets") or nets)
+    table = Checklist([[app.mask(net), str(counts[net])] for net in nets],
+                      [t("plan.edges.col.net"), t("plan.edges.col.count")],
+                      selected={i for i, net in enumerate(nets) if net in chosen})  # fmt: skip
+
+    def body(_w: int, height: int) -> RenderableType:
+        table.viewport = max(4, height - 5)
+        return Group(Text(t("plan.edges.title", node=app.mask(node.name)), style="bold"),
+                     Text(t("plan.edges.hint"), style="muted"), table)  # fmt: skip
+
+    def handle(key: str) -> Optional[str]:
+        if key == "esc":
+            return "back"
+        result = table.handle(key)
+        return "done" if result == "done" and table.selected else None
+
+    keys = ((t("keys.space"), t("keys.toggle")), ("Enter", t("plan.edges.confirm")),
+            ("Esc", t("keys.back")))  # fmt: skip
+    if app.interact(t("plan.title"), body, keys, handle) == "done":
+        item.params["nets"] = [net for i, net in enumerate(nets) if i in table.selected]
+        if item.blocked is None:
+            item.selected = True
+
+
 def ask_domain(app: App, session: Session, item: PlanItem) -> None:
     node = session.snapshot.node(item.node_uuid or "")
     field = TextInput(
@@ -153,7 +203,7 @@ def fix_label(app: App, item: Any) -> str:
     ports = ", ".join(params.get("ports", []))
     spare = params.get("reserve")
     label = t(f"fix.{fix_id}.label", ports=ports, port=params.get("port", ""),
-              domain=params.get("domain") or "…",
+              domain=params.get("domain") or "…", nets=len(params.get("nets") or []),
               reserve=app.session_name(spare) if spare else "")  # fmt: skip
     return app.mask(label)
 
@@ -176,6 +226,14 @@ def error_text(code: Optional[str]) -> str:
     if not code:
         return ""
     return TEXT.get(f"error.{code}", code)
+
+
+def waits_for_input(item: PlanItem) -> bool:
+    if item.fix_id == "self_steal":
+        return item.params.get("dns") != "ok"
+    if item.fix_id == "cdn.edge_only":
+        return not item.params.get("nets")
+    return False
 
 
 # -- S7 -------------------------------------------------------------------------
@@ -209,6 +267,9 @@ def step_plan(app: App, session: Session) -> Any:
                     note = t("plan.domain.waiting")
                 else:
                     note = t("plan.domain.none")
+            elif not note and item.fix_id == "cdn.edge_only":
+                nets = item.params.get("nets")
+                note = t("plan.edges.ok", n=len(nets)) if nets else t("plan.edges.none")
             elif not note and warning_of(item):
                 note = t("plan.has_warning")
             risk = Text(f"● {t('risk.' + item.risk)}", style=f"risk.{item.risk}"
@@ -271,6 +332,12 @@ def step_plan(app: App, session: Session) -> Any:
             if item.selected:
                 checklist.selected.add(checklist.cursor)
             return None
+        if hotkey(key) == "e" and items[checklist.cursor].fix_id == "cdn.edge_only":
+            item = items[checklist.cursor]
+            confirm_edges(app, session, item)
+            if item.selected:
+                checklist.selected.add(checklist.cursor)
+            return None
         if hotkey(key) == "f":
             session.data["auto_finalize"] = not session.data.get("auto_finalize", False)
             return None
@@ -281,20 +348,15 @@ def step_plan(app: App, session: Session) -> Any:
             return None
         result = checklist.handle(key)
         if hotkey(key) == "a":
-            # «Все» marks what can run now: self-steal waits for its domain and DNS.
-            checklist.selected -= {
-                i
-                for i, item in enumerate(items)
-                if item.fix_id == "self_steal" and item.params.get("dns") != "ok"
-            }
+            # «Все» marks what can run now: self-steal waits for its domain and DNS,
+            # the CDN filter for its confirmed nets.
+            checklist.selected -= {i for i, item in enumerate(items) if waits_for_input(item)}
         if result == "done":
             for i, item in enumerate(items):
-                if (
-                    i in checklist.selected
-                    and item.fix_id == "self_steal"
-                    and (item.params.get("dns") != "ok")
-                ):
-                    state["error"] = t("plan.need_domain")
+                if i in checklist.selected and waits_for_input(item):
+                    state["error"] = t(
+                        "plan.need_domain" if item.fix_id == "self_steal" else "plan.need_edges"
+                    )
                     return None
             for item in items:
                 if item.fix_id == "reserve" and item.selected and not pair_ready(items, item):
@@ -309,6 +371,7 @@ def step_plan(app: App, session: Session) -> Any:
         ("a", t("keys.all")),
         ("d", t("keys.domain")),
         ("r", t("keys.reserve")),
+        ("e", t("keys.edges")),
         ("Enter", t("keys.next")),
         ("Esc", t("keys.back")),
     )

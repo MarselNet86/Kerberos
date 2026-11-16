@@ -216,6 +216,35 @@ def apply_mount(node: FakeNode, params: dict, change_id: str) -> tuple[dict, Cal
     return {}, undo
 
 
+def apply_edge_only(node: FakeNode, params: dict, change_id: str) -> tuple[dict, Callable]:
+    facts = node.state["facts"]
+    if facts["nginx"].get("realip"):
+        raise NodeAgentError("realip_enabled", "real_ip rewrites the client address")
+    if not params.get("nets") or not params.get("paths"):
+        raise NodeAgentError("bad_params", "paths and nets")
+    saved = copy.deepcopy(node.state.get("edge_filter"))
+    node.state["edge_filter"] = {"paths": list(params["paths"]), "nets": list(params["nets"])}
+
+    def undo() -> None:
+        node.state["edge_filter"] = saved
+
+    site = next((s["file"] for s in facts["nginx"].get("sites", [])
+                 if any("ssl" in item and not item.startswith("127.") for item in s["listen"])),
+                "")  # fmt: skip
+    return {"site": site, "paths": list(params["paths"]), "nets": list(params["nets"])}, undo
+
+
+def apply_watch(node: FakeNode, params: dict, change_id: str) -> tuple[dict, Callable]:
+    watch = node.state["facts"]["watch"]
+    before = watch.get("installed", False)
+    watch["installed"] = True
+
+    def undo() -> None:
+        watch["installed"] = before
+
+    return {}, undo
+
+
 MODEL: dict = {
     "mptcp.guard": apply_mptcp,
     "fail2ban.sshd": apply_fail2ban,
@@ -227,6 +256,8 @@ MODEL: dict = {
     "ssh.port": apply_ssh_port,
     "self_steal.site": apply_site,
     "node.letsencrypt_mount": apply_mount,
+    "cdn.edge_only": apply_edge_only,
+    "watch.install": apply_watch,
 }
 
 

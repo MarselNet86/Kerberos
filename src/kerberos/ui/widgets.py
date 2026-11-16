@@ -364,11 +364,15 @@ class ProgressBoard:
 
     def __rich__(self) -> RenderableType:
         table = Table(box=box.SIMPLE_HEAD, expand=True, show_edge=False, pad_edge=False)
-        table.add_column(self.node_title, no_wrap=True, overflow="ellipsis", header_style="muted")
-        table.add_column(self.fix_title, no_wrap=True, overflow="ellipsis", header_style="muted")
+        table.add_column(self.node_title, no_wrap=True, overflow="ellipsis", header_style="muted",
+                         max_width=16)  # fmt: skip
+        # Long fix names give way: the result column must keep room for the reason.
+        table.add_column(self.fix_title, no_wrap=True, overflow="ellipsis", header_style="muted",
+                         max_width=28)  # fmt: skip
         for step in self.steps:
             table.add_column(step, no_wrap=True, justify="center", header_style="muted")
-        table.add_column(self.result_title, overflow="ellipsis", header_style="muted")
+        table.add_column(self.result_title, overflow="fold", header_style="muted", min_width=16,
+                         ratio=1)  # fmt: skip
         for node in self.nodes:
             cells = []
             for step in self.steps:

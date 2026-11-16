@@ -261,6 +261,8 @@ class Engine:
             return False
         if item.fix_id == "access.admin_keys":
             return bool(node.facts["ssh"].get("adminKeys"))
+        if item.fix_id == "cdn.edge_only" and not self.recheck_edges(data, node):
+            return False
         for check_id in item.checks:
             for finding in spec(check_id).rule(data):
                 if finding["target"] == item.target and not finding["ok"]:
@@ -277,4 +279,36 @@ class Engine:
             current = nodes.get(item.node_uuid or "")
             if current is not None and not current.is_connected:
                 return False
+        return True
+
+    def recheck_edges(self, data: Any, node: Any) -> bool:
+        """§10.6: a direct request gets what a missing page gets; through the edge it works."""
+        from kerberos.checks import is_ip
+        from kerberos.checks.collect import first_v4
+        from kerberos.checks.rules import cdn_xhttp_hosts, tls_listen_ports, xhttp_path
+
+        prober = self.env.prober
+        if prober is None or not node.ipv4:
+            return False
+        missing_path = "/" + uuid.uuid4().hex[:12]
+        ports = tls_listen_ports(node.facts)
+        if not ports:
+            return False
+        for inbound, host in cdn_xhttp_hosts(data, node):
+            name = host.sni or host.address
+            path = xhttp_path(inbound, host)
+            for port in ports:
+                missing = prober.http(node.ipv4, port, name, missing_path)
+                for probe in (path, "/cdn-check"):
+                    answer = prober.http(node.ipv4, port, name, probe)
+                    data.pages[(node.ipv4, port, name, probe)] = answer
+                    if (answer.status, answer.body) != (missing.status, missing.body):
+                        return False
+            addresses = [host.address] if is_ip(host.address) else prober.resolve(host.address)
+            edge = first_v4(addresses)
+            if edge is None:
+                return False
+            via = prober.http(edge, host.port or 443, name, path)
+            if via.status is None or via.status == missing.status:
+                return False  # the edge itself is cut off: the list of nets is not complete
         return True
