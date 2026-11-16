@@ -1,10 +1,11 @@
 # tech.md: KERBEROS
 
-**Версия:** v8 · 2026-11-16
+**Версия:** v9 · 2026-11-16
 **Владелец:** автор репозитория, он же тимлид и единственный разработчик. Сессии разработки работают по этому файлу и по `CLAUDE.md`.
 
 ## Changelog
 
+- v9 (K4, аддитивно и уточнения): исправление `access.admin_keys` ставит выбранные в S4 ключи администратора (§8.5) и идёт первым в порядке §10.1. Новый код ошибки агента `command_failed`: команда на ноде не выполнилась (§9.2). `Prober.auth_methods`: какие способы входа SSH предлагает постороннему, для перепроверки `ssh.key_only` (§4). Агент хранит sha256 записанных файлов и отказывает в откате (`change_conflict`), если файл изменили позже, например более позднее изменение KERBEROS (§9.3, §11.4). Ожидающее подтверждения изменение отмечено в `/var/lib/kerberos/pending`; новый `apply` при нём отказывает с `change_conflict`. Правила nft ставятся файлами `/etc/kerberos/<name>.nft` и юнитами `kerberos-<name>.service` (§10.3). Откат пишет отдельный запуск с `mode: rollback`. `Run` получает необязательные поля `findingsAfter`, `interrupted`, `rolledBackRun` (§13).
 - v8 (K3, аддитивно и уточнения): агент вызывает ещё `ss` и `ip` из iproute2 (§3.1). Порт `Prober` для проверок с сервера панели: TLS без SNI, HTTP(S) к ноде, DNS, ping (§4). `AgentFacts`: необязательные поля `listening[].firewalled` (порт закрыт правилом nft или ufw) и `mptcp.sockets` (§9.2). `ports.public` не считает лишними TLS-порты сайтов nginx: на них CDN ходит к origin. `reality.foreign_sni`: находка, если `dest` не локальный или ни одно имя из `serverNames` не резолвится в IP ноды (старые имена в сутки финализации не дают находку). S5 спрашивает про whois, только если нод две и больше. На S6 пробел открывает подробности, Enter идёт дальше.
 - v7 (K2, аддитивно и уточнения): ответ `version` агента несёт `sha256` своего файла, по нему KERBEROS решает, нужен ли `update` (§8.3, §9.1). Bootstrap с паролем идёт через одно мастер-соединение `ssh`: пароль вводится один раз, установка python3-minimal и откат ключа идут по нему же (§8.2). Строка ключа KERBEROS со старым адресом панели заменяется. Вопрос про ключ администратора задаётся только в «Исправлении», а ключи попадают на ноды изменением после экрана согласия (§8.5). `nodes.json`: поля в camelCase (§5.4). При смене ключа хоста S4 показывает новый отпечаток и даёт подтвердить его или пропустить ноду (§8.1).
 - v6 (решение владельца): логотип на S1 пиксельными буквами, как в первой версии, красным; в шапке экранов строка «/// kerberos». Выделенная строка меню и списков (`accent`) тоже красная. Плашка «Инфо» нейтральная (`muted`), чтобы не путаться с ошибкой; риск по-прежнему передают символ ● и слово.
@@ -287,6 +288,8 @@ sudo /opt/kerberos/kerberos
 2. **Ключ на сервере панели**, если своих ключей нет: KERBEROS создаёт `admin_ed25519` и ставит его на ноды без ограничений. Вход на ноду: `kerberos ssh <нода>` с сервера панели.
 3. **Пропустить:** тогда `ssh.key_only` на этих нодах не применяется (код `no_admin_key`), отчёт объясняет почему.
 
+Ключи из пунктов 1 и 2 ставит исправление `access.admin_keys` (`{keys}`, бэкап `authorized_keys`, откат): в плане оно стоит перед `ssh.key_only` и отмечается вместе с ним.
+
 ## 9. Агент
 
 Один файл `kerberos/agent.py`, Python 3.9+, только стандартная библиотека; протокол 1. На ноде: `/usr/local/sbin/kerberos-agent`, состояние и бэкапы в `/var/lib/kerberos/`.
@@ -355,13 +358,14 @@ class AgentChange(TypedDict):
     details: dict                      # e.g. new ssh port, host key fingerprints
 ```
 
-Коды ошибок агента: `bad_params`, `unknown_command`, `sha_mismatch`, `no_admin_key`, `sshd_test_failed`, `ssh_port`, `port_busy`, `bridge_network`, `docker_published`, `mptcp_absent`, `port80_busy`, `certbot_failed`, `nginx_test_failed`, `realip_enabled`, `apt_failed`, `change_conflict`, `no_backup`, `backup_damaged`, `not_implemented`.
+Коды ошибок агента: `bad_params`, `unknown_command`, `sha_mismatch`, `no_admin_key`, `sshd_test_failed`, `ssh_port`, `port_busy`, `bridge_network`, `docker_published`, `mptcp_absent`, `port80_busy`, `certbot_failed`, `nginx_test_failed`, `realip_enabled`, `apt_failed`, `change_conflict`, `no_backup`, `backup_damaged`, `not_implemented`, `command_failed`.
 
 ### 9.3 Изменения и откат на ноде
 - Повторный `apply` с тем же `changeId` ничего не делает и возвращает прошлый результат (`noop`).
 - Перед изменением агент копирует затрагиваемые файлы в `/var/lib/kerberos/changes/<changeId>/` и пишет `rollback.json`: прежние байты, права, существовал ли файл, команды отката.
 - Изменения доступа (`ssh.key_only`, `ssh.port`, `hostkeys.regenerate`) ставят таймер `systemd-run --on-active=180 --unit kerberos-undo-<changeId> /usr/local/sbin/kerberos-agent rollback <changeId>` и состояние `pending_confirm`. KERBEROS открывает новое соединение и вызывает `confirm`; таймер снимается. Не дошёл `confirm`: агент сам откатывает изменение через три минуты.
-- `rollback` возвращает файлы до прежних байтов и прав и выполняет команды отката.
+- `rollback` возвращает файлы до прежних байтов и прав и выполняет команды отката. Агент хранит sha256 записанных файлов; если файл изменился позже (например, его тронуло более позднее изменение), откат отказывает с `change_conflict`: сначала откатывается более позднее изменение.
+- Изменение, ждущее подтверждения, записано в `/var/lib/kerberos/pending`; новый `apply` при нём отказывает с `change_conflict`.
 
 ### 9.4 Приватность
 Агент не пишет и не отдаёт адреса клиентов, email и UUID пользователей, ключи Reality и `SECRET_KEY` ноды. Наружу уходят счётчики и сети /16.
@@ -372,7 +376,7 @@ class AgentChange(TypedDict):
 - Проверка смотрит на действующее состояние, а не на имена файлов: `sshd -T`, правила nft, `sysctl`, ответ снаружи. Мера, поставленная вручную или другим скриптом, считается выполненной, и KERBEROS её не дублирует.
 - Исправление KERBEROS применяется, только если проверка нашла проблему и все условия исправления выполнены. Иначе в отчёте причина.
 - Каждое исправление: план (что изменится) → бэкап → применение → перепроверка находки. Перепроверка не прошла: изменение откатывается, отчёт показывает «не применено» и причину.
-- Исправления на одной ноде идут по одному, ноды по очереди. Порядок на ноде: `mptcp.guard`, `fail2ban.sshd`, `node_api.panel_only`, `ports.drop`, `hostkeys.regenerate`, `ssh.key_only`, `ssh.port`, `node.letsencrypt_mount`, `self_steal`, `watch.install`; затем исправления в панели.
+- Исправления на одной ноде идут по одному, ноды по очереди. Порядок на ноде: `access.admin_keys`, `mptcp.guard`, `fail2ban.sshd`, `node_api.panel_only`, `ports.drop`, `hostkeys.regenerate`, `ssh.key_only`, `ssh.port`, `node.letsencrypt_mount`, `self_steal`, `watch.install`; затем исправления в панели.
 
 ### 10.2 Каталог по темам
 
@@ -481,7 +485,9 @@ HTTP-джейлы не включаются: они банили бы edge-се�
 
 **`hostkeys.regenerate`.** Бэкап `/etc/ssh/ssh_host_*`, `ssh-keygen -A`, `sshd -t`, `systemctl reload ssh`, таймер отката. KERBEROS читает новый отпечаток в ответе агента, сверяет его с `ssh-keyscan`, обновляет `known_hosts` и вызывает `confirm`. Отчёт перечисляет новые отпечатки: людям с этим сервером в `known_hosts` нужно `ssh-keygen -R <ip>`.
 
-**`ports.drop`.** Правило nft `iifname != "lo" tcp dport <port> drop` для одного порта в таблице `inet kerberos_ports`. Порт, опубликованный Docker, не трогается (`docker_published`).
+**`ports.drop`.** Правило nft `iifname != "lo" tcp dport <port> drop` для каждого порта в таблице `inet kerberos_ports`. Порт, опубликованный Docker, не трогается (`docker_published`).
+
+Таблицы nft всех исправлений лежат в `/etc/kerberos/<name>.nft` (загрузка идемпотентна: `table`, `flush table`, правила) и грузятся юнитами `kerberos-<name>.service` (oneshot, `RemainAfterExit`, `ExecStop` удаляет таблицу).
 
 **`watch.install`.** `/usr/local/sbin/kerberos-watch` и `/etc/cron.d/kerberos-watch` (каждые 5 минут), лог `/var/log/kerberos-watch.log`, logrotate раз в месяц. Строка: время, соединения, число клиентских IP, срезанные соединения с сетями /16, пользователи и запросы Xray за 5 минут. Адресов и идентификаторов нет. Один запуск 0,1–0,35 с.
 
@@ -658,6 +664,8 @@ class Run(TypedDict):
     pending: list[dict]                # {changeId, action: 'finalize', due}
     startedAt: str
     finishedAt: str | None
+    # optional: findingsAfter (findings after «Исправление»), interrupted (Ctrl+C),
+    # rolledBackRun (mode 'rollback': the run whose changes went back)
 ```
 
 ## 14. UI: терминал
