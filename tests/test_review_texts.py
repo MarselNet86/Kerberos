@@ -10,6 +10,7 @@ from helpers import flat, login_keys, make_app, row_of, seen, typed
 
 from kerberos.copy import plural, t
 from kerberos.demo.fleet import build_nodes, build_panel
+from kerberos.demo.xui import XUI_DOMAIN
 from kerberos.fixes.journal import RunStore
 from kerberos.flow import EXIT_OK, EXIT_PANEL
 from kerberos.host import FakeHost
@@ -177,6 +178,33 @@ def test_s4_question_and_answers_fit_when_the_node_table_does_not():
     assert all(len(line) <= 80 for line in frame.splitlines())
 
 
+# -- 8: finalization names what stays and what goes ------------------------------------
+def test_finalize_lists_what_stays_and_what_goes():
+    app, term = fix_with_self_steal()
+    app.env.clock.advance(24 * 3600)
+    term.feed(*(login_keys() + ["x"]))  # sign in to the panel, then leave the consent
+    assert app.run("finalize") == EXIT_OK
+    item = t("fin.item", node="nl-1", domain="nl-1.example.com", old="www.example.net")
+    asked = first(term, item)
+    assert asked is not None
+    assert "serverNames" not in term.frames[asked]
+    assert t("fin.consent") in flat(term.frames[asked])
+
+
+def test_3xui_finalize_lists_what_stays_and_what_goes():
+    keys = CHOOSE_XUI + XUI_LOGIN + ["enter", "enter", "enter"]  # S2, S4 summary, S6
+    keys += ["down"] * 5 + ["d"] + list(XUI_DOMAIN) + ["enter"] + APPLY
+    app, term = make_app(keys, panel_kind=None, height=44)
+    assert app.run("fix") == EXIT_OK
+    name = store_of(app).runs()[0]["pending"][0]["nodeName"]
+    app.env.clock.advance(25 * 3600)
+    term.feed(*(XUI_LOGIN + ["x"]))
+    assert app.run("finalize") == EXIT_OK
+    asked = first(term, t("fin.item", node=name, domain=XUI_DOMAIN, old="www.example.net"))
+    assert asked is not None
+    assert t("fin.consent.local") in flat(term.frames[asked])
+
+
 # -- 10: Esc on the questions of S4 is named, and the admin question comes back --------
 def test_s4_questions_name_esc_in_the_footer():
     app, term = run_check()
@@ -225,6 +253,19 @@ def test_typed_3xui_address_is_not_called_found():
     app.run("check")
     assert seen(term, t("panel.xui.manual"))
     assert not seen(term, "Нашёл 3x-ui ?")
+
+
+# -- 16: no jargon on S1 and in the finalization ----------------------------------------
+def test_finalization_speaks_without_jargon():
+    app, term = fix_with_self_steal()
+    app.env.clock.advance(24 * 3600)
+    term.feed("enter", *login_keys(), "enter", "x", *QUIT)  # S1: the finalize item first
+    assert app.run() == EXIT_OK
+    s1 = term.frames[first(term, t("mode.finalize"))]
+    assert "self-steal" not in s1
+    assert seen(term, "убрать старое имя у 1 ноды")
+    assert seen(term, "убраны у 1 ноды")
+    assert not any("serverNames" in f or "self-steal" in f for f in term.frames)
 
 
 # -- 17: the 3x-ui path speaks of this server -------------------------------------------
