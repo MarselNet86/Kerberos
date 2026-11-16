@@ -1542,6 +1542,18 @@ def nft_table(table: str, rules: list) -> str:
     )
 
 
+def service_state(system: System, unit: str) -> tuple:
+    """Enabled and running, by the exit codes of `systemctl is-enabled` and `is-active`."""
+    enabled = system.run(["systemctl", "is-enabled", unit]).ok
+    return enabled, system.run(["systemctl", "is-active", unit]).ok
+
+
+def service_back(unit: str, enabled: bool, active: bool, start: str = "restart") -> list:
+    """Undo commands that leave a service as it was: enabled or not, running or not."""
+    return [["systemctl", "enable" if enabled else "disable", unit],
+            ["systemctl", start if active else "stop", unit]]  # fmt: skip
+
+
 def nft_service(plan: Plan, name: str, table: str, rules: list, about: str,
                 system: Optional[System] = None) -> None:  # fmt: skip
     # Debian cloud images come without nft; the package stays after a rollback.
@@ -1550,13 +1562,20 @@ def nft_service(plan: Plan, name: str, table: str, rules: list, about: str,
         plan.packages.append("nftables")
     conf = f"/etc/kerberos/{name}.nft"
     unit = f"kerberos-{name}.service"
+    existed = system is not None and system.exists(f"/etc/systemd/system/{unit}")
     plan.write(conf, nft_table(table, rules))
     plan.write(f"/etc/systemd/system/{unit}", nft_unit(name, table, conf, about))
     plan.run(["systemctl", "daemon-reload"])
     plan.run(["systemctl", "enable", unit])
     plan.run(["systemctl", "restart", unit])
-    plan.undo_before.append(["systemctl", "disable", "--now", unit])
-    plan.undo_after.append(["systemctl", "daemon-reload"])
+    if existed and system is not None:
+        # An earlier change of this fix is in force: the restored files hold its rules,
+        # so the unit loads them again instead of going away with them.
+        enabled, active = service_state(system, unit)
+        plan.undo_after += [["systemctl", "daemon-reload"], *service_back(unit, enabled, active)]
+    else:
+        plan.undo_before.append(["systemctl", "disable", "--now", unit])
+        plan.undo_after.append(["systemctl", "daemon-reload"])
 
 
 @fix("mptcp.guard")
@@ -1618,7 +1637,8 @@ def fix_fail2ban(system: System, params: dict) -> Plan:
     plan.run(["systemctl", "enable", "fail2ban"])
     plan.run(["systemctl", "restart", "fail2ban"])
     if installed:
-        plan.undo_after.append(["systemctl", "restart", "fail2ban"])
+        # A fail2ban the person stopped stays stopped after the rollback.
+        plan.undo_after += service_back("fail2ban", *service_state(system, "fail2ban"))
     else:
         plan.undo_after += [["systemctl", "disable", "--now", "fail2ban"],
                             ["apt-get", "remove", "-y", "-q", "fail2ban"]]  # fmt: skip
@@ -2913,7 +2933,10 @@ def fix_site(system: System, params: dict) -> Plan:
         raise AgentError("bad_params", "siteSeed")
     on80 = [s for s in parse_ss_listen(system.run(["ss", "-Hlntup"]).stdout)
             if s["port"] == 80 and s["proto"] == "tcp"]  # fmt: skip
-    if any(s["process"] != "nginx" for s in on80):
+    nginx_enabled, nginx_active = service_state(system, "nginx")
+    # A process called nginx is nginx.service only while that runs: a container with
+    # host networking may hold :80 under the same name.
+    if any(s["process"] != "nginx" or not nginx_active for s in on80):
         raise AgentError("port80_busy", ", ".join(s["process"] or "?" for s in on80))
     had_nginx = system.exists("/usr/sbin/nginx")
     plan = Plan("self_steal.site")
@@ -2936,9 +2959,12 @@ def fix_site(system: System, params: dict) -> Plan:
     plan.step_write(RENEW_HOOK, "#!/bin/sh\nsystemctl reload nginx\n", 0o755)
     plan.step_run(["nginx", "-t"], "nginx_test_failed")
     plan.step_run(["systemctl", "reload", "nginx"])
-    plan.undo_after.append(["systemctl", "reload-or-restart", "nginx"])
-    if not had_nginx:
-        plan.undo_after.append(["systemctl", "disable", "--now", "nginx"])
+    if had_nginx:
+        # A stopped nginx stays stopped: it would serve the person's old sites again.
+        plan.undo_after += service_back("nginx", nginx_enabled, nginx_active, "reload-or-restart")
+    else:
+        plan.undo_after += [["systemctl", "reload-or-restart", "nginx"],
+                            ["systemctl", "disable", "--now", "nginx"]]  # fmt: skip
     spec = site_spec(seed)
     plan.details = {"domain": domain, "template": template_hash(page), "siteSeed": seed,
                     "site": {"title": spec["title"], "kind": spec["kind"],

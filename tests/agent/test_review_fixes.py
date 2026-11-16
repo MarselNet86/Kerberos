@@ -413,3 +413,74 @@ def test_key_only_refuses_when_root_has_only_such_keys(node):
     _change, code, answer = apply(node, "ssh.key_only")
     assert code == 1 and answer["error"]["code"] == "no_admin_key"
     assert agent.collect_ssh(node)["adminKeys"] == 0
+
+
+# -- 10. rolling back a second nft change took the first one's rules away -----------------
+def test_second_ports_drop_rolls_back_to_the_first(node, recorder):
+    apply(node, "ports.drop", {"ports": ["8080/tcp"]})
+    second, code, _answer = apply(node, "ports.drop", {"ports": ["9090/tcp"]})
+    assert code == 0
+    recorder.calls.clear()
+    code, answer = call(node, ["rollback", second])
+    assert code == 0 and answer["state"] == "rolled_back"
+    nft = read(node, "/etc/kerberos/ports.nft")
+    assert "tcp dport 8080 drop" in nft and "9090" not in nft
+    unit = "kerberos-ports.service"
+    assert ["systemctl", "disable", "--now", unit] not in recorder.calls
+    assert recorder.calls[-2:] == [["systemctl", "enable", unit], ["systemctl", "restart", unit]]
+
+
+def test_first_nft_change_still_goes_away_whole(node, recorder):
+    first, _code, _answer = apply(node, "mptcp.guard")
+    code, _answer = call(node, ["rollback", first])
+    assert code == 0 and read(node, "/etc/kerberos/mptcp.nft") is None
+    assert ["systemctl", "disable", "--now", "kerberos-mptcp.service"] in recorder.calls
+
+
+# -- 12. rollback left a stopped service running --------------------------------------------
+def stopped(recorder, unit):
+    recorder.on(["systemctl", "is-enabled", unit], agent.Result(1, "disabled\n"))
+    recorder.on(["systemctl", "is-active", unit], agent.Result(3, "inactive\n"))
+
+
+def test_fail2ban_stopped_by_the_person_stays_stopped(node, recorder):
+    write(node, "/usr/bin/fail2ban-client", "")
+    write(node, "/usr/lib/python3/dist-packages/systemd/__init__.py", "")
+    stopped(recorder, "fail2ban")
+    change, code, answer = apply(node, "fail2ban.sshd", {"sshPorts": [22]})
+    assert code == 0, answer
+    recorder.calls.clear()
+    call(node, ["rollback", change])
+    assert recorder.calls[-2:] == [["systemctl", "disable", "fail2ban"],
+                                   ["systemctl", "stop", "fail2ban"]]  # fmt: skip
+
+
+def test_stopped_nginx_stays_stopped_after_self_steal(node, recorder):
+    for binary in ("/usr/sbin/nginx", "/usr/bin/certbot"):
+        write(node, binary, "")
+    for prefix in (["nginx"], ["certbot"]):
+        recorder.on(prefix, agent.Result(0))
+    stopped(recorder, "nginx")
+    change, code, answer = apply(node, "self_steal.site", {"domain": "de-1.example.com"})
+    assert code == 0, answer
+    recorder.calls.clear()
+    call(node, ["rollback", change])
+    assert recorder.calls[-2:] == [["systemctl", "disable", "nginx"],
+                                   ["systemctl", "stop", "nginx"]]  # fmt: skip
+
+
+# -- 15. a container called nginx on :80 passed for nginx.service ---------------------------
+def test_port_80_of_a_host_network_container_is_busy(node, recorder):
+    recorder.on(["ss"], agent.Result(0, ss_line(80, '("nginx",pid=4242,fd=6)')))
+    stopped(recorder, "nginx")
+    _change, code, answer = apply(node, "self_steal.site", {"domain": "de-1.example.com"})
+    assert code == 1 and answer["error"]["code"] == "port80_busy"
+    assert not any(c[:2] == ["apt-get", "install"] for c in recorder.calls)
+
+
+def test_port_80_of_nginx_service_is_fine(node, recorder):
+    recorder.on(["ss"], agent.Result(0, ss_line(80, '("nginx",pid=700,fd=6)')))
+    for prefix in (["nginx"], ["certbot"]):
+        recorder.on(prefix, agent.Result(0))
+    _change, code, answer = apply(node, "self_steal.site", {"domain": "de-1.example.com"})
+    assert code == 0, answer
