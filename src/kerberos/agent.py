@@ -32,7 +32,7 @@ import time
 from typing import Any, Callable, Optional
 
 PROTOCOL = 1
-AGENT_VERSION = "0.6.0"
+AGENT_VERSION = "0.7.0"
 AGENT_PATH = "/usr/local/sbin/kerberos-agent"
 STATE_DIR = "/var/lib/kerberos"
 
@@ -1715,6 +1715,148 @@ def fix_mount(system: System, params: dict) -> Plan:
     plan.write(COMPOSE_FILE, add_volume(text, "remnanode", LETSENCRYPT_VOLUME))
     plan.run(["docker", "compose", "-f", COMPOSE_FILE, "up", "-d"])
     plan.undo_after.append(["docker", "compose", "-f", COMPOSE_FILE, "up", "-d"])
+    return plan
+
+
+# -- CDN origin and the watch (§10.6, §10.3) -----------------------------------
+EDGES_CONF = "/etc/nginx/conf.d/kerberos-edges.conf"
+EDGE_SNIPPET = "error_page 418 = @kerberos_not_edge; if ($from_cdn_edge = 0) { return 418; }"
+NOT_EDGE = "location @kerberos_not_edge { return 404; }"
+WATCH_BIN = "/usr/local/sbin/kerberos-watch"
+WATCH_CRON = "/etc/cron.d/kerberos-watch"
+WATCH_ROTATE = "/etc/logrotate.d/kerberos-watch"
+WATCH_LOG = "/var/log/kerberos-watch.log"
+
+# The watch counts with the agent's own code: one file to keep up to date.
+WATCH_SCRIPT = """#!/usr/bin/env python3
+# KERBEROS watch (tech.md section 10.3): one line of block signs every 5 minutes.
+# Counts and /16 nets only: no client addresses, users or e-mails.
+import importlib.machinery
+import importlib.util
+
+LOADER = importlib.machinery.SourceFileLoader("kerberos_agent", "__AGENT__")
+SPEC = importlib.util.spec_from_loader("kerberos_agent", LOADER)
+AGENT = importlib.util.module_from_spec(SPEC)
+LOADER.exec_module(AGENT)
+WATCH = AGENT.collect_watch(AGENT.System())
+V4, V6, XRAY = WATCH["v4"], WATCH["v6"], WATCH["xray"]
+NETS = ",".join("%s:%s" % (n["net"], n["count"]) for n in V4["cutNets"] + V6["cutNets"])
+LINE = "%s conn=%d ips=%d cut=%d nets=%s users5m=%s req5m=%s\\n" % (
+    WATCH["at"],
+    V4["connections"] + V6["connections"],
+    V4["clientIps"] + V6["clientIps"],
+    V4["cut"] + V6["cut"],
+    NETS or "-",
+    XRAY["users5m"],
+    XRAY["accepted5m"],
+)
+with open("__LOG__", "a") as log:
+    log.write(LINE)
+""".replace("__AGENT__", AGENT_PATH).replace("__LOG__", WATCH_LOG)
+
+
+def location_line(text: str, path: str) -> Optional[int]:
+    """Index of the line that opens `location <path>` (plain, = or ^~)."""
+    pattern = re.compile(rf"^\s*location\s+(?:=\s*|\^~\s*)?{re.escape(path)}/?\s*\{{")
+    for index, line in enumerate(text.splitlines()):
+        if pattern.match(line):
+            return index
+    return None
+
+
+def guard_location(text: str, path: str) -> str:
+    """First line of the location: anyone but the edges gets the answer of a missing page."""
+    lines = text.splitlines()
+    index = location_line(text, path)
+    if index is None or (index + 1 < len(lines) and EDGE_SNIPPET in lines[index + 1]):
+        return text
+    indent = re.match(r"^\s*", lines[index]).group(0)
+    guarded = lines[: index + 1] + [indent + "    " + EDGE_SNIPPET] + lines[index + 1 :]
+    return "\n".join(guarded) + "\n"
+
+
+def add_not_edge(text: str, path: str) -> str:
+    """The named location next to the tunnel's, inside the same server block."""
+    if re.search(r"location\s+@kerberos_not_edge\b", text):
+        return text
+    lines = text.splitlines()
+    index = location_line(text, path)
+    if index is None:
+        return text
+    indent = re.match(r"^\s*", lines[index]).group(0)
+    return "\n".join(lines[:index] + [indent + NOT_EDGE] + lines[index:]) + "\n"
+
+
+def edge_guarded(text: str, paths: list) -> str:
+    for path in [*paths, "/cdn-check"]:
+        text = guard_location(text, path)
+    return add_not_edge(text, paths[0])
+
+
+def link_target(system: System, path: str) -> str:
+    """sites-enabled usually links to sites-available: change the file, keep the link."""
+    seen = 0
+    while seen < 8 and os.path.islink(system.path(path)):
+        link = os.readlink(system.path(path))
+        path = os.path.normpath(link if link.startswith("/")
+                                else os.path.join(os.path.dirname(path), link))  # fmt: skip
+        seen += 1
+    return path
+
+
+def edge_geo(addresses: list) -> str:
+    rows = "".join(f"    {address} 1;\n" for address in dict.fromkeys(addresses))
+    return (
+        "# KERBEROS (tech.md 10.6): requests to the tunnel only from the confirmed CDN edges.\n"
+        "geo $from_cdn_edge {\n    default 0;\n" + rows + "}\n"
+    )
+
+
+@fix("cdn.edge_only")
+def fix_edge_only(system: System, params: dict) -> Plan:
+    paths = [str(p) for p in params.get("paths") or []]
+    if not paths or any(not URL_PATH.match(p) or p == "/" for p in paths):
+        raise AgentError("bad_params", "paths")
+    nets = []
+    for value in params.get("nets") or []:
+        try:
+            nets.append(str(ipaddress.ip_network(str(value), strict=False)))
+        except ValueError as exc:
+            raise AgentError("bad_params", "nets") from exc
+    if not nets:
+        raise AgentError("bad_params", "nets")
+    files = collect_files(system, "/etc/nginx/sites-enabled")
+    files.update(collect_files(system, "/etc/nginx/conf.d", ".conf"))
+    main = system.read("/etc/nginx/nginx.conf")
+    if parse_nginx({**files, "/etc/nginx/nginx.conf": main or ""})["realip"]:
+        raise AgentError("realip_enabled", "real_ip rewrites the client address")
+    sites = [name for name, text in files.items()
+             if name != EDGES_CONF and location_line(text, paths[0]) is not None]  # fmt: skip
+    site = sites[0] if sites else None
+    if site is None:
+        raise AgentError("bad_params", f"no nginx location for {paths[0]}")
+    v4, v6 = parse_ip_addr(system.run(["ip", "-j", "addr", "show"]).stdout)
+    plan = Plan("cdn.edge_only")
+    plan.write(EDGES_CONF, edge_geo(["127.0.0.1", "::1", *v4, *v6, *nets]))
+    plan.write(link_target(system, site), edge_guarded(files[site], paths))
+    plan.run(["nginx", "-t"], "nginx_test_failed")
+    plan.run(["systemctl", "reload", "nginx"])
+    plan.undo_after.append(["systemctl", "reload", "nginx"])
+    plan.details = {"site": site, "paths": paths, "nets": nets}
+    return plan
+
+
+@fix("watch.install")
+def fix_watch(system: System, params: dict) -> Plan:
+    plan = Plan("watch.install")
+    # Minimal Debian images come without cron; logrotate keeps the log small.
+    for package, binary in (("cron", "/usr/sbin/cron"), ("logrotate", "/usr/sbin/logrotate")):
+        if not system.exists(binary):
+            plan.packages.append(package)
+    plan.write(WATCH_BIN, WATCH_SCRIPT, 0o755)
+    plan.write(WATCH_CRON, f"*/5 * * * * root {WATCH_BIN} >/dev/null 2>&1\n")
+    plan.write(WATCH_ROTATE, f"{WATCH_LOG} {{\n    monthly\n    rotate 12\n    compress\n"
+                             "    missingok\n    notifempty\n}\n")  # fmt: skip
     return plan
 
 

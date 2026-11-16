@@ -27,6 +27,8 @@ PANEL_FIXES = {
     "sub.ping_type",
     "host.fingerprint",
     "reserve",
+    "xhttp.padding",
+    "xhttp.uplink_get",
 }
 
 
@@ -85,6 +87,8 @@ def undo(client: PanelClient, change: dict,
                 client.patch_host(uuid, {"xrayJsonTemplateUuid": template})
             return None
         if fix_id == "sub.ping_type":
+            if "previous" not in details:
+                return None  # failed before anything was written
             current = client.sub_settings()
             headers = dict(current.headers)
             previous = details.get("previous") or {}
@@ -95,6 +99,8 @@ def undo(client: PanelClient, change: dict,
             client.patch_sub_settings(current.uuid, headers)
             return None
         if fix_id == "host.fingerprint":
+            if "previous" not in details:
+                return None
             client.patch_host(
                 change["params"]["host"], {"fingerprint": details.get("previous", "")}
             )
@@ -107,6 +113,10 @@ def undo(client: PanelClient, change: dict,
             for uuid, inbounds in (details.get("squads") or {}).items():
                 client.patch_squad(uuid, inbounds)
             return None
+        if fix_id == "xhttp.uplink_get":
+            return undo_uplink(client, change)
+        if fix_id == "xhttp.padding":
+            return undo_padding(client, change, ask)
         if fix_id == "self_steal.profile":
             before = load_snapshot(change.get("before"))
             if before is None:
@@ -126,3 +136,59 @@ def undo(client: PanelClient, change: dict,
     except PanelError as exc:
         return exc.code
     return "unknown_change"
+
+
+def undo_uplink(client: PanelClient, change: dict) -> Optional[str]:
+    """Only uplinkHTTPMethod goes back; the rest of the host's extra stays as it is now."""
+    from kerberos.fixes import xhttp
+
+    details = change["details"]
+    if "previous" not in details:
+        return None
+    uuid = change["params"]["host"]
+    host = next((h for h in client.hosts() if h.uuid == uuid), None)
+    if host is None:
+        return "gone"
+    if str((host.xhttp_extra or {}).get("uplinkHTTPMethod", "")).upper() != "GET":
+        return None  # changed back meanwhile: nothing of KERBEROS is left
+    extra = xhttp.uplink_back(host.xhttp_extra, details["previous"], details.get("extraWasNone"))
+    client.patch_host(uuid, {"xhttpExtraParams": extra})
+    return None
+
+
+def undo_padding(client: PanelClient, change: dict,
+                 ask: Optional[Callable[[str], bool]]) -> Optional[str]:  # fmt: skip
+    """Only the padding keys KERBEROS wrote go, from the inbound and from its hosts."""
+    from kerberos.fixes import xhttp
+
+    details = change["details"]
+    if not details.get("inbounds") or not details.get("writtenPath"):
+        return None
+    written = load_snapshot(details["writtenPath"])
+    if written is None:
+        return "no_snapshot"
+    profile = next((p for p in client.profiles() if p.uuid == details["profileUuid"]), None)
+    if profile is None:
+        return "gone"
+    config, changed = xhttp.remove_padding(profile.config, written)
+    hosts = {h.uuid: h for h in client.hosts()}
+    for uuid, tag in (details.get("hosts") or {}).items():
+        host = hosts.get(uuid)
+        current = xhttp.padding_of(host.xhttp_extra) if host else {}
+        if current and current != written.get(tag) and tag not in changed:
+            changed.append(tag)
+    if changed:
+        mine = {tag: written[tag] for tag in changed}
+        now = {tag: xhttp.padding_of(((profile.inbound_config(tag) or {}).get("streamSettings")
+                                      or {}).get("xhttpSettings", {}).get("extra"))
+               for tag in changed}  # fmt: skip
+        if ask is None or not ask(diff_text(mine, now)):
+            return "changed_in_panel"
+    if config != profile.config:
+        client.patch_profile(profile.uuid, config)
+    for uuid in details.get("hosts") or {}:
+        host = hosts.get(uuid)
+        if host is not None and xhttp.padding_of(host.xhttp_extra):
+            rest = xhttp.without_padding(host.xhttp_extra)
+            client.patch_host(uuid, {"xhttpExtraParams": rest or None})
+    return None

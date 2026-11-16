@@ -413,6 +413,39 @@ TEXT: dict[str, str] = {
     "fix.sub.ping_type.label": "Пинг клиентов через туннель (ping-type)",
     "fix.host.fingerprint.label": "Fingerprint firefox у хоста",
     "fix.reserve.label": "Резерв {reserve}: скрытые хосты с общими тегами",
+    # K8: XHTTP, CDN origin, watch
+    "fix.cdn.edge_only.label": "Туннель на origin только через CDN",
+    "fix.watch.install.label": "Сборщик признаков блокировки",
+    "fix.xhttp.padding.label": "Паддинг XHTTP на сервере и в подписке",
+    "fix.xhttp.uplink_get.label": "Загрузка через CDN методом GET",
+    "fix.edge_only.warning": (
+        "Origin будет пускать к туннелю только подтверждённые сети CDN, прямой запрос получит "
+        "ответ несуществующей страницы. Если CDN придёт с новой сети, клиенты через неё не "
+        "подключатся, пока сеть не добавят."
+    ),
+    "fix.padding.warning": (
+        "Паддинг XHTTP изменится на сервере и в подписке. Клиенты, которые не обновят "
+        "подписку, не подключатся через XHTTP, пока не обновят её."
+    ),
+    "keys.edges": "сети CDN",
+    "plan.edges.none": "e: выберите сети CDN",
+    "plan.edges.ok": "сетей CDN: {n} ✓",
+    "plan.edges.title": "Откуда CDN ходит на {node}",
+    "plan.edges.hint": (
+        "Сети /24, с которых шли запросы к пути туннеля (логи nginx). Отметьте сети CDN: "
+        "остальным origin ответит как несуществующая страница."
+    ),
+    "plan.edges.col.net": "Сеть",
+    "plan.edges.col.count": "Запросов",
+    "plan.edges.empty": (
+        "В логах nginx нет запросов к пути туннеля: список сетей CDN составить не из чего."
+    ),
+    "plan.edges.failed": "Не удалось прочитать логи nginx на ноде: {reason}",
+    "plan.edges.confirm": "подтвердить отмеченные",
+    "plan.need_edges": "Подтвердите сети CDN (клавиша e) или снимите отметку с фильтра CDN",
+    "plan.blocked.realip_enabled": "включён real_ip",
+    "error.realip_enabled": "в nginx включён real_ip",
+    "error.bad_response": "панель ответила не по схеме",
     "keys.reserve": "резерв",
     "plan.reserve.with": "резерв: {node}",
     "plan.reserve.of": "резерв для {node}",
@@ -493,7 +526,6 @@ TEXT: dict[str, str] = {
     "step.confirm": "подтверждение",
     "board.node": "Нода",
     "board.fix": "Исправление",
-    "board.result": "Итог",
     "board.legend": "✓ готово · … идёт · ✗ ошибка · ↺ откачено · – не нужно",
     "keys.interrupt": "прервать",
     "apply.interrupt": (

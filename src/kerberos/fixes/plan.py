@@ -27,9 +27,21 @@ NODE_ORDER = (
     "ssh.port",
     "node.letsencrypt_mount",
     "self_steal",
+    "cdn.edge_only",
     "watch.install",
 )
-PANEL_ORDER = ("reserve", "sub.template", "sub.ping_type", "host.fingerprint", "xhttp.uplink_get")
+PANEL_ORDER = (
+    "reserve",
+    "sub.template",
+    "sub.ping_type",
+    "host.fingerprint",
+    "xhttp.padding",
+    "xhttp.uplink_get",
+)
+# Fixes of a node that live in the panel: no agent access is needed for them.
+PANEL_NODE_FIXES = {"xhttp.padding"}
+# Fixes that wait for input in S7: a domain with matching DNS, a confirmed list of nets.
+NEEDS_INPUT = {"self_steal", "cdn.edge_only"}
 
 # Fixes this version of KERBEROS can apply; the rest stay findings in the report.
 IMPLEMENTED = {
@@ -45,6 +57,10 @@ IMPLEMENTED = {
     "sub.template",
     "sub.ping_type",
     "host.fingerprint",
+    "xhttp.padding",
+    "xhttp.uplink_get",
+    "cdn.edge_only",
+    "watch.install",
 }
 ACCESS_FIXES = {"ssh.key_only", "ssh.port", "hostkeys.regenerate"}
 RISK_RANK = {"high": 0, "medium": 1, "low": 2, "info": 3}
@@ -116,7 +132,7 @@ def build_plan(
         if finding["ok"] or fix_id not in IMPLEMENTED or spec(finding["checkId"]).kind != "fix":
             continue
         kind, _, ref = finding["target"].partition(":")
-        if kind != "node":
+        if kind != "node" or fix_id in PANEL_NODE_FIXES:
             panel_item(items, finding, data)
             continue
         node = data.node_data(ref)
@@ -143,6 +159,10 @@ def build_plan(
         if item.fix_id == "self_steal":
             item.blocked = self_steal_blocker(data, node)
             item.params["siteSeed"] = free_layout(used_layouts)
+        if item.fix_id == "cdn.edge_only":
+            item.params = {"paths": edge_paths(data, node), "nets": None}
+            if (facts.get("nginx") or {}).get("realip"):
+                item.blocked = "realip_enabled"
         if (
             item.fix_id == "node_api.panel_only"
             and (facts.get("remnanode") or {}).get("network") == "bridge"
@@ -159,11 +179,12 @@ def build_plan(
             else:
                 item.blocked = "no_admin_key"
     for item in items.values():
-        # self-steal needs a domain typed in S7: it gets marked once DNS matches.
+        # Self-steal needs a domain typed in S7, the CDN filter a confirmed list of
+        # nets: they get marked once that is done.
         item.selected = (
             item.blocked is None
             and item.risk in ("high", "medium")
-            and item.fix_id not in ("ssh.port", "watch.install", "self_steal")
+            and item.fix_id not in ("ssh.port", "watch.install", *NEEDS_INPUT)
         )
     node_index = {n.node.uuid: i for i, n in enumerate(data.nodes)}
     return sorted(items.values(), key=lambda i: order_key(i, node_index))
@@ -176,6 +197,8 @@ def panel_item(items: dict, finding: Finding, data: CheckInput) -> None:
     if item is None:
         item = PlanItem(finding["fixId"], finding["target"], None, {}, finding["risk"])
         kind, _, ref = finding["target"].partition(":")
+        if kind == "node":
+            item.params = {"node": ref, "inbounds": []}
         if kind == "host":
             item.params = {"host": ref, "remark": finding["evidence"].get("host", "")}
         if kind == "template":
@@ -187,6 +210,19 @@ def panel_item(items: dict, finding: Finding, data: CheckInput) -> None:
         item.risk = finding["risk"]
     if finding["checkId"] not in item.checks:
         item.checks.append(finding["checkId"])
+    inbound = finding["evidence"].get("inbound")
+    if "inbounds" in item.params and inbound and inbound not in item.params["inbounds"]:
+        item.params["inbounds"].append(inbound)
+
+
+def edge_paths(data: CheckInput, node) -> list[str]:
+    """Paths of the tunnel behind the CDN on this origin (§10.6)."""
+    from kerberos.checks.rules import cdn_xhttp_hosts, xhttp_path
+
+    if node is None:
+        return []
+    return list(dict.fromkeys(xhttp_path(inbound, host)
+                              for inbound, host in cdn_xhttp_hosts(data, node)))  # fmt: skip
 
 
 def template_hosts(data: CheckInput, template_uuid: str) -> tuple[list, list]:

@@ -338,7 +338,11 @@ STEP_VIEW = {
 
 
 class ProgressBoard:
-    """Apply board of S8: nodes by rows, steps of the current fix by columns."""
+    """Apply board of S8: nodes by rows, steps of the current fix by columns.
+
+    Why a change did not apply is a sentence, too long for a column: it goes
+    under the table, one line per node, wrapped to the width of the screen.
+    """
 
     def __init__(self, nodes: Sequence[str], steps: Sequence[str]) -> None:
         self.nodes = list(nodes)
@@ -348,7 +352,6 @@ class ProgressBoard:
         self.result: dict[str, Text] = {n: Text("") for n in self.nodes}
         self.node_title = ""
         self.fix_title = ""
-        self.result_title = ""
         self.legend = ""
 
     def start(self, node: str, fix_label: str) -> None:
@@ -364,18 +367,25 @@ class ProgressBoard:
 
     def __rich__(self) -> RenderableType:
         table = Table(box=box.SIMPLE_HEAD, expand=True, show_edge=False, pad_edge=False)
-        table.add_column(self.node_title, no_wrap=True, overflow="ellipsis", header_style="muted")
-        table.add_column(self.fix_title, no_wrap=True, overflow="ellipsis", header_style="muted")
+        table.add_column(self.node_title, no_wrap=True, overflow="ellipsis", header_style="muted",
+                         max_width=16)  # fmt: skip
+        table.add_column(self.fix_title, no_wrap=True, overflow="ellipsis", header_style="muted",
+                         ratio=1)  # fmt: skip
         for step in self.steps:
-            table.add_column(step, no_wrap=True, justify="center", header_style="muted")
-        table.add_column(self.result_title, overflow="ellipsis", header_style="muted")
+            table.add_column(step, no_wrap=True, overflow="ellipsis", justify="center",
+                             header_style="muted")  # fmt: skip
         for node in self.nodes:
             cells = []
             for step in self.steps:
                 symbol, style = STEP_VIEW[self.cells.get((node, step), "pending")]
                 cells.append(Text(symbol, style=style))
-            table.add_row(Text(node), Text(self.current.get(node, "")), *cells, self.result[node])
+            table.add_row(Text(node), Text(self.current.get(node, "")), *cells)
         parts: list[RenderableType] = [table]
+        for node in self.nodes:
+            if self.result[node].plain:
+                line = Text(f"{node}: ", style="bold")
+                line.append_text(self.result[node])
+                parts.append(line)
         if self.legend:
             parts.append(Text(self.legend, style="muted"))
         return Group(*parts)

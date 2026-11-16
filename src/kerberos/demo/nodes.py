@@ -8,6 +8,7 @@ with one and the same stub site, fi-1 is an origin behind a CDN.
 from __future__ import annotations
 
 import copy
+import ipaddress
 
 from kerberos.nodes.fake import FakeNode
 from kerberos.nodes.fake_fixes import give_fixes
@@ -180,6 +181,13 @@ DNS = {
 }
 
 
+CDN_EDGES = {"192.0.2.200": "198.51.100.77"}  # an edge of the CDN -> the origin behind it
+TUNNEL_PATH = "/api/stream"
+NOT_FOUND = HttpResult(404, {"content-type": "text/html"},
+                       "<html><head><title>404 Not Found</title></head></html>")  # fmt: skip
+PANEL_ADDRESS = "198.51.100.5"
+
+
 class DemoProber(FakeProber):
     """The outside view of the demo fleet follows the panel and the nodes.
 
@@ -229,7 +237,25 @@ class DemoProber(FakeProber):
             )
         return super().tls_names(ip, port, sni)
 
+    def _origin(self, node: FakeNode, source: str, path: str) -> HttpResult:
+        """fi-1 behind the CDN: Xray answers on the tunnel path unless cdn.edge_only cuts it."""
+        rule = node.state.get("edge_filter")
+        allowed = rule is None or any(
+            ipaddress.ip_address(source) in ipaddress.ip_network(net) for net in rule["nets"]
+        )
+        if path == TUNNEL_PATH and allowed:
+            return HttpResult(400, {}, "")
+        if path == "/cdn-check" and allowed:
+            return HttpResult(204, {}, "")
+        return NOT_FOUND
+
     def http(self, ip: str, port: int, host: str, path: str = "/", *, tls: bool = True):
+        if ip in CDN_EDGES and port == 443 and CDN_EDGES[ip] in self.by_address:
+            self.calls.append(("http", ip, port, host, path))
+            return self._origin(self.by_address[CDN_EDGES[ip]], ip, path)
+        if ip in self.by_address and port == 8443:
+            self.calls.append(("http", ip, port, host, path))
+            return self._origin(self.by_address[ip], PANEL_ADDRESS, path)
         if ip in self.by_address and port == 443 and path == "/":
             self.calls.append(("http", ip, port, host, path))
             ok = self._own_site(ip) == host
@@ -255,8 +281,6 @@ def build_prober(panel=None, nodes=None) -> FakeProber:
     prober.pages = {
         ("198.51.100.20", 443, "de-1.example.com", "/"): site,
         ("198.51.100.77", 443, "fi-1.example.com", "/"): site,
-        ("198.51.100.77", 8443, "cdn.example.com", "/api/stream"): HttpResult(400),
-        ("198.51.100.77", 8443, "cdn.example.com", "/cdn-check"): HttpResult(204),
         ("198.51.100.5", 443, "panel.example.com", "/"): HttpResult(
             200, {}, "<html><head><title>Remnawave</title></head></html>"
         ),

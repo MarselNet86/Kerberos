@@ -2,7 +2,7 @@
 
 import json
 
-from helpers import login_keys, make_app, seen
+from helpers import login_keys, make_app, row_of, seen
 
 from kerberos.checks import spec
 from kerberos.copy import t
@@ -14,8 +14,8 @@ from kerberos.flow import EXIT_OK, EXIT_PARTIAL, EXIT_ROLLBACK_FAILED
 
 TO_PLAN = login_keys() + ["enter", "enter"] + ["enter"] * 5 + ["esc"] + ["enter", "enter"]
 TO_PLAN += ["enter", "enter", "enter"]
-NL1_SELF_STEAL = 8  # nl-1: admin key, mptcp, fail2ban, node API, ports, host keys, key only, port
-NL2_SELF_STEAL = 13  # nl-2: mptcp, node API, host keys, port, then self-steal
+NL1_SELF_STEAL = row_of("nl-1", "self_steal")
+NL2_SELF_STEAL = row_of("nl-2", "self_steal")
 
 
 def domain_keys(row, domain):
@@ -140,12 +140,12 @@ def test_certificate_failure_changes_nothing_in_the_panel():
     app, term, code = run_fix(domain_keys(NL1_SELF_STEAL, "nl-1.example.com") + APPLY,
                               panel, nodes)  # fmt: skip
     assert code == EXIT_PARTIAL
+    nl1 = profile_of(panel, "nl-1")["uuid"]
+    # fi-1 still gets its XHTTP padding (K8): only nl-1's profile must stay untouched.
+    assert not [b for m, p, b in panel.mutations
+                if (m, p) == ("PATCH", "/config-profiles") and b["uuid"] == nl1]  # fmt: skip
     touched = {(m, p) for m, p, _b in panel.mutations}
-    assert not touched & {
-        ("PATCH", "/config-profiles"),
-        ("POST", "/hosts"),
-        ("POST", "/hosts/bulk/disable"),
-    }
+    assert not touched & {("POST", "/hosts"), ("POST", "/hosts/bulk/disable")}
     assert seen(term, t("apply.rolled_back", reason=t("error.certbot_failed")))
 
 

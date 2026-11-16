@@ -1,6 +1,6 @@
 """Subscription templates, ping-type, fingerprint and reserves (tech.md §10.5, §10.9, K7)."""
 
-from helpers import login_keys, make_app, seen
+from helpers import login_keys, make_app, row_of, seen
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -16,7 +16,8 @@ TO_PLAN = login_keys() + ["enter", "enter"] + ["enter"] * 5 + ["esc"] + ["enter"
 TO_PLAN += ["enter", "enter", "enter"]
 APPLY = ["enter", "enter", "enter"]
 ROLLBACK = ["enter", "enter", "enter"] + list("admin") + ["enter"] + list("pw") + ["enter", "x"]
-NL1, NL2, HOST_FINGERPRINT = 8, 13, 24
+NL1, NL2 = row_of("nl-1", "self_steal"), row_of("nl-2", "self_steal")
+HOST_FINGERPRINT = row_of("host", "host.fingerprint")
 
 
 def run_fix(extra, panel=None, nodes=None, state=None):
