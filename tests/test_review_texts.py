@@ -8,7 +8,7 @@ from datetime import datetime
 
 from helpers import flat, login_keys, make_app, row_of, typed
 
-from kerberos.copy import plural
+from kerberos.copy import plural, t
 from kerberos.demo.fleet import build_nodes, build_panel
 from kerberos.fixes.journal import RunStore
 from kerberos.flow import EXIT_OK
@@ -81,6 +81,14 @@ def when(run):
     return moment.strftime("%d.%m.%Y %H:%M") + " UTC"
 
 
+# -- 3: «Проверка» says what S4 installs before it does -------------------------------
+def test_s1_check_item_promises_only_what_check_keeps():
+    app, term = make_app(QUIT)
+    app.run()
+    assert "ничего не меняет" not in term.frames[0]
+    assert t("mode.check") in term.frames[0]
+
+
 # -- 12: the result of a rollback, its scores and how runs are named -------------------
 def fix_then(extra_nodes=None):
     nodes = {n.name: n for n in build_nodes()}
@@ -90,9 +98,23 @@ def fix_then(extra_nodes=None):
     return app, term, nodes, store_of(app).runs()[0]
 
 
+# -- 17: the 3x-ui path speaks of this server -------------------------------------------
+def test_s1_names_both_panels():
+    app, term = make_app(QUIT)
+    app.run()
+    assert "Remnawave" in term.frames[0] and "3x-ui" in term.frames[0]
+
+
 # -- 24: numbers agree with words, small slips -----------------------------------------
 def test_plural_forms():
     forms = ("нода", "ноды", "нод")
     expected = {1: "нода", 2: "ноды", 4: "ноды", 5: "нод", 11: "нод", 12: "нод", 14: "нод",
                 21: "нода", 22: "ноды", 25: "нод", 101: "нода", 111: "нод", 0: "нод"}  # fmt: skip
     assert {n: plural(n, *forms) for n in expected} == expected
+
+
+def test_quit_dialog_has_a_capital_title():
+    app, term = make_app(["q", "enter"])
+    app.run()
+    assert title(term.frames[1]).startswith("/// kerberos  " + t("quit.title"))
+    assert t("quit.title")[0].isupper()

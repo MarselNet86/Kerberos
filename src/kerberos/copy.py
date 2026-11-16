@@ -10,8 +10,8 @@ from __future__ import annotations
 
 TEXT: dict[str, str] = {
     # §15 mandatory minimum
-    "app.tagline": "Защита VPN-серверов на Remnawave",
-    "mode.check": "Проверка: ничего не меняет",
+    "app.tagline": "Защита VPN-серверов на Remnawave и 3x-ui",
+    "mode.check": "Проверка: настройки серверов не меняет",
     "mode.fix": "Исправление: план, разрешение, изменения",
     "mode.rollback": "Откат прошлого запуска",
     "panel.found": "Нашёл Remnawave {version} на этом сервере",
@@ -80,6 +80,7 @@ TEXT: dict[str, str] = {
     "keys.quit": "выход",
     "keys.scroll": "прокрутка",
     "keys.space": "Пробел",
+    "quit.title": "Выход",
     "quit.confirm": "Выйти из KERBEROS?",
     "quit.confirm_busy": "Идут изменения. Выйти, когда текущее изменение закончится?",
     "quit.yes": "Enter: выйти",

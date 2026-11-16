@@ -170,7 +170,7 @@ class App:
             Notice("warning", text),
             Text(f"{t('quit.yes')}    {t('quit.no')}", style="muted"),
         )
-        self.draw(t("keys.quit"), body)
+        self.draw(t("quit.title"), body)
         return self.term.read_key() == "enter"
 
     def show_help(self) -> None:
