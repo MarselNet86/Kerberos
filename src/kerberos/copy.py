@@ -2,6 +2,8 @@
 
 Keys from §15 are the mandatory minimum; tasks add their own keys additively.
 `t(key, **params)` formats a text; an unknown key is a bug and raises KeyError.
+A number takes the Russian form of the word after it: `{n:нода|ноды|нод}` gives
+«1 нода», «3 ноды», «5 нод» (`plural`).
 """
 
 from __future__ import annotations
@@ -690,7 +692,30 @@ TEXT: dict[str, str] = {
 }
 
 
+def plural(n: int, one: str, few: str, many: str) -> str:
+    """The form of a Russian word after the number `n`: 1 нода, 3 ноды, 5 нод, 11 нод."""
+    n = abs(n)
+    if n % 10 == 1 and n % 100 != 11:
+        return one
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return few
+    return many
+
+
+class _Count(int):
+    """A number that formats `{n:нода|ноды|нод}` as the number and the word after it."""
+
+    def __format__(self, spec: str) -> str:
+        if "|" not in spec:
+            return format(int(self), spec)
+        one, few, many = spec.split("|")
+        return f"{int(self)} {plural(int(self), one, few, many)}"
+
+
 def t(key: str, **params: object) -> str:
     """Return the text for `key` with `params` substituted."""
     text = TEXT[key]
-    return text.format(**params) if params else text
+    if not params:
+        return text
+    counted = {k: _Count(v) if type(v) is int else v for k, v in params.items()}
+    return text.format(**counted)
