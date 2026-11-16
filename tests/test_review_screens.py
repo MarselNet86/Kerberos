@@ -261,6 +261,18 @@ def test_plan_footer_follows_the_row_and_help_lists_its_keys():
     assert t("help.s7").splitlines()[0] in titled(term, "help.title")[0]
 
 
+def test_waiting_domains_leave_the_plan_its_rows():
+    nl1, nl2 = row_of("nl-1", "self_steal"), row_of("nl-2", "self_steal")
+    keys = ["down"] * nl1 + ["d"] + list("late1.example.com") + ["enter"]
+    keys += ["down"] * (nl2 - nl1) + ["d"] + list("late2.example.com") + ["enter"]
+    app, term, _code = run_fix(keys + ["esc", "q", "enter"])
+    plan = titled(term, "plan.title")[-1]
+    rows = [line for line in plan.splitlines() if "[✓]" in line or "[ ]" in line]
+    assert len(rows) >= 10, "two waiting domains must not push the table off the screen"
+    record = t("plan.domain.wait", record="A late2.example.com → 203.0.113.11")
+    assert record in flat(plan), "the record of the current row, in full"
+
+
 def test_finalize_line_shows_only_with_a_marked_own_domain():
     app, term, _code = run_fix(["esc", "q", "enter"], width=100, height=30)
     assert not seen(term, t("plan.finalize.manual"))

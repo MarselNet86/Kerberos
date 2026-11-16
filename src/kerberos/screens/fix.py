@@ -349,6 +349,10 @@ def plan_details(app: App, session: Session, item: PlanItem) -> RenderableType:
     if item.blocked:
         lines.append(Text(t("plan.details.blocked", reason=note), style="risk.medium"))
     else:
+        if item.fix_id == "self_steal" and item.params.get("dns") == "wait":
+            # The record to make, in full: the table column is too narrow for it.
+            lines.append(Text(t("plan.domain.wait", record=app.mask(item.params["record"])),
+                              style="risk.medium"))  # fmt: skip
         if item.fix_id == "self_steal":
             lines.append(site_preview(app, session, item))
         warning = warning_of(item, session.snapshot.kind)
@@ -403,12 +407,9 @@ def step_plan(app: App, session: Session) -> Any:
         ]
         row = current()
         if row is not None:
+            # One row at a time: records of several waiting domains would push the
+            # table off a low screen; the column «Заметка» says which rows wait.
             tail.append(plan_details(app, session, row))
-        for item in items:
-            if item.fix_id == "self_steal" and item.params.get("dns") == "wait":
-                # The record to make, in full: the table column is too narrow for it.
-                tail.append(Text(t("plan.domain.wait", record=app.mask(item.params["record"])),
-                                 style="risk.medium"))  # fmt: skip
         if any(i.fix_id == "self_steal" and i.selected for i in items):
             auto = session.data.get("auto_finalize", False)
             key = "plan.finalize.auto" if auto else "plan.finalize.manual"
