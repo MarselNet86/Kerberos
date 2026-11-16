@@ -15,10 +15,10 @@ from rich.text import Text
 from kerberos.copy import t
 from kerberos.flow import BACK, EXIT_PANEL, NEXT
 from kerberos.panel.client import PanelClient
-from kerberos.panel.discover import PanelLocation, discover
+from kerberos.panel.discover import PanelLocation, discover, discover_xui
 from kerberos.panel.errors import PanelError
 from kerberos.panel.model import PanelSnapshot
-from kerberos.ui.widgets import Notice, TextInput
+from kerberos.ui.widgets import Menu, Notice, TextInput
 
 if TYPE_CHECKING:
     from kerberos.app import App, Session
@@ -213,15 +213,67 @@ def register_sensitive(app: App, snapshot: PanelSnapshot) -> None:
             for name in reality.get("serverNames") or []:
                 if isinstance(name, str):
                     masker.register(name)
-            dest = reality.get("dest")
+            dest = reality.get("target") or reality.get("dest")
             if isinstance(dest, str):
                 masker.register(dest.rsplit(":", 1)[0])
 
 
-def open_panel(app: App) -> Any:
-    """Find the panel and sign in. A (location, client) pair, BACK or EXIT_PANEL."""
+PANELS = ("remnawave", "3x-ui")
+
+
+def choose_panel(app: App) -> Any:
+    """§6 S2, §7.6: which panel runs here, Remnawave or 3x-ui; the one found is first.
+
+    (kind, location or None) or BACK. `--panel` answers without asking.
+    """
     app.draw(t("s2.title"), Text(t("panel.searching")))
-    location = discover(app.env.host) if app.env.host is not None else None
+    host = app.env.host
+    found = {
+        "remnawave": discover(host) if host is not None else None,
+        "3x-ui": discover_xui(host) if host is not None else None,
+    }
+    wanted = getattr(app.env, "panel_kind", None)
+    if wanted in PANELS:
+        return wanted, found[wanted]
+    items = []
+    for kind in PANELS:
+        location = found[kind]
+        hint = (t("panel.choose.found", version=location.version) if location
+                else t("panel.choose.none"))  # fmt: skip
+        items.append((kind, t(f"panel.kind.{kind}"), hint))
+    first = 1 if found["3x-ui"] and not found["remnawave"] else 0
+    menu = Menu(items, selected=first)
+
+    def handle(key: str) -> Optional[str]:
+        if key == "esc":
+            return "back"
+        return menu.handle(key)
+
+    body = Group(Text(t("panel.choose"), style="bold"), Text(""), menu, Text(""),
+                 Text(t("panel.choose.hint"), style="muted"))  # fmt: skip
+    keys = (("↑↓", t("keys.select")), ("Enter", t("keys.next")), ("Esc", t("keys.back")))
+    choice = app.interact(t("s2.title"), body, keys, handle)
+    if choice == "back":
+        return BACK
+    return choice, found[choice]
+
+
+def open_panel(app: App, kind: Optional[str] = None) -> Any:
+    """Find the panel and sign in. A (location, client) pair, BACK or EXIT_PANEL.
+
+    `kind` skips the question (rollback and finalize know the panel of the run).
+    """
+    if kind is None:
+        chosen = choose_panel(app)
+        if chosen == BACK:
+            return BACK
+        kind, location = chosen
+    else:
+        host = app.env.host
+        finder = discover_xui if kind == "3x-ui" else discover
+        location = finder(host) if host is not None else None
+    if kind == "3x-ui":
+        return open_xui(app, location)
     if location is None:
         api = ask_api(app)
         if api is None:
@@ -238,13 +290,158 @@ def open_panel(app: App) -> Any:
     return location, client
 
 
+# -- 3x-ui (§7.6) ------------------------------------------------------------------
+XUI_URL_RE = re.compile(r"^https?://[\w.\-\[\]:]+(:\d{1,5})?(/[\w.\-/]*)?$")
+
+
+def ask_xui_url(app: App) -> Optional[str]:
+    field = TextInput(
+        t("panel.xui.url_label"),
+        hint=t("panel.xui.url_hint"),
+        validate=lambda v: None if XUI_URL_RE.match(v.strip()) else t("panel.xui.url_invalid"),
+        value="http://127.0.0.1:2053/",
+    )
+
+    def handle(key: str) -> Optional[str]:
+        if key == "esc":
+            return ""
+        return field.handle(key)
+
+    body = Group(Notice("warning", t("panel.xui.not_found")), Text(""), field)
+    value = app.interact(t("s2.title"), body, keys_form(), handle, typing=True)
+    return value.strip() or None
+
+
+def xui_lines(app: App, location: PanelLocation) -> list[RenderableType]:
+    """Where the panel is, without its secret path: that path is a password of sorts."""
+    lines: list[RenderableType] = [
+        Text(t("panel.xui.found", version=location.version), style="bold")
+    ]
+    if location.info.get("port"):
+        lines.append(Text(t("panel.xui.port", port=location.info["port"]), style="muted"))
+    if location.panel_domain:
+        lines.append(Text(t("panel.domain", domain=app.mask(location.panel_domain)), style="muted"))
+    return lines
+
+
+def xui_login_form(app: App, client: Any, location: PanelLocation) -> bool:
+    fields = [TextInput(t("panel.xui.login")), TextInput(t("panel.password"), secret=True)]
+    if location.info.get("twoFactor"):
+        fields.append(TextInput(t("panel.xui.code"), secret=True))
+    state: dict[str, Any] = {"focus": 0, "error": None}
+
+    def body(_w: int, _h: int) -> RenderableType:
+        for i, item in enumerate(fields):
+            item.focused = i == state["focus"]
+        parts = xui_lines(app, location) + [Text(""), Text(t("panel.xui.login_hint")), Text("")]
+        for item in fields:
+            parts += [item, Text("")]
+        if state["error"]:
+            parts.append(Notice("error", state["error"]))
+        return Group(*parts)
+
+    def handle(key: str) -> Optional[str]:
+        if key == "esc":
+            return "back"
+        if key in ("tab", "down"):
+            state["focus"] = (state["focus"] + 1) % len(fields)
+            return None
+        if key == "up":
+            state["focus"] = (state["focus"] - 1) % len(fields)
+            return None
+        if key == "enter":
+            if all(item.value.strip() for item in fields):
+                return "submit"
+            state["focus"] = next(i for i, item in enumerate(fields) if not item.value.strip())
+            return None
+        fields[state["focus"]].handle(key)
+        state["error"] = None
+        return None
+
+    def forget() -> None:
+        for item in fields[1:]:
+            item.clear()
+
+    while True:
+        if app.interact(t("s2.title"), body, keys_form(), handle, typing=True) == "back":
+            forget()
+            return False
+        app.draw(t("s2.title"), Text(t("panel.connecting")))
+        values = [item.value for item in fields]
+        try:
+            client.login(values[0].strip(), values[1], values[2].strip() if len(values) > 2 else "")
+            forget()
+            return True
+        except PanelError as exc:
+            forget()
+            if exc.code == "unauthorized":
+                state["error"] = t("panel.xui.err.login")
+            elif exc.code == "forbidden":
+                state["error"] = t("panel.xui.err.forbidden")
+            elif not app.ask_retry(t("s2.title"), error_text(exc, location.api)):
+                return False
+            state["focus"] = 1
+
+
+def open_xui(app: App, location: Optional[PanelLocation]) -> Any:
+    from kerberos.panel.xui import XuiClient
+
+    if location is None:
+        url = ask_xui_url(app)
+        if url is None:
+            return BACK
+        location = PanelLocation(api=url, version="?", kind="3x-ui")
+    app.env.masker.register(location.panel_domain)
+    client = XuiClient(location.api, app.env.xui_transport, app.env.clock, location.panel_domain)
+    if not xui_login_form(app, client, location):
+        return BACK
+    return location, client
+
+
+def public_ipv4(app: App, location: PanelLocation) -> Optional[str]:
+    """The address the world reaches this server at: an interface, the panel domain, or asked."""
+    from kerberos.agent import parse_ip_addr
+
+    result = app.env.host.run(["ip", "-j", "addr", "show"], timeout=10)
+    v4, _v6 = parse_ip_addr(result.stdout) if result.ok else ([], [])
+    if v4:
+        return v4[0]
+    if location.panel_domain and app.env.prober is not None:
+        found = [a for a in app.env.prober.resolve(location.panel_domain) if ":" not in a]
+        if found:
+            return found[0]
+    field = TextInput(t("panel.xui.ip_label"), hint=t("panel.xui.ip_hint"),
+                      validate=lambda v: None if re.fullmatch(r"(\d{1,3}\.){3}\d{1,3}", v.strip())
+                      else t("panel.xui.ip_invalid"))  # fmt: skip
+
+    def handle(key: str) -> Optional[str]:
+        return "" if key == "esc" else field.handle(key)
+
+    value = app.interact(t("s2.title"), field, keys_form(), handle, typing=True).strip()
+    return value or None
+
+
+def load_xui(app: App, client: Any, location: PanelLocation) -> Optional[PanelSnapshot]:
+    address = public_ipv4(app, location)
+    if address is None:
+        return None
+    while True:
+        app.draw(t("s2.title"), Text(t("panel.xui.loading")))
+        try:
+            return client.snapshot(location, address, app.env.host.hostname())
+        except PanelError as exc:
+            if not app.ask_retry(t("s2.title"), error_text(exc, location.api)):
+                return None
+
+
 def step(app: App, session: Session) -> Any:
     if session.snapshot is None:
         opened = open_panel(app)
         if not isinstance(opened, tuple):
             return opened
         location, client = opened
-        snapshot = load(app, client, location)
+        loader = load_xui if location.kind == "3x-ui" else load
+        snapshot = loader(app, client, location)
         if snapshot is None:
             return EXIT_PANEL
         register_sensitive(app, snapshot)
@@ -253,6 +450,10 @@ def step(app: App, session: Session) -> Any:
     location, snapshot = session.location, session.snapshot
 
     def body(_w: int, _h: int) -> RenderableType:
+        if location.kind == "3x-ui":
+            inbounds = len(snapshot.hosts)
+            ok = Text(f"✓ {t('panel.xui.ok', inbounds=inbounds)}", style="ok")
+            return Group(*xui_lines(app, location), Text(""), ok)
         ok = Text(
             f"✓ {t('panel.ok', nodes=len(snapshot.nodes), hosts=len(snapshot.hosts))}", style="ok"
         )

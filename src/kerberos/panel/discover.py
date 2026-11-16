@@ -106,6 +106,7 @@ def discover(host: Host) -> Optional[PanelLocation]:
 
 # -- 3x-ui (tech.md §7.6) ---------------------------------------------------------
 XUI_DB = "/etc/x-ui/x-ui.db"
+XUI_ENV = "/etc/default/x-ui"  # EnvironmentFile of the x-ui unit
 XUI_BIN = "/usr/local/x-ui/x-ui"
 XUI_PORT = 2053
 # Keys of the 3x-ui settings table KERBEROS reads; credentials, the session
@@ -131,11 +132,15 @@ def base_path(value: str) -> str:
 
 
 def discover_xui(host: Host) -> Optional[PanelLocation]:
-    settings = host.read_settings(XUI_DB, XUI_KEYS)
+    """None: no SQLite settings here (not 3x-ui, PostgreSQL since v3.1, or no sqlite3)."""
+    env = host.read_env_keys(XUI_ENV, ["XUI_DB_FOLDER", "XUI_PORT"])
+    folder = (env.get("XUI_DB_FOLDER") or "").rstrip("/")
+    settings = host.read_settings(f"{folder}/x-ui.db" if folder else XUI_DB, XUI_KEYS)
     if settings is None:
         return None
     try:
-        port = int(settings.get("webPort") or XUI_PORT)
+        # From v3.4 the XUI_PORT of the unit's environment wins over the setting.
+        port = int(env.get("XUI_PORT") or settings.get("webPort") or XUI_PORT)
     except ValueError:
         port = XUI_PORT
     listen = (settings.get("webListen") or "").strip()
