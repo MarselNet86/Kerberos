@@ -17,7 +17,9 @@ and recorded command outputs.
 from __future__ import annotations
 
 import base64
+import colorsys
 import hashlib
+import html
 import ipaddress
 import json
 import os
@@ -32,7 +34,7 @@ import time
 from typing import Any, Callable, Optional
 
 PROTOCOL = 1
-AGENT_VERSION = "0.7.0"
+AGENT_VERSION = "0.8.0"
 AGENT_PATH = "/usr/local/sbin/kerberos-agent"
 STATE_DIR = "/var/lib/kerberos"
 
@@ -1508,90 +1510,1021 @@ RENEW_HOOK = "/etc/letsencrypt/renewal-hooks/deploy/kerberos-nginx-reload"
 COMPOSE_FILE = "/opt/remnanode/docker-compose.yml"
 LETSENCRYPT_VOLUME = "/etc/letsencrypt:/etc/letsencrypt:ro"
 
-WORDS = {
-    "studio": ["Design", "Craft", "Atelier", "Works", "Studio", "Lab"],
-    "topics": [
-        "Mountains",
-        "Coffee",
-        "Gardens",
-        "Bicycles",
-        "Old maps",
-        "Bread",
-        "Jazz",
-        "Pottery",
-    ],
-    "items": ["Notebook", "Lamp", "Mug", "Backpack", "Poster", "Candle", "Scarf", "Bottle"],
-    "roles": ["photographer", "translator", "architect", "illustrator", "editor", "engineer"],
+# -- the stub site (tech.md §10.4 step 1): a site of its own on every node -----
+# A small business with its own name, texts, colours, fonts and markup, all
+# from one seed. Nothing is loaded from elsewhere: styles, icon and pictures
+# are inline, so the page asks no other server for anything.
+SITE_SEEDS = 1 << 32
+
+
+class SiteRandom:
+    """The random stream of a site: sha256 of the seed in counter mode.
+
+    It is the same on every Python version, so KERBEROS on the panel server
+    and the agent on the node build the same site from the same seed.
+    """
+
+    def __init__(self, seed: int, part: str) -> None:
+        self.key = f"kerberos-site:{seed}:{part}:".encode()
+        self.counter = 0
+
+    def random(self) -> float:
+        block = hashlib.sha256(self.key + str(self.counter).encode()).digest()
+        self.counter += 1
+        return int.from_bytes(block[:6], "big") / float(1 << 48)
+
+    def below(self, n: int) -> int:
+        return int(self.random() * n)
+
+    def choice(self, items: Any) -> Any:
+        return items[self.below(len(items))]
+
+    def uniform(self, low: float, high: float) -> float:
+        return low + (high - low) * self.random()
+
+    def chance(self, p: float) -> bool:
+        return self.random() < p
+
+    def shuffled(self, items: Any) -> list:
+        result = list(items)
+        for i in range(len(result) - 1, 0, -1):
+            j = self.below(i + 1)
+            result[i], result[j] = result[j], result[i]
+        return result
+
+    def sample(self, items: Any, k: int) -> list:
+        return self.shuffled(items)[:k]
+
+    def word(self, text: str) -> str:
+        return self.choice(text.split("|"))
+
+    def words(self, text: str, k: int) -> list:
+        return self.sample(text.split("|"), k)
+
+
+def hsl_hex(hue: float, saturation: float, lightness: float) -> str:
+    red, green, blue = colorsys.hls_to_rgb((hue % 360) / 360, lightness, saturation)
+    return "#" + "".join(f"{round(c * 255):02x}" for c in (red, green, blue))
+
+
+def mix(a: str, b: str, share: float) -> str:
+    """`share` of colour b in colour a."""
+    pairs = [(int(a[i : i + 2], 16), int(b[i : i + 2], 16)) for i in (1, 3, 5)]
+    return "#" + "".join(f"{round(x + (y - x) * share):02x}" for x, y in pairs)
+
+
+def luminance(color: str) -> float:
+    channels = [int(color[i : i + 2], 16) / 255 for i in (1, 3, 5)]
+    linear = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
+    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+
+def contrast(a: str, b: str) -> float:
+    """WCAG contrast ratio of two colours, 1 to 21."""
+    high, low = sorted((luminance(a), luminance(b)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+# Kinds of small businesses. Items are separated by "|", fields of an item by "=".
+# offers: name=what it is=price; prices are numbers, "from N" for services.
+SITE_KINDS = {
+    "bakery": {
+        "names": "Rye|Hearth|Crumb|Ember|Morning|Wheatfield|Larder|Millstone",
+        "suffix": "Bakery|Bakehouse|Bread Co.",
+        "hero": "Bread baked before sunrise|Sourdough worth getting up for|Good bread takes two"
+        " days",
+        "lead": "We bake in small batches with flour from a stone mill. Order by noon and collect"
+        " the next morning.|Everything leaves the oven before seven. When a tray is gone, it is"
+        " gone until tomorrow.",
+        "offers": "Sourdough loaf=Two days of fermentation and a dark, crackling crust=6.50"
+        "|Seeded rye=Sunflower, flax and pumpkin seeds in a dense rye=5.80"
+        "|Cardamom buns=Twisted by hand and brushed with a little syrup=3.20"
+        "|Focaccia=Olive oil, rosemary and flaky salt=4.90"
+        "|Butter croissants=Three days from dough to tray=2.80"
+        "|Apple tart=Seasonal apples on almond cream=4.40",
+        "about": "The bakery started in {since} in a rented kitchen with one oven. We still bake"
+        " by hand and still at night, now for the neighbourhood and a few cafes.|Our flour comes"
+        " from a mill we visit every season, and our starter is older than the shop.",
+        "facts": "Baked by hand every night|Flour from a stone mill|No improvers, no shortcuts",
+        "menu": "Today's bakes|What we bake|The bread list",
+        "cta": "Order bread|See today's bakes",
+        "motif": "loaf",
+        "opens": 7,
+        "fonts": ("oldstyle|didone|slab", "humanist|transitional"),
+        "hue": (18, 50),
+        "dark": 0.1,
+    },
+    "coffee": {
+        "names": "Copper|Kettle|Ridge|Harbor|North|Cinder|Ember|Fable",
+        "suffix": "Coffee Roasters|Coffee|Roastery",
+        "hero": "Coffee roasted on Tuesdays|Fresh beans, honest roasts|Coffee you can taste the"
+        " farm in",
+        "lead": "We roast small batches every week and print the roast date on every bag. Come"
+        " by for a cup or take beans home.|Single origin beans from farms we know by name,"
+        " roasted light enough to taste where they grew.",
+        "offers": "House espresso=Chocolate, hazelnut and a long finish=14.00"
+        "|Ethiopia Guji=Peach, jasmine and black tea=16.50"
+        "|Colombia Huila=Red apple, caramel and cocoa=15.00"
+        "|Filter tasting set=Three 100 g bags of this month's coffees=18.00"
+        "|Cold brew=Steeped for sixteen hours, sold by the bottle=4.50"
+        "|Brewing class=Two hours on grind, ratio and water=from 35",
+        "about": "We started roasting in {since} on a machine the size of a washing machine."
+        " The roaster is bigger now, the batches are not.|Every coffee is cupped before it"
+        " goes on the shelf. If it does not taste right, it does not go out.",
+        "facts": "Roast date on every bag|Green beans bought directly|Free grind on request",
+        "menu": "Coffee and more|On the shelf|The menu",
+        "cta": "Order beans|Visit the café",
+        "motif": "cup",
+        "opens": 8,
+        "fonts": ("slab|grotesk|didone", "neo|humanist"),
+        "hue": (10, 40),
+        "dark": 0.45,
+    },
+    "bikes": {
+        "names": "Spoke|Gear|Chain|Tandem|Pedal|Crank|Freewheel|Cadence",
+        "suffix": "Bike Workshop|Cycles|Bicycle Repair",
+        "hero": "Repairs done the same week|Your bike, running like new|We fix what others replace",
+        "lead": "Brakes, gears, wheels and old frames. Book a slot online or just ride in, and"
+        " we will tell you honestly what it needs.|A small workshop for everyday bikes, road"
+        " bikes and the old ones in the shed that deserve a second life.",
+        "offers": "Full service=Every bolt, cable and bearing checked and adjusted=from 89"
+        "|Wheel truing=Spokes tensioned and the wheel brought back true=from 25"
+        "|Brake tune-up=Pads, cables and alignment for quiet, sure stops=from 30"
+        "|Bike fitting=Saddle, bars and cleats set to the way you ride=from 60"
+        "|Winter storage=Dry, safe and serviced before spring=from 15"
+        "|Used bikes=Checked, serviced and sold with a three-month warranty=from 180",
+        "about": "We opened the workshop in {since} with two stands and a box of spare parts."
+        " Most of our customers ride to work and need their bike back tomorrow.|We would rather"
+        " true an old wheel than sell you a new one, and we will tell you which makes sense.",
+        "facts": "Free safety check at the door|Repairs within a week|Old frames welcome",
+        "menu": "Services|Repairs and prices|What we do",
+        "cta": "Book a repair|Ask about your bike",
+        "motif": "bicycle",
+        "opens": 9,
+        "fonts": ("industrial|grotesk|neo", "neo|grotesk"),
+        "hue": (0, 360),
+        "dark": 0.35,
+    },
+    "photo": {
+        "names": "Aperture|Lumen|Frame|Silver|Contact|Grain|Darkroom|Exposure",
+        "suffix": "Photo Studio|Photography|Pictures",
+        "hero": "Portraits in natural light|Pictures you will keep for decades|Unhurried"
+        " sessions, honest pictures",
+        "lead": "A daylight studio for portraits, families and small brands. Every picture is"
+        " edited by hand and delivered within two weeks.|We take our time, so you can forget"
+        " about the camera. The pictures look like you on a good day.",
+        "offers": "Portrait session=One hour in the studio, ten edited pictures=from 150"
+        "|Family session=Up to six people, at home or in the studio=from 220"
+        "|Product photos=Clean shots for shops and catalogues=from 180"
+        "|Film scanning=High-resolution scans of negatives and slides=from 2 per frame"
+        "|Fine art prints=Archival cotton paper, signed=from 45",
+        "about": "The studio opened in {since} in a former print shop with tall north windows."
+        " The light is still the best thing about it.|We shoot digital and on film, and we"
+        " print in house, so we see every picture through to the paper.",
+        "facts": "Pictures delivered within two weeks|Printing in house|Film and digital",
+        "menu": "Sessions and prints|Services|What we offer",
+        "cta": "Book a session|See the portfolio",
+        "motif": "camera",
+        "opens": 10,
+        "fonts": ("didone|grotesk|geometric", "grotesk|neo"),
+        "hue": (180, 300),
+        "dark": 0.5,
+    },
+    "translate": {
+        "names": "Lingua|Parallel|Margin|Glossa|Atlas|Verso|Idiom|Polyglot",
+        "suffix": "Translations|Language Services|Translation Studio",
+        "hero": "Translations that read like originals|Every text read twice|Your words, in"
+        " their language",
+        "lead": "Legal, technical and marketing texts in twelve languages, translated by native"
+        " speakers and checked by a second linguist.|We translate documents, manuals and"
+        " websites, and we keep the deadline we promise.",
+        "offers": "Legal documents=Contracts, certificates and court papers=from 0.12 per word"
+        "|Technical manuals=Consistent terminology across every update=from 0.10 per word"
+        "|Websites=Translated, localised and checked in the layout=from 0.11 per word"
+        "|Certified copies=Sworn translations accepted by authorities=from 35"
+        "|Interpreting=Meetings, notaries and site visits=from 70",
+        "about": "We started in {since} as two translators sharing an office. Today a team of"
+        " linguists works with us, each in their own language pair.|Every text is translated"
+        " by a native speaker and read by a second one before it leaves the office.",
+        "facts": "Native speakers only|Second reading for every text|Confidential by default",
+        "menu": "Services|What we translate|Rates",
+        "cta": "Request a quote|Send your text",
+        "motif": "bubbles",
+        "opens": 9,
+        "fonts": ("transitional|neo|geometric", "neo|humanist|transitional"),
+        "hue": (190, 250),
+        "dark": 0.15,
+    },
+    "architecture": {
+        "names": "Grid|Plinth|Atrium|Lintel|Cornice|Facade|Vault|Gable",
+        "suffix": "Architects|Architecture|Studio",
+        "hero": "Buildings that age well|Houses designed around the way you live|Small"
+        " buildings, carefully made",
+        "lead": "We design houses, renovations and interiors, from the first sketch to the"
+        " last site visit.|A small practice for private clients. We listen first and draw"
+        " second.",
+        "offers": "New houses=From the site visit to the building permit=on request"
+        "|Renovations=Old buildings made comfortable without losing their character=on request"
+        "|Interiors=Kitchens, stairs and built-in furniture=on request"
+        "|Feasibility studies=What your site allows before you buy it=from 900"
+        "|Planning permits=Drawings and paperwork for the authorities=from 1200",
+        "about": "The practice was founded in {since}. We take on a handful of projects a"
+        " year so that we can see each one through.|We draw by hand first, build models,"
+        " and only then move to the computer.",
+        "facts": "A few projects a year|Models before drawings|Site visits included",
+        "menu": "What we do|Services|Projects we take on",
+        "cta": "Start a project|Talk to us",
+        "motif": "building",
+        "opens": 9,
+        "fonts": ("grotesk|didone|neo", "grotesk|neo"),
+        "hue": (0, 360),
+        "dark": 0.3,
+    },
+    "pottery": {
+        "names": "Kiln|Clay|Glaze|Terra|Wheel|Slip|Ochre|Ember",
+        "suffix": "Ceramics|Pottery|Clay Studio",
+        "hero": "Thrown by hand, fired twice|Tableware for every day|Pots made slowly",
+        "lead": "Plates, bowls and cups thrown on the wheel and glazed in the studio. Every"
+        " piece is a little different.|A small studio making tableware and teaching beginners"
+        " on the wheel.",
+        "offers": "Dinner plate=Stoneware with a satin glaze, 27 cm=38.00"
+        "|Breakfast bowl=Wide and deep, safe in the dishwasher=29.00"
+        "|Tea cup=No handle, sits warm in the hand=22.00"
+        "|Wheel class for beginners=Four evenings, clay and firing included=from 180"
+        "|Seconds shelf=Small flaws, same pots, lower prices=from 10",
+        "about": "The studio has been firing since {since}. Our glazes are mixed in the"
+        " studio from raw materials, so no two batches are quite the same.|Classes are small,"
+        " six people at most, so everyone gets time at the wheel.",
+        "facts": "Glazes mixed in the studio|Classes of six or fewer|Food safe and oven proof",
+        "menu": "In the shop|Pots and classes|What we make",
+        "cta": "Visit the shop|Book a class",
+        "motif": "vase",
+        "opens": 11,
+        "fonts": ("oldstyle|rounded|geometric", "humanist|geometric"),
+        "hue": (10, 210),
+        "dark": 0.15,
+    },
+    "tea": {
+        "names": "Leaf|Oolong|Steam|Jade|Willow|Monsoon|Camellia|Lantern",
+        "suffix": "Tea House|Teas|Tea Room",
+        "hero": "Tea from small gardens|A quiet cup in a busy town|Loose leaf, brewed right",
+        "lead": "Green, oolong and black teas from small gardens, brewed at the right"
+        " temperature and served in a quiet room.|Taste before you buy: every tea on our"
+        " shelves can be brewed for you on the spot.",
+        "offers": "Sencha=Fresh and grassy, from a family garden=12.00"
+        "|Aged oolong=Roasted, honeyed and very calm=19.00"
+        "|Darjeeling first flush=Bright, floral, picked in spring=16.00"
+        "|Herbal blend=Mint, lemon verbena and chamomile=9.00"
+        "|Tasting flight=Three teas brewed side by side=from 14",
+        "about": "We opened the tea room in {since} after years of travelling to tea gardens."
+        " Most of our teas come from growers we have met.|We brew every tea at its own"
+        " temperature and time, and we are happy to show you how.",
+        "facts": "Teas from small gardens|Samples before you buy|Brewed at the right temperature",
+        "menu": "On the shelf|The tea list|The menu",
+        "cta": "Visit the tea room|Order tea",
+        "motif": "teacup",
+        "opens": 11,
+        "fonts": ("oldstyle|rounded|humanist", "humanist|transitional"),
+        "hue": (70, 170),
+        "dark": 0.2,
+    },
+    "bindery": {
+        "names": "Folio|Quire|Vellum|Spine|Octavo|Colophon|Signature|Marbled",
+        "suffix": "Bindery|Bookbinding|Book Arts",
+        "hero": "Old books brought back to life|Stitched, not glued|Books made to be kept",
+        "lead": "Repairs of old books, custom journals and boxes, all sewn and bound by hand"
+        " at our bench.|We repair family bibles, cookbooks and first editions, and we make"
+        " new books that will outlive their owners.",
+        "offers": "Book repair=Loose pages, broken spines and torn covers=from 40"
+        "|Custom journal=Your paper, your cover, your size=from 65"
+        "|Thesis binding=Hard cover, gold lettering, ready in three days=from 30"
+        "|Boxes and cases=Made to measure for precious books=from 55"
+        "|Weekend workshop=Sew your first book in two days=from 120",
+        "about": "The bindery has been at its bench since {since}. Most of our work is"
+        " repair: books that have been read for generations.|We sew every book by hand and"
+        " use reversible glues, so the next binder can repair it again.",
+        "facts": "Sewn by hand|Reversible materials|Gold lettering in house",
+        "menu": "What we do|Repairs and books|Services",
+        "cta": "Bring a book|Order a journal",
+        "motif": "book",
+        "opens": 10,
+        "fonts": ("oldstyle|didone|transitional", "oldstyle|transitional"),
+        "hue": (330, 390),
+        "dark": 0.25,
+    },
+    "garden": {
+        "names": "Fern|Meadow|Hedge|Moss|Orchard|Thyme|Juniper|Bramble",
+        "suffix": "Garden Design|Gardens|Landscapes",
+        "hero": "Gardens for every season|Plants that suit your soil|From a balcony to an orchard",
+        "lead": "We design and plant gardens that look after themselves, with plants chosen"
+        " for your soil, light and time.|Garden plans, planting and seasonal care from a small"
+        " team that loves what grows.",
+        "offers": "Garden plan=A drawn plan with a planting list=from 350"
+        "|Planting=We bring the plants and put them in the ground=from 40 per hour"
+        "|Seasonal care=Four visits a year to prune, feed and tidy=from 280"
+        "|Balcony gardens=Pots, soil and plants for small spaces=from 120"
+        "|Hedges and trees=Planting, shaping and advice=on request",
+        "about": "We have been planting gardens since {since}. Most of them are small, and"
+        " all of them are meant to be lived in.|We use no chemicals and prefer plants that"
+        " feed bees and birds.",
+        "facts": "No chemicals|Plants for bees and birds|Plans drawn by hand",
+        "menu": "What we do|Services|Gardens and care",
+        "cta": "Plan your garden|Book a visit",
+        "motif": "fern",
+        "opens": 8,
+        "fonts": ("oldstyle|geometric|humanist", "humanist|geometric"),
+        "hue": (75, 160),
+        "dark": 0.15,
+    },
+    "wood": {
+        "names": "Oak|Dovetail|Timber|Chisel|Birch|Walnut|Plane|Heartwood",
+        "suffix": "Woodworks|Joinery|Furniture",
+        "hero": "Solid wood, oiled by hand|Furniture made to measure|Joints without screws",
+        "lead": "Tables, shelves and kitchens made from solid wood in our workshop, finished"
+        " with oil and built to be repaired.|We make furniture to measure and restore the old"
+        " pieces you cannot replace.",
+        "offers": "Dining tables=Oak, walnut or ash, made to your size=from 1400"
+        "|Shelving=Built in or free standing, solid wood throughout=from 450"
+        "|Kitchen fronts=New doors for the kitchen you already have=from 900"
+        "|Restoration=Old furniture repaired and refinished=on request"
+        "|Cutting boards=End grain, oiled, from our offcuts=from 45",
+        "about": "The workshop opened in {since}. We use timber from local sawmills and dry"
+        " it ourselves.|Everything we make can be taken apart and repaired, because good"
+        " furniture outlives its first owner.",
+        "facts": "Local timber|Oil finishes, no lacquer|Built to be repaired",
+        "menu": "What we make|Furniture and repairs|In the workshop",
+        "cta": "Ask for a quote|Visit the workshop",
+        "motif": "rings",
+        "opens": 8,
+        "fonts": ("slab|grotesk|oldstyle", "humanist|neo"),
+        "hue": (20, 45),
+        "dark": 0.3,
+    },
+    "music": {
+        "names": "Octave|Cadence|Tempo|Chord|Sonata|Reed|Allegro|Overture",
+        "suffix": "Music School|Music Lessons|Music Studio",
+        "hero": "Lessons for every age|Learn the instrument you always wanted|Play with other"
+        " people",
+        "lead": "Piano, guitar and voice lessons with teachers who perform. The first lesson is"
+        " free.|Private lessons and small ensembles for children and adults, beginners and"
+        " returners.",
+        "offers": "Piano=Weekly lessons, 30 or 45 minutes=from 28 a lesson"
+        "|Guitar=Classical, acoustic and electric=from 26 a lesson"
+        "|Voice=Breathing, range and repertoire=from 30 a lesson"
+        "|Music theory=Reading, harmony and ear training=from 22"
+        "|Ensemble=Play together once a week=from 18",
+        "about": "The school opened in {since} with one piano and three students. Our"
+        " teachers still play concerts, and our students play two of their own each year.|"
+        "We teach children from six and adults of any age, including those who stopped years"
+        " ago.",
+        "facts": "First lesson free|Concerts twice a year|Teachers who perform",
+        "menu": "Lessons|What we teach|Courses",
+        "cta": "Book a free lesson|Meet the teachers",
+        "motif": "notes",
+        "opens": 12,
+        "fonts": ("didone|geometric|oldstyle", "humanist|neo"),
+        "hue": (220, 330),
+        "dark": 0.4,
+    },
+    "tailor": {
+        "names": "Thread|Seam|Tweed|Bobbin|Linen|Button|Selvedge|Hemline",
+        "suffix": "Tailoring|Tailors|Alterations",
+        "hero": "Clothes that fit, kept for years|Alterations by tomorrow|Made to measure,"
+        " made to last",
+        "lead": "Alterations, repairs and made-to-measure clothes from a small atelier. Most"
+        " hems are ready the next day.|We take in, let out, shorten and mend, and we make"
+        " suits and dresses from the first fitting.",
+        "offers": "Trouser hems=Ready the next day=from 15"
+        "|Taking in=Jackets, dresses and shirts fitted to you=from 25"
+        "|Repairs=Zips, linings, elbows and invisible mending=from 12"
+        "|Made to measure=Suits, coats and dresses, three fittings=from 900"
+        "|Wedding wear=Fittings and alterations without a rush=on request",
+        "about": "The atelier opened in {since}. We still cut by hand and keep every"
+        " customer's measurements on paper.|Good clothes are worth fixing, and we would"
+        " rather mend a coat than see it thrown away.",
+        "facts": "Hems by the next day|Measurements kept on file|Fabrics you can touch",
+        "menu": "Services|Alterations and tailoring|What we do",
+        "cta": "Book a fitting|Bring your clothes",
+        "motif": "spool",
+        "opens": 10,
+        "fonts": ("didone|transitional|oldstyle", "transitional|humanist"),
+        "hue": (200, 260),
+        "dark": 0.35,
+    },
+    "yoga": {
+        "names": "Lotus|Breath|Cedar|Dawn|Balance|Stillness|Tide|Haven",
+        "suffix": "Yoga|Yoga Studio|Movement",
+        "hero": "Classes for stiff bodies|Breathe, move, rest|Small groups, calm room",
+        "lead": "Gentle and dynamic classes in groups of ten or fewer. Mats, blocks and tea are"
+        " waiting for you.|A calm room near the park for yoga, breathing and rest, whatever"
+        " your age or shape.",
+        "offers": "Morning flow=An hour of movement to start the day=14 a class"
+        "|Gentle yoga=Slow classes for beginners and stiff backs=12 a class"
+        "|Private session=One to one, at the studio or at home=from 55"
+        "|Breathing course=Four weeks of simple practices=from 70"
+        "|Monthly pass=As many classes as you like=95",
+        "about": "We opened the studio in {since} for people who thought yoga was not for"
+        " them. Most of our students started with the gentle class.|Classes are small, so the"
+        " teacher knows your name and your knees.",
+        "facts": "Ten people or fewer|Mats and tea provided|First class free",
+        "menu": "Classes|Timetable and passes|What we offer",
+        "cta": "Book a class|See the timetable",
+        "motif": "sun",
+        "opens": 7,
+        "fonts": ("rounded|geometric|humanist", "humanist|geometric"),
+        "hue": (150, 210),
+        "dark": 0.15,
+    },
 }
 
-# Four stub sites with different HTML structure: two nodes never look alike.
-SITE_LAYOUTS = (
-    """<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{name} {w0}</title>
-<meta name="viewport" content="width=device-width, initial-scale=1"><style>{css}</style></head>
-<body><header><h1>{name} {w0}</h1><nav><a href="#work">Work</a> <a href="#about">About</a>
-<a href="#contact">Contact</a></nav></header><main><section id="work"><h2>Selected work</h2>
-<article><h3>{t0}</h3><p>{p0}</p></article><article><h3>{t1}</h3><p>{p1}</p></article>
-<article><h3>{t2}</h3><p>{p2}</p></article></section><section id="about"><h2>About</h2>
-<p>{p3}</p></section></main><footer id="contact"><p>{name} &middot; {year}</p></footer>
-</body></html>""",
-    """<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Notes on {t0}</title>
-<meta name="viewport" content="width=device-width, initial-scale=1"><style>{css}</style></head>
-<body><div class="wrap"><h1>Notes on {t0}</h1><ul class="posts"><li><time>{d0}</time>
-<a href="#">{t1}</a></li><li><time>{d1}</time><a href="#">{t2}</a></li><li><time>{d2}</time>
-<a href="#">{t0} again</a></li></ul><blockquote>{p0}</blockquote><p class="small">{p1}</p>
-</div></body></html>""",
-    """<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{name} shop</title>
-<meta name="viewport" content="width=device-width, initial-scale=1"><style>{css}</style></head>
-<body><header class="bar"><strong>{name}</strong><span>Free delivery</span></header>
-<div class="grid"><figure><figcaption>{i0}</figcaption><b>{price0}</b></figure><figure>
-<figcaption>{i1}</figcaption><b>{price1}</b></figure><figure><figcaption>{i2}</figcaption>
-<b>{price2}</b></figure><figure><figcaption>{i3}</figcaption><b>{price3}</b></figure></div>
-<form><input type="email" placeholder="Your email"><button>Subscribe</button></form>
-</body></html>""",
-    """<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{name}</title>
-<meta name="viewport" content="width=device-width, initial-scale=1"><style>{css}</style></head>
-<body><table class="card"><tr><td><h1>{name}</h1><p>{role}</p></td></tr><tr><td><dl>
-<dt>Based in</dt><dd>{t0}</dd><dt>Interests</dt><dd>{t1}, {t2}</dd><dt>Mail</dt>
-<dd>hello at {domain}</dd></dl></td></tr></table><p>{p0}</p></body></html>""",
+
+SITE_FONTS = {
+    "oldstyle": "'Iowan Old Style','Palatino Linotype','URW Palladio L',P052,serif",
+    "transitional": "Charter,'Bitstream Charter','Sitka Text',Cambria,serif",
+    "didone": "Didot,'Bodoni MT','Noto Serif Display','URW Palladio L',P052,Sylfaen,serif",
+    "slab": "Rockwell,'Rockwell Nova','Roboto Slab','DejaVu Serif','Sitka Small',serif",
+    "humanist": "Seravek,'Gill Sans Nova',Ubuntu,Calibri,'DejaVu Sans',source-sans-pro,sans-serif",
+    "geometric": "Avenir,Montserrat,Corbel,'URW Gothic',source-sans-pro,sans-serif",
+    "grotesk": "'Helvetica Neue',Helvetica,'Nimbus Sans',Arial,sans-serif",
+    "neo": "Inter,Roboto,'Helvetica Neue','Arial Nova','Nimbus Sans',Arial,sans-serif",
+    "industrial": "Bahnschrift,'DIN Alternate','Franklin Gothic Medium','Nimbus Sans Narrow',"
+    "sans-serif-condensed,sans-serif",
+    "rounded": "ui-rounded,'Hiragino Maru Gothic ProN',Quicksand,Comfortaa,Manjari,"
+    "'Arial Rounded MT','Arial Rounded MT Bold',Calibri,source-sans-pro,sans-serif",
+}
+SITE_PEOPLE = (
+    "Anna K.|Ben O.|Clara M.|David R.|Emma L.|Felix B.|Greta S.|Hugo D.|Ines P.|Jonas W."
+    "|Lena H.|Marco V.|Nora T.|Oscar F.|Paula G.|Ruben A.|Sofia N.|Theo C.|Vera J.|Yusuf E."
 )
-SITE_CSS = (
-    "body{{font-family:{font};margin:0 auto;max-width:{width}px;padding:24px;color:#{fg};"
-    "background:#{bg}}}a{{color:#{accent}}}h1{{font-weight:{weight}}}"
+SITE_REVIEWS = (
+    "Friendly people, honest prices and work done properly. I would not go anywhere else."
+    "|They explained everything and finished a day earlier than promised."
+    "|I came once out of curiosity and I have been coming back every week since."
+    "|Exactly what I hoped for, and they remembered my name the second time."
+    "|Careful, quick and kind. My friends now go there too."
+    "|Worth the trip across town. The quality speaks for itself."
 )
-FONTS = ("Georgia,serif", "Helvetica,Arial,sans-serif", "Verdana,sans-serif", "monospace")
+SITE_STREETS = (
+    "Mill Lane|Harbour Street|Linden Row|Old Market|Station Road|Willow Walk|Kiln Yard"
+    "|Brewery Lane|Garden Court|Bridge Street|Orchard Row|Chapel Yard"
+)
+SITE_QUESTIONS = (
+    "Do I need to book?=Booking helps us plan, but you are welcome to drop by."
+    "|Can I pay by card?=Yes, by card or in cash."
+    "|Do you sell gift cards?=Yes, for any amount, valid for a year."
+    "|How long does an order take?=Usually a few days. We tell you the date when you order."
+    "|Is there parking nearby?=There is free parking in the next street."
+    "|Do you work with companies?=Yes, write to us and we will send an offer."
+)
+SITE_SECTION_TITLES = {
+    "offers": "What we make|Our work|The menu|Services|Prices",
+    "about": "About us|Our story|Who we are|How we work",
+    "reviews": "Kind words|What people say|From our customers",
+    "faq": "Questions|Good to know|Before you come",
+    "visit": "Visit us|Find us|Opening hours|Get in touch",
+}
+
+
+def _site_tokens(rng: SiteRandom, kind: dict) -> dict:
+    """Type, spacing and shape of one site."""
+    base = rng.choice((16, 17, 18))
+    ratio = rng.choice((1.2, 1.25, 1.333))
+    heading = rng.choice(kind["fonts"][0].split("|"))
+    body = rng.choice(kind["fonts"][1].split("|"))
+    shape = rng.choice(("sharp", "soft", "round"))
+    radius = {"sharp": (0, 2), "soft": (6, 12), "round": (14, 22)}[shape]
+    return {
+        "base": base,
+        "h1": round(base * ratio**5),
+        "h2": round(base * ratio**3),
+        "h3": round(base * ratio),
+        "lead": round(base * ratio),
+        "line": 1.65 if body in ("oldstyle", "transitional") else 1.55,
+        "heading": SITE_FONTS[heading],
+        "body": SITE_FONTS[body],
+        "weight": rng.choice((500, 600, 700)) if heading not in ("didone",) else 400,
+        "tracking": "-0.02em" if heading in ("grotesk", "neo", "geometric") else "0",
+        "small": radius[0],
+        "large": radius[1],
+        "pill": shape == "round" and rng.chance(0.6),
+        "width": rng.choice((1040, 1120, 1180)),
+        "gap": rng.choice((72, 88, 104)),
+    }
+
+
+def site_theme(rng: SiteRandom, kind: dict) -> dict:
+    """Colours of one site; text, muted text and links keep a contrast of 4.5:1 or more."""
+    low, high = kind["hue"]
+    hue = low + rng.below(high - low + 1)
+    dark = rng.chance(kind["dark"])
+    if dark:
+        background = hsl_hex(hue, rng.uniform(0.1, 0.35), rng.uniform(0.07, 0.12))
+        text = hsl_hex(hue, rng.uniform(0.05, 0.2), rng.uniform(0.88, 0.95))
+    else:
+        background = hsl_hex(hue, rng.uniform(0.1, 0.45), rng.uniform(0.96, 0.99))
+        text = hsl_hex(hue, rng.uniform(0.1, 0.4), rng.uniform(0.09, 0.18))
+    accent_hue = hue + rng.choice((0, 150, 180, 200, 210, 330))
+    saturation = rng.uniform(0.45, 0.8)
+    lightness = rng.uniform(0.55, 0.68) if dark else rng.uniform(0.3, 0.44)
+    accent = hsl_hex(accent_hue, saturation, lightness)
+    while contrast(accent, background) < 4.6 and 0.04 < lightness < 0.96:
+        lightness += 0.03 if dark else -0.03
+        accent = hsl_hex(accent_hue, saturation, lightness)
+    share = 0.4
+    muted = mix(text, background, share)
+    while contrast(muted, background) < 4.6 and share > 0:
+        share = round(share - 0.05, 2)
+        muted = mix(text, background, share)
+    return {
+        "dark": dark,
+        "background": background,
+        "text": text,
+        "accent": accent,
+        "onAccent": max(
+            (background, text, "#ffffff", "#141414"), key=lambda color: contrast(color, accent)
+        ),
+        "muted": muted,
+        "soft": mix(accent, background, rng.uniform(0.78, 0.88)),
+        "deep": mix(accent, text, rng.uniform(0.3, 0.45)),
+        "band": mix(background, accent, rng.uniform(0.05, 0.09)),
+        "surface": mix(background, text, rng.uniform(0.025, 0.05)),
+        "border": mix(background, text, rng.uniform(0.12, 0.18)),
+    }
+
+
+def site_spec(seed: int) -> dict:
+    """What the site of `seed` is: kind, name and colours (S7 shows them before applying)."""
+    text = SiteRandom(seed, "text")
+    kind_id = text.choice(sorted(SITE_KINDS))
+    kind = SITE_KINDS[kind_id]
+    first, second = text.words(kind["names"], 2)
+    pattern = text.below(3)
+    if pattern == 0:
+        title = f"{first} {text.word(kind['suffix'])}"
+    elif pattern == 1:
+        title = f"{first} & {second}"
+    else:
+        title = f"{first} {second} {text.word(kind['suffix'])}"
+    return {"kind": kind_id, "title": title, "theme": site_theme(SiteRandom(seed, "theme"), kind)}
+
+
+def _site_motif(name: str, t: dict, rng: SiteRandom) -> str:
+    """The illustration of the hero: the most recognisable thing of the trade."""
+    a, d, s, p, i = t["accent"], t["deep"], t["soft"], t["surface"], t["text"]
+    shapes = {
+        "loaf": f'<ellipse cx="120" cy="172" rx="96" ry="12" fill="{s}"/>'
+        f'<path d="M26 142C26 82 78 50 120 50s94 32 94 92c0 18-16 24-94 24S26 160 26 142Z"'
+        f' fill="{a}"/><path d="M66 96l28 32M102 78l30 38M140 74l28 34" stroke="{p}"'
+        ' stroke-width="8" stroke-linecap="round"/>',
+        "cup": f'<ellipse cx="112" cy="176" rx="90" ry="12" fill="{s}"/>'
+        f'<path d="M48 92h128v36c0 30-24 44-64 44s-64-14-64-44Z" fill="{a}"/>'
+        f'<path d="M176 104c30 0 32 40 0 40" fill="none" stroke="{a}" stroke-width="11"/>'
+        f'<path d="M86 76c-10-14 10-24 0-40M112 76c-10-14 10-24 0-40M138 76c-10-14 10-24 0-40"'
+        f' fill="none" stroke="{d}" stroke-width="6" stroke-linecap="round"/>',
+        "bicycle": f'<circle cx="62" cy="134" r="42" fill="none" stroke="{i}" stroke-width="7"/>'
+        f'<circle cx="182" cy="134" r="42" fill="none" stroke="{i}" stroke-width="7"/>'
+        f'<path d="M62 134l42-54h58l20 54M104 80l24 54 34-54M128 134H62" fill="none"'
+        f' stroke="{a}" stroke-width="8" stroke-linejoin="round"/>'
+        f'<path d="M92 64h26M162 80l-6-24 18-4" fill="none" stroke="{i}" stroke-width="7"'
+        f' stroke-linecap="round"/><circle cx="128" cy="134" r="10" fill="{d}"/>',
+        "camera": f'<rect x="30" y="62" width="180" height="116" rx="18" fill="{a}"/>'
+        f'<rect x="74" y="40" width="60" height="30" rx="7" fill="{d}"/>'
+        f'<circle cx="120" cy="120" r="42" fill="{p}"/><circle cx="120" cy="120" r="27"'
+        f' fill="{i}"/><circle cx="109" cy="109" r="8" fill="{p}"/>'
+        f'<rect x="168" y="78" width="24" height="13" rx="4" fill="{s}"/>',
+        "bubbles": f'<path d="M30 30h112a16 16 0 0 1 16 16v54a16 16 0 0 1-16 16H76l-30 26v-26H30'
+        f'a16 16 0 0 1-16-16V46a16 16 0 0 1 16-16Z" fill="{a}"/>'
+        f'<path d="M110 84h100a16 16 0 0 1 16 16v54a16 16 0 0 1-16 16h-14v24l-28-24h-58a16 16'
+        f' 0 0 1-16-16v-54a16 16 0 0 1 16-16Z" fill="{s}"/>'
+        f'<path d="M46 58h80M46 82h56" stroke="{p}" stroke-width="9" stroke-linecap="round"/>'
+        f'<path d="M126 114h80M126 138h52" stroke="{d}" stroke-width="9"'
+        ' stroke-linecap="round"/>',
+        "building": f'<path d="M24 178h192" stroke="{i}" stroke-width="5"/>'
+        f'<rect x="54" y="72" width="132" height="106" fill="{p}" stroke="{i}" stroke-width="5"/>'
+        f'<path d="M42 78l78-46 78 46" fill="none" stroke="{i}" stroke-width="5"'
+        f' stroke-linejoin="round"/><path d="M98 178v-46a22 22 0 0 1 44 0v46" fill="{a}"/>'
+        f'<rect x="70" y="92" width="26" height="26" fill="{s}"/>'
+        f'<rect x="144" y="92" width="26" height="26" fill="{s}"/>',
+        "vase": f'<ellipse cx="120" cy="180" rx="74" ry="10" fill="{s}"/>'
+        f'<path d="M94 28h52v14c0 14 34 30 34 78 0 38-24 58-60 58s-60-20-60-58c0-48 34-64'
+        f' 34-78Z" fill="{a}"/><path d="M64 106h112M62 128h116" stroke="{p}" stroke-width="7"/>'
+        f'<path d="M86 28h68" stroke="{d}" stroke-width="9" stroke-linecap="round"/>',
+        "teacup": f'<ellipse cx="106" cy="176" rx="82" ry="10" fill="{s}"/>'
+        f'<path d="M36 100h140v12c0 38-28 58-70 58s-70-20-70-58Z" fill="{a}"/>'
+        f'<path d="M176 108c28 0 30 34-2 36" fill="none" stroke="{a}" stroke-width="10"/>'
+        f'<path d="M146 84c0-38 32-56 68-56 0 36-20 58-56 58Z" fill="{d}"/>'
+        f'<path d="M152 80c16-18 34-32 56-44" stroke="{p}" stroke-width="4" fill="none"/>',
+        "book": f'<path d="M120 58c-26-16-62-20-94-14v124c32-6 68-2 94 14 26-16 62-20 94-14V44'
+        f'c-32-6-68-2-94 14Z" fill="{p}" stroke="{i}" stroke-width="5"'
+        f' stroke-linejoin="round"/><path d="M120 58v124" stroke="{i}" stroke-width="5"/>'
+        f'<path d="M44 76c24-4 46-2 62 6M44 102c24-4 46-2 62 6M134 82c16-8 38-10 62-6M134 108'
+        f'c16-8 38-10 62-6" stroke="{a}" stroke-width="6" fill="none" stroke-linecap="round"/>'
+        f'<path d="M154 44v50l13-11 13 11V40" fill="{d}"/>',
+        "rings": "".join(
+            [f'<ellipse cx="120" cy="104" rx="96" ry="82" fill="{a}"/>']
+            + [
+                f'<ellipse cx="{120 + rng.below(5) - 2}" cy="{104 + rng.below(5) - 2}"'
+                f' rx="{96 - k * 15}" ry="{82 - k * 13}" fill="none"'
+                f' stroke="{d if k % 2 else p}" stroke-width="{3 + k % 2}"/>'
+                for k in range(1, 6)
+            ]
+            + [
+                f'<path d="M120 104l18-12 6-14 22-10 10-14" stroke="{d}" stroke-width="4"'
+                ' fill="none" stroke-linejoin="round"/>'
+            ]
+        ),
+        "notes": "".join(
+            f'<path d="M14 {y}h212" stroke="{s}" stroke-width="3"/>'
+            for y in (56, 80, 104, 128, 152)
+        )
+        + f'<ellipse cx="78" cy="150" rx="20" ry="14" transform="rotate(-20 78 150)" fill="{a}"/>'
+        f'<ellipse cx="160" cy="126" rx="20" ry="14" transform="rotate(-20 160 126)" fill="{a}"/>'
+        f'<path d="M96 146V54l82-22v92" fill="none" stroke="{i}" stroke-width="7"/>'
+        f'<path d="M96 70l82-22" stroke="{d}" stroke-width="14"/>',
+        "spool": f'<rect x="60" y="34" width="96" height="16" rx="5" fill="{d}"/>'
+        f'<rect x="60" y="150" width="96" height="16" rx="5" fill="{d}"/>'
+        f'<rect x="72" y="50" width="72" height="100" fill="{a}"/>'
+        + "".join(
+            f'<path d="M72 {y}h72" stroke="{p}" stroke-width="2" opacity=".6"/>'
+            for y in range(60, 150, 12)
+        )
+        + f'<path d="M166 178L222 26" stroke="{i}" stroke-width="5" stroke-linecap="round"/>'
+        f'<path d="M144 112c30 10 34 40 46 52" fill="none" stroke="{a}" stroke-width="3"/>',
+        "sun": f'<path d="M58 124a62 62 0 0 1 124 0Z" fill="{a}"/>'
+        f'<path d="M14 142c28-12 48 12 78 0s50-12 78 0 46 12 60 0" stroke="{d}" stroke-width="7"'
+        f' fill="none" stroke-linecap="round"/><path d="M34 168c28-12 48 12 78 0s50-12 78 0"'
+        f' stroke="{s}" stroke-width="7" fill="none" stroke-linecap="round"/>',
+    }
+    if name == "fern":
+        leaves = []
+        for k in range(7):
+            x, y = 122 + k * 4, 168 - k * 19
+            size = 30 - k * 3
+            leaves.append(
+                f'<ellipse cx="{x - size}" cy="{y}" rx="{size}" ry="{size // 3 + 3}"'
+                f' transform="rotate(25 {x - size} {y})" fill="{a if k % 2 else d}"/>'
+                f'<ellipse cx="{x + size}" cy="{y - 8}" rx="{size}" ry="{size // 3 + 3}"'
+                f' transform="rotate(-25 {x + size} {y - 8})" fill="{d if k % 2 else a}"/>'
+            )
+        shapes["fern"] = (
+            f'<path d="M120 190C120 140 126 92 150 34" stroke="{i}" stroke-width="5"'
+            f' fill="none"/>' + "".join(leaves)
+        )
+    return shapes[name]
+
+
+SITE_ROLES = (
+    "wrap|top|brand|mark|nav|cta|hero|copy|lead|actions|button|ghost|stage|band|tint|head"
+    "|grid|card|menu|row|dots|price|note|split|facts|quote|who|avatar|map|hours|faq|foot"
+    "|cols|small|centered|flip|prose|inline"
+).split("|")
+
+
+def _site_classes(rng: SiteRandom) -> dict:
+    """Random class names: the stylesheets of two sites share no selectors."""
+    letters, chars = "abcdefghijklmnopqrstuvwxyz", "abcdefghijklmnopqrstuvwxyz0123456789"
+    names: dict = {}
+    for role in SITE_ROLES:
+        name = ""
+        while not name or name in names.values():
+            name = rng.choice(letters) + "".join(rng.choice(chars) for _ in range(2 + rng.below(5)))
+        names[role] = name
+    return names
+
+
+def _site_price(value: str, currency: str) -> str:
+    match = re.search(r"\d+(?:\.\d+)?", value)
+    if not match:
+        return value
+    return value[: match.start()] + currency + value[match.start() :]
+
+
+def _site_offers(rng: SiteRandom, c: dict, offers: list, currency: str) -> str:
+    items = [(name, what, _site_price(price, currency)) for name, what, price in offers]
+    shape = rng.below(4)
+    if shape == 0:  # a menu with dotted leaders
+        rows = "".join(
+            f'<li class="{c["row"]}"><div><span>{n}</span><i class="{c["dots"]}"></i>'
+            f'<b class="{c["price"]}">{p}</b></div><p class="{c["note"]}">{w}</p></li>'
+            for n, w, p in items
+        )
+        return f'<ul class="{c["menu"]}">{rows}</ul>'
+    if shape == 1:  # cards
+        rows = "".join(
+            f'<article class="{c["card"]}"><h3>{n}</h3><p>{w}</p>'
+            f'<p class="{c["price"]}">{p}</p></article>'
+            for n, w, p in items
+        )
+        return f'<div class="{c["grid"]}">{rows}</div>'
+    if shape == 2:  # a definition list in two columns
+        rows = "".join(
+            f'<div class="{c["row"]}"><dt>{n}</dt><dd>{w}</dd>'
+            f'<dd class="{c["price"]}">{p}</dd></div>'
+            for n, w, p in items
+        )
+        return f'<dl class="{c["menu"]} {c["cols"]}">{rows}</dl>'
+    rows = "".join(
+        f'<tr><th scope="row">{n}</th><td>{w}</td><td class="{c["price"]}">{p}</td></tr>'
+        for n, w, p in items
+    )
+    return f'<table class="{c["menu"]}"><tbody>{rows}</tbody></table>'
+
+
+def _site_about(rng: SiteRandom, c: dict, kind: dict, since: int, founder: str) -> str:
+    paragraphs = [p.replace("{since}", str(since)) for p in kind["about"].split("|")]
+    facts = "".join(f"<li>{fact}</li>" for fact in kind["facts"].split("|"))
+    shape = rng.below(3)
+    if shape == 0:
+        text = "".join(f"<p>{p}</p>" for p in paragraphs)
+        return (f'<div class="{c["split"]}"><div>{text}</div>'
+                f'<ul class="{c["facts"]}">{facts}</ul></div>')  # fmt: skip
+    if shape == 1:
+        quote = f'<blockquote class="{c["quote"]}"><p>{paragraphs[1]}</p>'
+        quote += f'<footer class="{c["who"]}">{founder}, founder</footer></blockquote>'
+        return f'<div class="{c["split"]}"><p>{paragraphs[0]}</p>{quote}</div>'
+    text = "".join(f"<p>{p}</p>" for p in paragraphs)
+    prose = f'<div class="{c["prose"]}">{text}</div>'
+    return prose + f'<ul class="{c["facts"]} {c["inline"]}">{facts}</ul>'
+
+
+def _site_reviews(rng: SiteRandom, c: dict, people: list) -> str:
+    quotes = rng.words(SITE_REVIEWS, len(people))
+    since = [2016 + rng.below(9) for _ in people]
+    cards = "".join(
+        f'<figure class="{c["card"]}"><blockquote><p>{q}</p></blockquote><figcaption>'
+        f'<span class="{c["avatar"]}" aria-hidden="true">{who[0]}</span>'
+        f'<span>{who}<br><small class="{c["note"]}">customer since {year}</small></span>'
+        "</figcaption></figure>"
+        for q, who, year in zip(quotes, people, since)
+    )
+    return f'<div class="{c["grid"]}">{cards}</div>'
+
+
+def _site_map(rng: SiteRandom, c: dict, t: dict) -> str:
+    """A small street plan with a pin: no map service is asked for anything."""
+    x1, x2 = 40 + rng.below(40), 150 + rng.below(50)
+    y1, y2 = 30 + rng.below(30), 100 + rng.below(30)
+    roads = (f"M0 {y1}H260M0 {y2}H260M{x1} 0V170M{x2} 0V170"
+             f"M0 {150 - rng.below(40)}L260 {rng.below(50)}")  # fmt: skip
+    px, py = (x1 + x2) // 2, (y1 + y2) // 2
+    return (
+        f'<svg class="{c["map"]}" viewBox="0 0 260 170" role="img" aria-label="Map">'
+        f'<rect width="260" height="170" fill="{t["surface"]}"/>'
+        f'<path d="{roads}" stroke="{t["border"]}" stroke-width="12" fill="none"/>'
+        f'<path d="M{px} {py - 30}c-13 0-23 10-23 23 0 17 23 37 23 37s23-20 23-37c0-13-10-23'
+        f'-23-23Z" fill="{t["accent"]}"/><circle cx="{px}" cy="{py - 7}" r="8"'
+        f' fill="{t["background"]}"/></svg>'
+    )
+
+
+def _site_visit(rng: SiteRandom, c: dict, t: dict, kind: dict, domain: str) -> str:
+    opens = kind["opens"]
+    closes = opens + 7 + rng.below(3)
+    saturday = rng.choice((f"{opens + 1}:00 to 14:00", f"{opens}:00 to {opens + 5}:00", "closed"))
+    sunday = rng.choice(("closed", "closed", "by appointment"))
+    days = [("Monday to Friday", f"{opens}:00 to {closes}:00"), ("Saturday", saturday),
+            ("Sunday", sunday)]  # fmt: skip
+    hours = "".join(f"<dt>{d}</dt><dd>{h}</dd>" for d, h in days)
+    street = f"{rng.word(SITE_STREETS)} {3 + rng.below(60)}"
+    answer = f'<p class="{c["note"]}">We answer within two working days.</p>'
+    address = f"<address><p>{street}</p><p>Write to us: hello at {domain}</p>{answer}</address>"
+    block = f'<div><dl class="{c["hours"]}">{hours}</dl>{address}</div>'
+    return f'<div class="{c["split"]}">{block}{_site_map(rng, c, t)}</div>'
+
+
+def _site_faq(rng: SiteRandom, c: dict) -> str:
+    pairs = [q.split("=") for q in rng.words(SITE_QUESTIONS, 3 + rng.below(2))]
+    return "".join(
+        f'<details class="{c["faq"]}"><summary>{q}</summary><p>{a}</p></details>' for q, a in pairs
+    )
+
+
+def _site_top(rng: SiteRandom, c: dict, title: str, links: list, cta: tuple) -> str:
+    initial = title[0]
+    mark_shape = rng.choice(("circle", "square", "leaf"))
+    if mark_shape == "circle":
+        shape = '<circle cx="16" cy="16" r="16"/>'
+    elif mark_shape == "square":
+        shape = '<rect width="32" height="32" rx="7"/>'
+    else:
+        shape = '<path d="M0 32C0 14 14 0 32 0c0 18-14 32-32 32Z"/>'
+    mark = (f'<svg class="{c["mark"]}" viewBox="0 0 32 32" aria-hidden="true">{shape}'
+            f'<text x="16" y="21.5" text-anchor="middle">{initial}</text></svg>')  # fmt: skip
+    brand = f'<a class="{c["brand"]}" href="/">{mark}<span>{title}</span></a>'
+    items = "".join(f'<li><a href="#{ident}">{text}</a></li>' for ident, text in links)
+    nav = f'<nav class="{c["nav"]}" aria-label="Main"><ul>{items}</ul></nav>'
+    button = ""
+    if rng.chance(0.6):
+        button = f'<a class="{c["cta"]}" href="#{cta[1]}">{cta[0]}</a>'
+    return f'<header class="{c["top"]}">{brand}{nav}{button}</header>'
+
+
+def _site_hero(rng: SiteRandom, c: dict, page: dict, kind: dict, art: str, headline: str) -> tuple:
+    """(class of the hero layout, HTML)."""
+    lead = rng.word(kind["lead"])
+    primary, secondary = kind["cta"].split("|")
+    actions = (f'<p class="{c["actions"]}"><a class="{c["button"]}" href="#{page["visit"]}">'
+               f'{primary}</a><a class="{c["ghost"]}" href="#{page["offers"]}">{secondary}</a>'
+               "</p>")  # fmt: skip
+    copy = f'<div class="{c["copy"]}"><h1>{headline}</h1><p class="{c["lead"]}">{lead}</p>'
+    copy += actions + "</div>"
+    stage = (f'<div class="{c["stage"]}"><svg viewBox="0 0 240 200" role="img"'
+             f' aria-label="{page["title"]}">{art}</svg></div>')  # fmt: skip
+    layout = rng.choice(("split", "split", "centered", "band"))
+    if layout == "centered":
+        return layout, f'<section class="{c["hero"]} {c["centered"]}">{stage}{copy}</section>'
+    if layout == "band":
+        return layout, f'<section class="{c["hero"]} {c["tint"]}">{copy}{stage}</section>'
+    if rng.chance(0.3):
+        return "flip", f'<section class="{c["hero"]} {c["flip"]}">{stage}{copy}</section>'
+    return layout, f'<section class="{c["hero"]}">{copy}{stage}</section>'
+
+
+def _site_foot(rng: SiteRandom, c: dict, title: str, tagline: str, since: int, domain: str) -> str:
+    about = f'<div><p class="{c["brand"]}">{title}</p><p class="{c["note"]}">{tagline}.</p></div>'
+    contact = f"<div><p>hello at {domain}</p><p>Since {since}</p></div>"
+    small = f'<p class="{c["small"]}">&copy; {title}</p>'
+    columns = f'<div class="{c["cols"]}">{about}{contact}</div>'
+    return f'<footer class="{c["foot"]}">{columns}{small}</footer>'
+
+
+def site_css(c: dict, t: dict, k: dict) -> str:
+    """The stylesheet: class names are random, values come from the tokens of the site."""
+    button = "999px" if k["pill"] else f"{k['small']}px"
+    rules = (
+        "*{box-sizing:border-box}",
+        f"body{{margin:0;background:{t['background']};color:{t['text']};"
+        f"font:{k['base']}px/{k['line']} {k['body']}}}",
+        f"h1,h2,h3{{font-family:{k['heading']};font-weight:{k['weight']};"
+        f"letter-spacing:{k['tracking']};line-height:1.15;margin:0 0 .5em}}",
+        f"h1{{font-size:clamp(2.2rem,4vw + 1rem,{k['h1']}px)}}",
+        f"h2{{font-size:clamp(1.6rem,2vw + 1rem,{k['h2']}px)}}",
+        f"h3{{font-size:{k['h3']}px}}",
+        "p{margin:0 0 1em}",
+        f"a{{color:{t['accent']}}}",
+        f"a:focus-visible,summary:focus-visible{{outline:2px solid {t['accent']};"
+        "outline-offset:3px}",
+        f".{c['wrap']}{{max-width:{k['width']}px;margin:0 auto;padding:0 24px}}",
+        f".{c['top']}{{display:flex;flex-wrap:wrap;align-items:center;gap:16px 32px;"
+        f"padding:22px 0;border-bottom:1px solid {t['border']}}}",
+        f".{c['brand']}{{display:flex;align-items:center;gap:10px;font:700 1.15rem"
+        f" {k['heading']};color:{t['text']};text-decoration:none;margin:0}}",
+        f".{c['mark']}{{width:32px;height:32px;fill:{t['accent']}}}",
+        f".{c['mark']} text{{fill:{t['onAccent']};font:700 17px {k['heading']}}}",
+        f".{c['nav']}{{margin-left:auto}}",
+        f".{c['nav']} ul{{display:flex;flex-wrap:wrap;gap:8px 24px;list-style:none;margin:0;"
+        "padding:0}",
+        f".{c['nav']} a{{color:{t['text']};text-decoration:none}}",
+        f".{c['nav']} a:hover{{color:{t['accent']};text-decoration:underline}}",
+        f".{c['cta']}{{border:1.5px solid {t['accent']};color:{t['accent']};padding:8px 16px;"
+        f"border-radius:{button};text-decoration:none;font-weight:600}}",
+        f".{c['hero']}{{display:grid;grid-template-columns:1.15fr .85fr;gap:48px;"
+        f"align-items:center;padding:{k['gap']}px 0}}",
+        f".{c['lead']}{{font-size:{k['lead']}px;max-width:34em}}",
+        f".{c['actions']}{{display:flex;flex-wrap:wrap;gap:12px 24px;align-items:center;"
+        "margin-top:28px}",
+        f".{c['button']}{{background:{t['accent']};color:{t['onAccent']};padding:13px 24px;"
+        f"border-radius:{button};text-decoration:none;font-weight:600}}",
+        f".{c['ghost']}{{color:{t['text']};font-weight:600;text-underline-offset:4px}}",
+        f".{c['stage']}{{background:{t['soft']};border-radius:{k['large'] * 2}px;padding:8%;"
+        "display:grid;place-items:center}",
+        f".{c['stage']} svg{{width:100%;max-width:340px;height:auto}}",
+        f".{c['tint']}{{background:{t['band']};border-radius:{k['large']}px;"
+        "padding:48px clamp(24px,5vw,56px)}",
+        f".{c['band']}{{padding:{round(k['gap'] * 0.55)}px 0;scroll-margin-top:24px}}",
+        f".{c['band']}.{c['tint']}{{padding:48px clamp(24px,5vw,56px);margin:24px 0}}",
+        f".{c['head']}{{max-width:40em;margin-bottom:32px}}",
+        f".{c['grid']}{{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));"
+        "gap:20px}",
+        f".{c['card']}{{background:{t['surface']};border:1px solid {t['border']};"
+        f"border-radius:{k['large']}px;padding:24px;margin:0}}",
+        f".{c['card']} blockquote{{margin:0}}",
+        f".{c['card']} figcaption{{display:flex;gap:12px;align-items:center;margin-top:16px}}",
+        f"ul.{c['menu']}{{list-style:none;margin:0;padding:0;max-width:46em}}",
+        f"ul.{c['menu']} .{c['row']}{{padding:14px 0;border-bottom:1px solid {t['border']}}}",
+        f"ul.{c['menu']} .{c['row']}>div{{display:flex;align-items:baseline;gap:10px;"
+        "font-weight:600}",
+        f".{c['dots']}{{flex:1;border-bottom:2px dotted {t['border']}}}",
+        f".{c['note']}{{color:{t['muted']};margin:.3em 0 0}}",
+        f".{c['price']}{{color:{t['accent']};font-weight:700;white-space:nowrap}}",
+        f"dl.{c['menu']}{{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));"
+        "gap:8px 48px;margin:0}",
+        f"dl.{c['menu']} .{c['row']}{{padding:16px 0;border-top:1px solid {t['border']}}}",
+        f"dl.{c['menu']} dt{{font-weight:700}}",
+        f"dl.{c['menu']} dd{{margin:.3em 0 0}}",
+        f"table.{c['menu']}{{width:100%;border-collapse:collapse}}",
+        f"table.{c['menu']} th,table.{c['menu']} td{{text-align:left;vertical-align:top;"
+        f"padding:14px 12px 14px 0;border-bottom:1px solid {t['border']}}}",
+        f"table.{c['menu']} td:last-child{{text-align:right}}",
+        f".{c['split']}{{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));"
+        "gap:40px;align-items:start}",
+        f".{c['facts']}{{list-style:none;margin:0;padding:0}}",
+        f".{c['facts']} li{{position:relative;padding:12px 0 12px 28px;"
+        f"border-bottom:1px solid {t['border']}}}",
+        f".{c['facts']} li::before{{content:'';position:absolute;left:0;top:1.15em;width:12px;"
+        f"height:12px;border-radius:50%;background:{t['accent']}}}",
+        f".{c['prose']}{{columns:2 320px;column-gap:48px;max-width:60em}}",
+        f".{c['prose']} p{{break-inside:avoid}}",
+        f".{c['facts']}.{c['inline']}{{display:flex;flex-wrap:wrap;gap:0 40px;margin-top:16px}}",
+        f".{c['facts']}.{c['inline']} li{{border-bottom:0}}",
+        f".{c['quote']}{{margin:0;padding:28px;border-left:4px solid {t['accent']};"
+        f"background:{t['surface']};font-size:{k['lead']}px}}",
+        f".{c['who']}{{color:{t['muted']};font-size:{k['base']}px}}",
+        f".{c['avatar']}{{display:inline-grid;place-items:center;width:42px;height:42px;"
+        f"border-radius:50%;background:{t['accent']};color:{t['onAccent']};font-weight:700}}",
+        f".{c['hours']}{{display:grid;grid-template-columns:auto 1fr;gap:8px 24px;"
+        "margin:0 0 24px}",
+        f".{c['hours']} dd{{margin:0}}",
+        "address{font-style:normal}",
+        f".{c['map']}{{width:100%;height:auto;border-radius:{k['large']}px;"
+        f"border:1px solid {t['border']}}}",
+        f".{c['faq']}{{border-bottom:1px solid {t['border']};padding:16px 0;max-width:46em}}",
+        f".{c['faq']} summary{{cursor:pointer;font-weight:600}}",
+        f".{c['faq']} p{{margin:.6em 0 0;color:{t['muted']}}}",
+        f".{c['foot']}{{border-top:1px solid {t['border']};padding:40px 0 32px;margin-top:24px}}",
+        f".{c['cols']}{{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));"
+        "gap:24px}",
+        f".{c['small']}{{color:{t['muted']};font-size:.875rem;margin-top:24px}}",
+        f".{c['hero']}.{c['tint']}{{padding:56px clamp(24px,5vw,56px);margin-top:32px}}",
+        f".{c['hero']}.{c['centered']}{{grid-template-columns:1fr;text-align:center;"
+        "justify-items:center}",
+        f".{c['centered']} .{c['stage']}{{max-width:300px;width:100%}}",
+        f".{c['centered']} .{c['lead']}{{margin:0 auto}}",
+        f".{c['centered']} .{c['actions']}{{justify-content:center}}",
+        f".{c['hero']}.{c['flip']}{{grid-template-columns:.85fr 1.15fr}}",
+        "@media (max-width:760px){"
+        f".{c['hero']}{{grid-template-columns:1fr}}.{c['nav']}{{margin-left:0;width:100%}}"
+        "}",
+    )
+    return "".join(rules)
+
+
+def _site_icon(accent: str, shape: str) -> str:
+    """An inline icon in the accent colour: browsers do not ask for /favicon.ico."""
+    return (
+        "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E"
+        f"{shape} fill='%23{accent[1:]}'/%3E%3C/svg%3E"
+    )
 
 
 def site_html(seed: int, domain: str) -> str:
-    """The stub site of `seed` for `domain`: layout by seed, words by seed and domain."""
-    import random
-
-    rng = random.Random(f"{seed}:{domain}")
-    pick = lambda key, n: rng.sample(WORDS[key], n)  # noqa: E731
-    name = domain.split(".")[0].replace("-", " ").title()
-    topics, items = pick("topics", 3), pick("items", 4)
-    sentences = [
-        f"We work on {rng.choice(topics).lower()} and small things that last.",
-        f"Since {rng.randint(2009, 2021)} we keep it simple and slow.",
-        "Write to us and we will answer within a few days.",
-        f"Most of our time goes to {rng.choice(topics).lower()}.",
-    ]
-    css = SITE_CSS.format(
-        font=rng.choice(FONTS), width=rng.choice((640, 720, 860, 960)),
-        fg=rng.choice(("222", "333", "1d2a33")), bg=rng.choice(("fff", "fbf8f1", "f4f6f8")),
-        accent=rng.choice(("8a3b12", "1f5fa8", "2e7d32")), weight=rng.choice((400, 600, 700)),
-    )  # fmt: skip
-    values = {
-        "name": name, "domain": domain, "css": css, "w0": rng.choice(WORDS["studio"]),
-        "t0": topics[0], "t1": topics[1], "t2": topics[2], "role": rng.choice(WORDS["roles"]),
-        "i0": items[0], "i1": items[1], "i2": items[2], "i3": items[3],
-        "year": rng.randint(2022, 2026),
-    }  # fmt: skip
-    for i in range(4):
-        values[f"p{i}"] = sentences[i]
-        values[f"price{i}"] = f"{rng.randint(9, 89)}.00"
-    for i in range(3):
-        values[f"d{i}"] = f"2026-{rng.randint(1, 11):02d}-{rng.randint(1, 28):02d}"
-    return SITE_LAYOUTS[seed % len(SITE_LAYOUTS)].format(**values)
+    """The stub site of `seed`: a small business with its own name, texts, colours and layout."""
+    spec = site_spec(seed)
+    kind, t = SITE_KINDS[spec["kind"]], spec["theme"]
+    rng = SiteRandom(seed, "layout")
+    c = _site_classes(rng)
+    k = _site_tokens(rng, kind)
+    title, domain = html.escape(spec["title"]), html.escape(domain)
+    currency = rng.choice(("€", "€", "£", "$"))
+    since = 2004 + rng.below(18)
+    people = rng.words(SITE_PEOPLE, 4)
+    ids = {
+        "offers": rng.word("menu|work|services|prices|offer"),
+        "about": rng.word("about|story|us|studio"),
+        "reviews": rng.word("reviews|kind-words|customers"),
+        "faq": rng.word("faq|questions|good-to-know"),
+        "visit": rng.word("visit|contact|find-us|hours"),
+    }
+    titles = {name: rng.word(SITE_SECTION_TITLES[name]) for name in ids}
+    titles["offers"] = rng.word(kind["menu"])
+    offers = [item.split("=") for item in rng.words(kind["offers"], 4 + rng.below(2))]
+    middle = ["about", "reviews"] + (["faq"] if rng.chance(0.6) else [])
+    middle = rng.shuffled(middle)
+    order = ["offers", *middle] if rng.chance(0.75) else [middle[0], "offers", *middle[1:]]
+    order.append("visit")
+    content = {
+        "offers": lambda: _site_offers(rng, c, offers, currency),
+        "about": lambda: _site_about(rng, c, kind, since, people[0]),
+        "reviews": lambda: _site_reviews(rng, c, people[1 : 3 + rng.below(2)]),
+        "faq": lambda: _site_faq(rng, c),
+        "visit": lambda: _site_visit(rng, c, t, kind, domain),
+    }
+    sections = []
+    for name in order:
+        tint = f" {c['tint']}" if name != "visit" and rng.chance(0.3) else ""
+        sections.append(
+            f'<section id="{ids[name]}" class="{c["band"]}{tint}"><div class="{c["head"]}">'
+            f"<h2>{titles[name]}</h2></div>{content[name]()}</section>"
+        )
+    links = [(ids[name], titles[name]) for name in order if name != "faq"][:4]
+    top = _site_top(rng, c, spec["title"], links, (kind["cta"].split("|")[0], ids["visit"]))
+    art = _site_motif(kind["motif"], t, rng)
+    headline = rng.word(kind["hero"])
+    layout, hero = _site_hero(rng, c, {"title": title, **ids}, kind, art, headline)
+    lines = kind["hero"].split("|")
+    tagline = lines[(lines.index(headline) + 1 + rng.below(len(lines) - 1)) % len(lines)]
+    foot = _site_foot(rng, c, title, tagline, since, domain)
+    icon = _site_icon(t["accent"], rng.choice(("%3Crect width='16' height='16' rx='4'",
+                                               "%3Ccircle cx='8' cy='8' r='8'")))  # fmt: skip
+    head = (
+        f'<meta charset="utf-8"><title>{title}</title>'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        f'<meta name="description" content="{rng.word(kind["lead"])}">'
+        f'<meta name="theme-color" content="{t["background"]}">'
+        f'<link rel="icon" href="{icon}"><style>{site_css(c, t, k)}</style>'
+    )
+    body = f'<div class="{c["wrap"]}">{top}<main>{hero}{"".join(sections)}</main>{foot}</div>'
+    return f'<!doctype html>\n<html lang="en"><head>{head}</head><body>{body}</body></html>\n'
 
 
 def nginx_site(domain: str, with_tls: bool) -> str:
@@ -1631,7 +2564,7 @@ def domain_param(params: dict) -> str:
 def fix_site(system: System, params: dict) -> Plan:
     domain = domain_param(params)
     seed = params.get("siteSeed", 0)
-    if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed < 1000:
+    if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed < SITE_SEEDS:
         raise AgentError("bad_params", "siteSeed")
     on80 = [s for s in parse_ss_listen(system.run(["ss", "-Hlntup"]).stdout)
             if s["port"] == 80 and s["proto"] == "tcp"]  # fmt: skip
@@ -1643,7 +2576,7 @@ def fix_site(system: System, params: dict) -> Plan:
         plan.packages.append("nginx")
     if not system.exists("/usr/bin/certbot"):
         plan.packages.append("certbot")
-    html = site_html(seed, domain)
+    page = site_html(seed, domain)
     plan.step_write(f"{ACME_ROOT}/.kerberos", "acme webroot of KERBEROS\n")
     plan.step_write(SITE_CONF, nginx_site(domain, with_tls=False))
     plan.step_run(["nginx", "-t"], "nginx_test_failed")
@@ -1652,7 +2585,7 @@ def fix_site(system: System, params: dict) -> Plan:
     plan.step_run(["certbot", "certonly", "--webroot", "-w", ACME_ROOT, "-d", domain,
                    "--register-unsafely-without-email", "--agree-tos", "--non-interactive",
                    "--keep-until-expiring"], "certbot_failed", timeout=300)  # fmt: skip
-    plan.step_write(f"{SITE_ROOT}/index.html", html)
+    plan.step_write(f"{SITE_ROOT}/index.html", page)
     plan.step_write(SITE_CONF, nginx_site(domain, with_tls=True))
     # Renewal reloads nginx only: Xray rereads certificates itself every hour.
     plan.step_write(RENEW_HOOK, "#!/bin/sh\nsystemctl reload nginx\n", 0o755)
@@ -1661,7 +2594,11 @@ def fix_site(system: System, params: dict) -> Plan:
     plan.undo_after.append(["systemctl", "reload-or-restart", "nginx"])
     if not had_nginx:
         plan.undo_after.append(["systemctl", "disable", "--now", "nginx"])
-    plan.details = {"domain": domain, "template": template_hash(html), "siteSeed": seed}
+    spec = site_spec(seed)
+    plan.details = {"domain": domain, "template": template_hash(page), "siteSeed": seed,
+                    "site": {"title": spec["title"], "kind": spec["kind"],
+                             "background": spec["theme"]["background"],
+                             "accent": spec["theme"]["accent"]}}  # fmt: skip
     return plan
 
 

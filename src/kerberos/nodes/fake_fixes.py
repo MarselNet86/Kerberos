@@ -170,7 +170,7 @@ def apply_ssh_port(node: FakeNode, params: dict, change_id: str) -> tuple:
 
 
 def apply_site(node: FakeNode, params: dict, change_id: str) -> tuple[dict, Callable]:
-    from kerberos.agent import site_html, template_hash
+    from kerberos.agent import site_html, site_spec, template_hash
 
     facts = node.state["facts"]
     domain, seed = params["domain"], params.get("siteSeed", 0)
@@ -202,7 +202,11 @@ def apply_site(node: FakeNode, params: dict, change_id: str) -> tuple[dict, Call
         node.state["site"] = saved_site
         node.state["sites"] = saved_sites
 
-    return {"domain": domain, "template": layout, "siteSeed": seed}, undo
+    spec = site_spec(seed)
+    theme = spec["theme"]
+    site = {"title": spec["title"], "kind": spec["kind"], "background": theme["background"],
+            "accent": theme["accent"]}  # fmt: skip
+    return {"domain": domain, "template": layout, "siteSeed": seed, "site": site}, undo
 
 
 def apply_mount(node: FakeNode, params: dict, change_id: str) -> tuple[dict, Callable]:

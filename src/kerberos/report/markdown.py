@@ -79,6 +79,11 @@ def render(run: Run, mask: Optional[Callable[[str], str]] = None) -> str:
             if change.get("error"):
                 reason = TEXT.get(f"error.{change['error']}", change["error"])
                 lines.append(t("report.change_error", reason=reason))
+            site = change["details"].get("site")
+            if change["fixId"] == "self_steal.site" and change["state"] == "applied" and site:
+                kind = t(f"site.kind.{site['kind']}")
+                colors = {"background": site["background"], "accent": site["accent"]}
+                lines.append("  - " + t("report.site", title=site["title"], kind=kind, **colors))
             if change["fixId"] == "ssh.port" and change["state"] == "confirmed":
                 node = next((n for n in run["nodes"]
                              if change["target"] == f"node:{n['uuid']}"), None)  # fmt: skip
