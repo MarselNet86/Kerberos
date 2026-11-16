@@ -278,3 +278,28 @@ def test_changes_get_the_long_timeout(monkeypatch, tmp_path, command):
     assert set(transport.CHANGE_COMMANDS) == agent.LOCKED
     assert agent.LOCK_WAIT < transport.CHANGE_TIMEOUT
     assert agent.APT_TIMEOUT == transport.APT_TIMEOUT
+
+
+# -- 19. 3x-ui: the SSH port of this server, also when ssh.socket sets it ---------------------
+def test_local_ssh_port_follows_ssh_socket():
+    from kerberos.host import CommandResult, FakeHost
+    from kerberos.screens.access import local_ssh_port
+
+    host = FakeHost()
+    host.on(["sshd", "-T"], CommandResult(0, "port 22\nlistenaddress 0.0.0.0:22\n"))
+    assert local_ssh_port(host) == 22
+    host.on(["systemctl", "is-active", "ssh.socket"], CommandResult(0, "active\n"))
+    host.on(["systemctl", "show", "ssh.socket"],
+            CommandResult(0, "Listen=0.0.0.0:24622 (Stream) [::]:24622 (Stream)\n"))  # fmt: skip
+    assert local_ssh_port(host) == 24622, "KERBEROS's own zz-kerberos.conf moved it"
+
+
+def test_local_ssh_port_from_ss_when_sshd_t_fails():
+    from kerberos.host import CommandResult, FakeHost
+    from kerberos.screens.access import local_ssh_port
+
+    host = FakeHost()
+    host.on(["sshd", "-T"], CommandResult(255, "", "Missing privilege separation directory"))
+    host.on(["ss"], CommandResult(0, 'tcp LISTEN 0 128 0.0.0.0:2222 0.0.0.0:* '
+                                     'users:(("sshd",pid=8,fd=3))\n'))  # fmt: skip
+    assert local_ssh_port(host) == 2222

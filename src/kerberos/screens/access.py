@@ -37,12 +37,20 @@ LOCAL_HOST_KEY = "/etc/ssh/ssh_host_ed25519_key.pub"
 
 
 def local_ssh_port(host: Any) -> int:
-    """The first port sshd of this server listens on (`sshd -T`), else 22."""
-    from kerberos.agent import parse_sshd_t
+    """The first port SSH of this server listens on, found as the agent finds it: the
+    ports of ssh.socket when it is active (a drop-in such as KERBEROS's own
+    zz-kerberos.conf sets them), else sshd's own (`sshd -T`, else `ss`), else 22."""
+    from kerberos.agent import parse_sshd_t, ssh_ports
 
-    result = host.run(["sshd", "-T"], timeout=20)
-    ports = parse_sshd_t(result.stdout).get("port") if result.ok else None
-    return int(ports[0]) if ports else 22
+    def out(argv: list) -> str:
+        result = host.run(argv, timeout=20)
+        return result.stdout if result.ok else ""
+
+    active = out(["systemctl", "is-active", "ssh.socket"]).strip() == "active"
+    listen = out(["systemctl", "show", "ssh.socket", "-p", "Listen"]) if active else ""
+    sshd = parse_sshd_t(out(["sshd", "-T"]))["port"]
+    ports, _by_socket = ssh_ports(sshd, active, listen, "" if sshd else out(["ss", "-Hlntup"]))
+    return int(ports[0])
 
 
 class AccessFailed(Exception):
