@@ -21,6 +21,7 @@ from kerberos.nodes import schema
 from kerberos.nodes.transport import NodeAgentError, Target, TransportError
 
 CONFIRM_WINDOW = 60
+LOCAL_ADDRESS = "127.0.0.1"  # the 3x-ui server reaching itself (§7.6)
 CONFIRM_RETRY = 5
 ROLLBACKABLE = ("applied", "confirmed", "pending_confirm")
 
@@ -44,6 +45,9 @@ class Engine:
         self.failed = 0
         self.on_event = on_event or (lambda *args: None)
         self.ask_diff: Callable[[str], bool] = lambda _diff: True
+        # 3x-ui (§7.6): a new SSH port of this very server is tried from outside by
+        # the person: KERBEROS on the same server cannot see the hoster's firewall.
+        self.ask_outside: Callable[[int, str], bool] = lambda _port, _command: False
         self._panel_fixes = None
 
     @property
@@ -81,8 +85,9 @@ class Engine:
     def target(self, node_uuid: str) -> Target:
         node = self.session.snapshot.node(node_uuid)
         record = self.env.state.node(node_uuid)
-        port = record.ssh_port if record else 22
-        return Target(node.uuid, node.name, node.address, port)
+        if record is not None:
+            return record.target(node.address)
+        return Target(node.uuid, node.name, node.address, 22)
 
     def event(self, step: str, item: PlanItem, state: str, note: str = "") -> None:
         self.on_event(step, item, state, note)
@@ -119,10 +124,12 @@ class Engine:
             return
         if item.fix_id == "self_steal":
             from kerberos.fixes.self_steal import SelfSteal
+            from kerberos.fixes.xui_self_steal import SelfStealXui
 
             self.event("backup", item, "running")
             self.event("backup", item, "ok")
-            SelfSteal(self, item).run()
+            kind = SelfStealXui if self.session.snapshot.kind == "3x-ui" else SelfSteal
+            kind(self, item).run()
             return
         target = self.target(item.node_uuid or "")
         change: Change = {
@@ -176,7 +183,12 @@ class Engine:
             if item.fix_id == "ssh.port":
                 confirm_target = self.new_port_target(target, change)
             self.event("confirm", item, "running")
-            if not self.confirm(confirm_target, change["changeId"]):
+            if (item.fix_id == "ssh.port" and target.address == LOCAL_ADDRESS
+                    and not self.outside_login(item, confirm_target.port)):  # fmt: skip
+                confirmed = False
+            else:
+                confirmed = self.confirm(confirm_target, change["changeId"])
+            if not confirmed:
                 # The old port still listens until confirm: roll back through it.
                 rolled = self.rollback(target, change["changeId"], fresh=True)
                 if previous:
@@ -203,6 +215,11 @@ class Engine:
             return
         self.event("check", item, "ok")
         self.finish(change, change["state"])
+
+    def outside_login(self, item: PlanItem, port: int) -> bool:
+        node = self.session.snapshot.node(item.node_uuid or "")
+        address = node.address if node else ""
+        return bool(self.ask_outside(port, f"ssh -p {port} root@{address}"))
 
     def pin_new_host_key(self, target: Target, change: Change) -> Optional[str]:
         """§10.3: read the new key from the agent, check it with ssh-keyscan, pin it."""

@@ -96,6 +96,7 @@ def app_for(keys: list[str], height: int) -> tuple[App, ShotTerminal]:
     clock = FakeClock()
     term = ShotTerminal(keys, height, clock)
     env = Env(terminal=term, clock=clock, masker=Masker(True), demo=True)
+    env.panel_kind = "remnawave"  # the README shows the Remnawave scenario
     # A short neutral path: the report line shows where the state lives.
     attach(env, Path(tempfile.mkdtemp(prefix="kerberos-", dir="/tmp")))
     app = App(env)

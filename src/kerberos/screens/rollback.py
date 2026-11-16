@@ -72,9 +72,10 @@ def target_of(app: App, run: dict, change: dict) -> Target:
     )
     node = node_of(run, target) or {}
     record = app.env.state.node(node.get("uuid", ""))
-    port = record.ssh_port if record else node.get("sshPort", 22)
-    address = record.address if record else node.get("address", "")
-    return Target(node.get("uuid", ""), node.get("name", ""), address, port)
+    if record is not None:
+        return record.target(record.address)
+    return Target(node.get("uuid", ""), node.get("name", ""), node.get("address", ""),
+                  node.get("sshPort", 22))  # fmt: skip
 
 
 def ask_diff(app: App, diff: str) -> bool:
@@ -172,7 +173,7 @@ def rollback_flow(app: App, run_id: Optional[str] = None) -> int:
     if any(c["fixId"] in PANEL_FIXES for c in chosen):
         from kerberos.screens.panel import open_panel
 
-        opened = open_panel(app)
+        opened = open_panel(app, kind=run["panel"].get("kind", "remnawave"))
         if not isinstance(opened, tuple):
             return EXIT_PANEL if opened == EXIT_PANEL else EXIT_OK
         client = opened[1]

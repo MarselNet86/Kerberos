@@ -114,6 +114,21 @@ class FakeTransport:
             raise ContractError(f"unexpected root command {command!r}")
         if not node.python:
             return CommandResult(NO_PYTHON)
+        return self._bootstrap(node, stdin)
+
+    def local_bootstrap(self, stdin: Optional[str]) -> CommandResult:
+        """`python3 -` run by KERBEROS on its own 3x-ui server (§7.6): the node at 127.0.0.1."""
+        node = self.nodes.get("127.0.0.1")
+        if node is None:
+            raise ContractError("no local node in the fake fleet")
+        if 'os.environ["SSH_CONNECTION"]' not in (stdin or "") and "remove" not in str(
+            read_payload(stdin or "") or {}
+        ):
+            raise ContractError("a local install must set SSH_CONNECTION to this server")
+        self.log.append(("127.0.0.1", "local python3"))
+        return self._bootstrap(node, stdin)
+
+    def _bootstrap(self, node: FakeNode, stdin: Optional[str]) -> CommandResult:
         payload = read_payload(stdin or "")
         if payload is None:
             raise ContractError("bootstrap script without a payload")

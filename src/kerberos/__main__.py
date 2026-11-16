@@ -25,6 +25,7 @@ class Options:
     color: bool = True
     help: bool = False
     version: bool = False
+    panel: Optional[str] = None  # --panel remnawave|3x-ui (§7.6)
 
 
 class UsageError(Exception):
@@ -35,8 +36,15 @@ def parse_args(argv: Sequence[str], environ: Optional[dict] = None) -> Options:
     environ = os.environ if environ is None else environ
     opts = Options()
     positional: list[str] = []
-    for arg in argv:
-        if arg == "--demo":
+    args = list(argv)
+    while args:
+        arg = args.pop(0)
+        if arg == "--panel" or arg.startswith("--panel="):
+            value = arg.split("=", 1)[1] if "=" in arg else (args.pop(0) if args else "")
+            if value not in ("remnawave", "3x-ui"):
+                raise UsageError(t("cli.bad_panel", value=value))
+            opts.panel = value
+        elif arg == "--demo":
             opts.demo = True
         elif arg == "--mask":
             opts.mask = True
@@ -115,6 +123,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     from kerberos.ui.terminal import LiveTerminal
 
     env = Env(terminal=None, clock=SystemClock(), masker=Masker(opts.mask), demo=opts.demo)
+    env.panel_kind = opts.panel
     if opts.demo:
         from kerberos.demo.fleet import attach
 
@@ -123,12 +132,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         from kerberos.host import LiveHost
         from kerberos.nodes.transport import SshTransport
         from kerberos.panel.client import urllib_transport
+        from kerberos.panel.xui import XuiSession
         from kerberos.probe import LiveProber
         from kerberos.state import State
         from kerberos.whois import CymruWhois
 
         env.host = LiveHost()
         env.panel_transport = urllib_transport
+        env.xui_transport = XuiSession()
         env.state = State()
         env.transport = SshTransport(env.state)
         env.prober = LiveProber()
@@ -182,7 +193,7 @@ def admin_ssh(opts: Options) -> int:
     if opts.demo:
         print(t("ssh.demo"))
         return 0
-    from kerberos.nodes.transport import SshTransport, Target
+    from kerberos.nodes.transport import SshTransport
     from kerberos.state import State
 
     state = State()
@@ -193,8 +204,7 @@ def admin_ssh(opts: Options) -> int:
     if not state.admin_key.exists():
         print(t("ssh.no_admin_key"), file=sys.stderr)
         return 2
-    target = Target(record.uuid, record.name, record.address, record.ssh_port)
-    return SshTransport(state).admin_shell(target)
+    return SshTransport(state).admin_shell(record.target(record.address))
 
 
 if __name__ == "__main__":

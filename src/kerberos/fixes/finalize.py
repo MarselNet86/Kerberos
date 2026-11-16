@@ -41,12 +41,16 @@ def finalize_items(client: PanelClient, store: RunStore, pairs: list) -> list:
     failed = []
     for run, item in pairs:
         try:
-            profile = next((p for p in client.profiles() if p.uuid == item["profileUuid"]), None)
-            if profile is None:
-                raise PanelError("bad_response", detail="profile is gone")
-            config = finalize_profile(profile.config, item["domain"])
-            if config != profile.config:
-                client.patch_profile(profile.uuid, config)
+            if item.get("panel") == "3x-ui":
+                finalize_xui(client, store, run, item)
+            else:
+                profile = next((p for p in client.profiles() if p.uuid == item["profileUuid"]),
+                               None)  # fmt: skip
+                if profile is None:
+                    raise PanelError("bad_response", detail="profile is gone")
+                config = finalize_profile(profile.config, item["domain"])
+                if config != profile.config:
+                    client.patch_profile(profile.uuid, config)
         except PanelError as exc:
             item["error"] = exc.code
             failed.append(item)
@@ -56,6 +60,26 @@ def finalize_items(client: PanelClient, store: RunStore, pairs: list) -> list:
         run.setdefault("finalized", []).append({**item, "at": iso(store.clock)})
         store.save(run)
     return failed
+
+
+def finalize_xui(client: Any, store: RunStore, run: dict, item: dict) -> None:
+    """3x-ui (§7.6): only the domain stays in serverNames of the inbounds of the run."""
+    from kerberos.fixes.panel_changes import load_snapshot, save_snapshot
+    from kerberos.fixes.xui_self_steal import without_old_names
+
+    change = next((c for c in run["changes"] if c["changeId"] == item["changeId"]), None)
+    written = load_snapshot((change or {}).get("details", {}).get("writtenPath")) or {}
+    for ident in item["inbounds"]:
+        current = client.inbound(int(ident))["streamSettings"]
+        final = without_old_names(current, item["domain"])
+        if final != current:
+            client.update_inbound(int(ident), final)
+        written[ident] = final
+    if change is not None and written:
+        # A later rollback compares with what the panel holds after finalization.
+        change["details"]["writtenPath"] = save_snapshot(
+            store, run["runId"], f"xui-reality-{change['changeId'][:8]}-final", written
+        )
 
 
 def schedule(app: Any, client: PanelClient, run: dict, launcher: str) -> bool:

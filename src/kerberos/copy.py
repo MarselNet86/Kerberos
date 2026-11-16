@@ -53,6 +53,12 @@ TEXT: dict[str, str] = {
         "Клиенты переподключатся за секунды."
     ),
     "apply.rolled_back": "Не применилось, откатил: {reason}",
+    "apply.outside": (
+        "SSH слушает новый порт {port}. Проверьте вход с вашего компьютера в новом окне "
+        "терминала: {command}. KERBEROS работает на этом же сервере и фаервол хостера "
+        "отсюда не видит. Без ответа за три минуты всё вернётся само."
+    ),
+    "apply.outside.keys": "Enter: вошёл, порт оставить    Esc: не вышло, вернуть старый",
     "done.title": "Готово",
     "done.rollback": "Откатить: {command}",
     # K0: shell, menu, keys
@@ -108,7 +114,37 @@ TEXT: dict[str, str] = {
     "keys.field": "поле",
     # K1: S2 panel (§7)
     "s2.title": "Панель",
-    "panel.searching": "Ищу Remnawave на этом сервере…",
+    "panel.searching": "Ищу панель на этом сервере…",
+    "panel.choose": "Какая панель на этом сервере?",
+    "panel.choose.found": "найдена, версия {version}",
+    "panel.choose.none": "не найдена",
+    "panel.choose.hint": (
+        "С 3x-ui KERBEROS защищает этот сервер: панель и VPN на нём же. Для нескольких "
+        "серверов 3x-ui запустите KERBEROS на каждом."
+    ),
+    "panel.xui.found": "Нашёл 3x-ui {version} на этом сервере",
+    "panel.xui.port": "Панель на порту {port}",
+    "panel.xui.not_found": "3x-ui на этом сервере не нашёл. Укажите адрес панели.",
+    "panel.xui.url_label": "Адрес панели 3x-ui с секретным путём",
+    "panel.xui.url_hint": "Например, http://127.0.0.1:2053/путь/",
+    "panel.xui.url_invalid": "нужен адрес вида http://127.0.0.1:2053/путь/",
+    "panel.xui.login": "Логин панели 3x-ui",
+    "panel.xui.code": "Код двухфакторной проверки",
+    "panel.xui.login_hint": (
+        "Войдите в панель. Пароль нужен только на время входа. После пяти ошибок 3x-ui "
+        "закрывает вход на 15 минут."
+    ),
+    "panel.xui.err.login": "Неверный логин, пароль или код",
+    "panel.xui.err.forbidden": "Панель отклонила запрос: проверьте домен и версию 3x-ui",
+    "panel.xui.ip_label": "Публичный IPv4 этого сервера",
+    "panel.xui.ip_hint": (
+        "На интерфейсах его нет: сервер за NAT. По нему KERBEROS проверяет сервер снаружи."
+    ),
+    "panel.xui.ip_invalid": "нужен адрес вида 203.0.113.10",
+    "panel.xui.loading": "Читаю инбаунды 3x-ui…",
+    "panel.xui.ok": "Панель подключена: инбаундов {inbounds}",
+    "panel.kind.remnawave": "Remnawave",
+    "panel.kind.3x-ui": "3x-ui",
     "panel.not_found": "Remnawave на этом сервере не нашёл. Укажите адрес API панели.",
     "panel.api_label": "Адрес API панели",
     "panel.api_hint": "Например, http://127.0.0.1:3000/api",
@@ -196,6 +232,11 @@ TEXT: dict[str, str] = {
     "access.reason.hostkey": "ключ сервера изменился",
     "access.reason.keygen": "не удалось создать ключ KERBEROS на сервере панели",
     "access.reason.failed": "ошибка установки: {detail}",
+    "access.local.installing": "Ставлю агента KERBEROS на этот сервер…",
+    "access.admin.chosen.local": (
+        "Ключ администратора: ваши ключи уже на этом сервере; без них вход по паролю останется"
+    ),
+    "access.reason.local_key": "не нашёл ключ этого сервера /etc/ssh/ssh_host_ed25519_key.pub",
     "access.admin.title": "Ключ администратора",
     "access.admin.mine": "Мои ключи с сервера панели ({n})",
     "access.admin.create": "Создать ключ на сервере панели",
@@ -289,6 +330,14 @@ TEXT: dict[str, str] = {
     "check.panel.public.threat": "Страницу входа находят сканеры и подбирают пароль",
     "check.panel.public.how": (
         "закройте панель барьером: caddy-security, секретный путь или доступ по VPN"
+    ),
+    "check.xui.panel_exposed.title": "Панель 3x-ui открыта всем на порту {port}",
+    "check.xui.panel_exposed.threat": (
+        "Сканеры находят панель по порту и странице входа, а через неё весь сервер"
+    ),
+    "check.xui.panel_exposed.how": (
+        "в настройках 3x-ui смените порт, задайте секретный путь и сертификат; надёжнее "
+        "слушать только 127.0.0.1 и входить через SSH-туннель"
     ),
     "check.panel_server.ssh.title": "На сервер панели можно войти по паролю",
     "check.panel_server.ssh.threat": "Взлом сервера панели отдаёт управление всеми нодами",
@@ -490,6 +539,12 @@ TEXT: dict[str, str] = {
     "plan.blocked.port443": "порт 443 держит не Xray",
     "plan.finalize.manual": "Старые имена уберёт kerberos finalize через сутки (f: автоматически)",
     "plan.finalize.auto": "Старые имена уберутся автоматически через сутки (f: вручную)",
+    "plan.finalize.xui": (
+        "Старые имена уберёт kerberos finalize через сутки. До этого 3x-ui даёт в новых ссылках "
+        "случайное имя из serverNames, после финализации клиентам нужно обновить подписку."
+    ),
+    "fix.xui.reality.label": "Reality-инбаунды 3x-ui на домен {domain}",
+    "error.no_reality": "в 3x-ui нет включённого Reality-инбаунда",
     "s9.hosts": (
         "Копий хостов: {created}, выключено старых: {disabled}. Копии стоят в конце списка."
     ),
@@ -598,7 +653,7 @@ TEXT: dict[str, str] = {
     # CLI (§5.3)
     "cli.usage": "Использование: sudo ./kerberos [команда] [флаги]",
     "cli.help": (
-        "KERBEROS: защита VPN-серверов на Remnawave\n"
+        "KERBEROS: защита VPN-серверов на Remnawave и 3x-ui\n"
         "\n"
         "Использование: sudo ./kerberos [команда] [флаги]\n"
         "\n"
@@ -614,6 +669,7 @@ TEXT: dict[str, str] = {
         "Флаги:\n"
         "  --demo       весь сценарий на встроенном парке, без панели и серверов\n"
         "  --mask       заменить адреса и домены примерами из документации\n"
+        "  --panel P    панель без вопроса: remnawave или 3x-ui\n"
         "  --no-color   без цвета (также переменная NO_COLOR)\n"
         "  --help       эта справка\n"
         "  --version    версия\n"
@@ -624,6 +680,7 @@ TEXT: dict[str, str] = {
     ),
     "cli.bad_args": "Неверные аргументы: {detail}",
     "cli.unknown_flag": "неизвестный флаг {flag}",
+    "cli.bad_panel": "--panel: нужно remnawave или 3x-ui, а не «{value}»",
     "cli.unknown_command": "неизвестная команда {command}",
     "cli.extra_arg": "лишний аргумент {arg}",
     "cli.missing_node": "укажите ноду: kerberos ssh <нода>",

@@ -418,3 +418,6 @@ def attach(env, state_root: Optional[Path] = None) -> None:
     env.prober = build_prober(env.panel_transport, list(env.transport.nodes.values()))
     env.prober.auth = auth_methods_of(list(env.transport.nodes.values()))
     env.whois = build_whois()
+    from kerberos.demo.xui import attach_xui
+
+    attach_xui(env)

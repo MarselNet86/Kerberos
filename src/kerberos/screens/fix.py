@@ -128,7 +128,8 @@ def confirm_edges(app: App, session: Session, item: PlanItem) -> None:
 
     node = session.snapshot.node(item.node_uuid or "")
     record = app.env.state.node(node.uuid)
-    target = Target(node.uuid, node.name, node.address, record.ssh_port if record else 22)
+    target = record.target(node.address) if record else Target(node.uuid, node.name,
+                                                                   node.address, 22)  # fmt: skip
     counts: dict = {}
     for path in item.params["paths"]:
         try:
@@ -339,8 +340,10 @@ def step_plan(app: App, session: Session) -> Any:
             tail.append(site_preview(app, session, current))
         if any(i.fix_id == "self_steal" for i in items):
             auto = session.data.get("auto_finalize", False)
-            tail.append(Text(t("plan.finalize.auto" if auto else "plan.finalize.manual"),
-                             style="muted"))  # fmt: skip
+            key = "plan.finalize.auto" if auto else "plan.finalize.manual"
+            if session.snapshot.kind == "3x-ui":
+                key = "plan.finalize.xui"  # no timer: 3x-ui gives KERBEROS no token for it
+            tail.append(Text(t(key), style="muted"))
         if state["error"]:
             tail.append(Notice("warning", state["error"]))
         checklist.viewport = max(4, height - 4 - len(tail))
@@ -378,7 +381,7 @@ def step_plan(app: App, session: Session) -> Any:
         if hotkey(key) == "g" and items[checklist.cursor].fix_id == "self_steal":
             new_site(session, items[checklist.cursor])
             return None
-        if hotkey(key) == "f":
+        if hotkey(key) == "f" and session.snapshot.kind != "3x-ui":
             session.data["auto_finalize"] = not session.data.get("auto_finalize", False)
             return None
         if hotkey(key) == "r" and items[checklist.cursor].fix_id == "self_steal":
@@ -473,6 +476,7 @@ def step_apply(app: App, session: Session) -> Any:
 
     engine = Engine(app, session, chosen, on_event)
     engine.ask_diff = lambda diff: ask_overwrite(app, diff)
+    engine.ask_outside = lambda port, command: ask_outside(app, port, command)
     session.data["engine"] = engine
     app.busy = True
 
@@ -502,6 +506,14 @@ def step_apply(app: App, session: Session) -> Any:
 
         schedule(app, session.panel, session.data["run"], launcher())
     return NEXT
+
+
+def ask_outside(app: App, port: int, command: str) -> bool:
+    """§7.6: the new SSH port of this server, tried by the person from their computer."""
+    body = Group(Notice("warning", t("apply.outside", port=port, command=app.mask(command))),
+                 Text(t("apply.outside.keys"), style="muted"))  # fmt: skip
+    app.draw(t("s8.title"), body)
+    return app.term.read_key() == "enter"
 
 
 def ask_overwrite(app: App, diff: str) -> bool:

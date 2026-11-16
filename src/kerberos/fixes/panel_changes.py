@@ -29,6 +29,7 @@ PANEL_FIXES = {
     "reserve",
     "xhttp.padding",
     "xhttp.uplink_get",
+    "xui.reality",
 }
 
 
@@ -113,6 +114,8 @@ def undo(client: PanelClient, change: dict,
             for uuid, inbounds in (details.get("squads") or {}).items():
                 client.patch_squad(uuid, inbounds)
             return None
+        if fix_id == "xui.reality":
+            return undo_xui_reality(client, change, ask)
         if fix_id == "xhttp.uplink_get":
             return undo_uplink(client, change)
         if fix_id == "xhttp.padding":
@@ -191,4 +194,27 @@ def undo_padding(client: PanelClient, change: dict,
         if host is not None and xhttp.padding_of(host.xhttp_extra):
             rest = xhttp.without_padding(host.xhttp_extra)
             client.patch_host(uuid, {"xhttpExtraParams": rest or None})
+    return None
+
+
+def undo_xui_reality(client: Any, change: dict,
+                     ask: Optional[Callable[[str], bool]]) -> Optional[str]:  # fmt: skip
+    """3x-ui (§7.6): Reality of the inbounds back from the snapshot; asks when edited since."""
+    before = load_snapshot(change.get("before"))
+    if before is None:
+        return "no_snapshot"
+    written = load_snapshot(change["details"].get("writtenPath")) or {}
+    edited = {}
+    for ident, stream in before.items():
+        current = client.inbound(int(ident))["streamSettings"]
+        mine = written.get(ident)
+        if mine is not None and current not in (mine, stream):
+            edited[ident] = (mine, current)
+    if edited:
+        mine = {k: v[0].get("realitySettings") for k, v in edited.items()}
+        now = {k: v[1].get("realitySettings") for k, v in edited.items()}
+        if ask is None or not ask(diff_text(mine, now)):
+            return "changed_in_panel"
+    for ident, stream in before.items():
+        client.update_inbound(int(ident), stream)
     return None

@@ -53,6 +53,8 @@ class Env:
     prober: Optional[Prober] = None
     whois: Optional[Whois] = None
     demo: bool = False
+    xui_transport: Optional[Transport] = None  # 3x-ui session (§7.6)
+    panel_kind: Optional[str] = None  # --panel: skip the question of S2
 
 
 @dataclass
@@ -298,7 +300,7 @@ class App:
         if not pairs:
             self.notice("info", t("fin.none"), t("fin.title"))
             return EXIT_OK
-        opened = open_panel(self)
+        opened = open_panel(self, kind=pairs[0][0]["panel"].get("kind", "remnawave"))
         if not isinstance(opened, tuple):
             return EXIT_PANEL if opened == EXIT_PANEL else EXIT_OK
         lines: list = [Text(t("fin.consent"))]

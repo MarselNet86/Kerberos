@@ -86,14 +86,18 @@ class CheckSpec:
     fix_id: Optional[str]
     kind: str  # fix | manual | explain | plan
     rule: Callable[[CheckInput], list[Finding]]
+    panels: tuple = ("remnawave", "3x-ui")
 
 
 REGISTRY: list[CheckSpec] = []
 
 
-def check(check_id: str, topic: str, risk: str, fix_id: Optional[str], kind: str):
+def check(check_id: str, topic: str, risk: str, fix_id: Optional[str], kind: str,
+          panels: tuple = ("remnawave", "3x-ui")):  # fmt: skip
+    """Register a rule; `panels`: the panels it means something for (§7.6)."""
+
     def register(rule: Callable[[CheckInput], list[Finding]]):
-        REGISTRY.append(CheckSpec(check_id, topic, risk, fix_id, kind, rule))
+        REGISTRY.append(CheckSpec(check_id, topic, risk, fix_id, kind, rule, panels))
         return rule
 
     return register
@@ -125,7 +129,8 @@ def run_checks(data: CheckInput) -> list[Finding]:
 
     findings: list[Finding] = []
     for item in REGISTRY:
-        findings += item.rule(data)
+        if data.snapshot.kind in item.panels:
+            findings += item.rule(data)
     return findings
 
 
@@ -165,6 +170,11 @@ def stream(inbound: dict) -> dict:
 def reality_settings(inbound: dict) -> dict:
     value = stream(inbound).get("realitySettings")
     return value if isinstance(value, dict) else {}
+
+
+def reality_dest(settings: dict) -> str:
+    """Newer Xray and 3x-ui call `dest` `target`; both mean the same."""
+    return str(settings.get("target") or settings.get("dest") or "")
 
 
 def reality_inbounds(snapshot: PanelSnapshot, node: Node) -> list[dict]:

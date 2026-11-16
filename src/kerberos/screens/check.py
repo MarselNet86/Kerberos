@@ -122,9 +122,11 @@ def save_check_run(app: App, session: Session) -> Run:
     snapshot = session.snapshot
     run = session.data.get("run")
     if run is None:
+        xui = snapshot.kind == "3x-ui"
+        # The address of a 3x-ui panel holds its secret path: it stays out of the run.
+        api = session.location.api if session.location and not xui else ""
         panel = {"version": snapshot.version, "nodes": len(snapshot.nodes),
-                 "hosts": len(snapshot.hosts),
-                 "api": session.location.api if session.location else ""}  # fmt: skip
+                 "hosts": len(snapshot.hosts), "api": api, "kind": snapshot.kind}  # fmt: skip
         run = store.new_run(session.mode, panel, node_entries(session))
         session.data["run"] = run
     run["nodes"] = node_entries(session)

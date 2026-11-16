@@ -73,6 +73,10 @@ def keys() -> tuple:
 def step(app: App, session: Session) -> Any:
     snapshot = session.snapshot
     assert snapshot is not None
+    if snapshot.kind == "3x-ui":
+        # One server, the one KERBEROS runs on: nothing to choose (§7.6).
+        session.selected = [n.uuid for n in snapshot.nodes]
+        return NEXT
     nodes = snapshot.nodes
     disabled = {i for i, n in enumerate(nodes) if n.is_disabled}
     if session.selected:

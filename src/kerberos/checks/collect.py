@@ -73,8 +73,9 @@ class Collector:
 
     def target(self, data: NodeData) -> Target:
         record = self.records.get(data.node.uuid)
-        port = record.ssh_port if record else 22
-        return Target(data.node.uuid, data.node.name, data.node.address, port)
+        if record is not None:
+            return record.target(data.node.address)
+        return Target(data.node.uuid, data.node.name, data.node.address, 22)
 
     def agent(self, data: NodeData, command: str, payload: Optional[dict] = None) -> Optional[dict]:
         try:
