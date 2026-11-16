@@ -75,7 +75,7 @@ def test_documentation_values_and_file_names_stay():
 
 
 def test_disabled_masker_is_identity():
-    assert Masker(False)("198.18.0.5 vpn.example.ru") == "198.18.0.5 vpn.example.ru"
+    assert Masker(False)("198.18.0.5 nl-1.example.com") == "198.18.0.5 nl-1.example.com"
 
 
 def test_cidr_and_sentence_end():
