@@ -10,6 +10,7 @@ step() { printf '\n== %s\n' "$*"; }
 
 step "ruff"
 uvx ruff@0.17.5 check .
+uvx ruff@0.17.5 format --check src tests tools
 
 for version in 3.9 3.14; do
   step "pytest, Python $version"

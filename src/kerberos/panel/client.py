@@ -1,0 +1,255 @@
+"""PanelClient port (tech.md §7): Remnawave API over a pluggable HTTP transport.
+
+The live transport is urllib against the panel on this server; the fake is
+an in-memory panel (`kerberos.panel.fake`). The client logic (headers,
+retries, envelope, both host forms) is the same for both.
+
+The access token lives only in this object: never on disk or in a log (§7.3).
+"""
+
+from __future__ import annotations
+
+import json
+import socket
+import urllib.error
+import urllib.request
+from typing import Any, Optional, Protocol
+
+from kerberos import __version__
+from kerberos.clock import Clock
+from kerberos.panel import schema
+from kerberos.panel.errors import PanelError
+from kerberos.panel.model import Host, Node, PanelSnapshot, Profile, Squad, SubSettings, Template
+
+TIMEOUT = 15.0
+RETRY_DELAYS = (1, 4, 15)
+FORWARD_HEADERS = {
+    "x-forwarded-proto": "https",
+    "x-forwarded-for": "127.0.0.1",
+    "x-real-ip": "127.0.0.1",
+}
+
+
+class NoResponse(Exception):
+    """The request may have reached the panel, but no answer came back."""
+
+
+class Unreachable(Exception):
+    """The connection was refused: the request never reached the panel."""
+
+
+class Transport(Protocol):
+    def __call__(
+        self, method: str, url: str, headers: dict, body: Optional[bytes], timeout: float
+    ) -> tuple[int, bytes]: ...
+
+
+def urllib_transport(
+    method: str, url: str, headers: dict, body: Optional[bytes], timeout: float
+) -> tuple[int, bytes]:
+    request = urllib.request.Request(url, data=body, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as resp:
+            return resp.status, resp.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read() or b""
+    except urllib.error.URLError as exc:
+        if isinstance(exc.reason, ConnectionRefusedError):
+            raise Unreachable(str(exc.reason)) from exc
+        raise NoResponse(str(exc.reason)) from exc
+    except (socket.timeout, TimeoutError, ConnectionError, OSError) as exc:
+        raise NoResponse(str(exc)) from exc
+
+
+class PanelClient:
+    def __init__(self, base_url: str, transport: Transport, clock: Clock) -> None:
+        self.base = base_url.rstrip("/")
+        self.transport = transport
+        self.clock = clock
+        self._token: Optional[str] = None
+        self.host_shape = "tags"
+        self.calls: list[tuple[str, str]] = []
+
+    @property
+    def authenticated(self) -> bool:
+        return self._token is not None
+
+    def set_token(self, token: str) -> None:
+        self._token = token.strip()
+
+    def forget_token(self) -> None:
+        self._token = None
+
+    # -- transport -----------------------------------------------------
+    def request(self, method: str, path: str, body: Any = None, *, auth: bool = True) -> Any:
+        headers = dict(FORWARD_HEADERS)
+        headers["accept"] = "application/json"
+        headers["user-agent"] = f"kerberos/{__version__}"
+        data = None
+        if body is not None:
+            headers["content-type"] = "application/json"
+            data = json.dumps(body).encode("utf-8")
+        if auth and self._token:
+            headers["authorization"] = f"Bearer {self._token}"
+        operation = f"{method} {path}"
+        self.calls.append((method, path))
+        attempt = 0
+        while True:
+            try:
+                status, raw = self.transport(method, self.base + path, headers, data, TIMEOUT)
+            except NoResponse as exc:
+                if method == "POST":
+                    # The host may have been created: never send it twice (§7.2).
+                    raise PanelError("no_response", operation=operation, detail=str(exc)) from exc
+                if attempt < len(RETRY_DELAYS):
+                    self.clock.sleep(RETRY_DELAYS[attempt])
+                    attempt += 1
+                    continue
+                raise PanelError("timeout", operation=operation, detail=str(exc)) from exc
+            except Unreachable as exc:
+                if attempt < len(RETRY_DELAYS):
+                    self.clock.sleep(RETRY_DELAYS[attempt])
+                    attempt += 1
+                    continue
+                raise PanelError("unreachable", operation=operation, detail=str(exc)) from exc
+            if status >= 500:
+                if attempt < len(RETRY_DELAYS):
+                    self.clock.sleep(RETRY_DELAYS[attempt])
+                    attempt += 1
+                    continue
+                raise PanelError("server_error", status, operation)
+            break
+        if status == 401:
+            raise PanelError("unauthorized", 401, operation)
+        if status == 403:
+            raise PanelError("forbidden", 403, operation)
+        if status >= 400:
+            raise PanelError("bad_request", status, operation, _message(raw))
+        try:
+            payload = json.loads(raw.decode("utf-8")) if raw else None
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise PanelError("bad_response", status, operation, "not JSON") from exc
+        try:
+            return schema.unwrap(payload)
+        except PanelError as exc:
+            exc.operation = operation
+            raise
+
+    # -- auth (§7.3) -----------------------------------------------------
+    def password_enabled(self) -> bool:
+        return schema.auth_password_enabled(self.request("GET", "/auth/status", auth=False))
+
+    def login(self, username: str, password: str) -> None:
+        answer = self.request(
+            "POST", "/auth/login", {"username": username, "password": password}, auth=False
+        )
+        self._token = schema.access_token(answer)
+
+    def create_token(self, name: str, days: int) -> tuple[str, str]:
+        answer = schema._obj(
+            self.request("POST", "/tokens", {"name": name, "expiresInDays": days}), "token"
+        )
+        token = answer.get("token") or answer.get("accessToken")
+        if not isinstance(token, str) or not isinstance(answer.get("uuid"), str):
+            raise schema.bad("token answer")
+        return answer["uuid"], token
+
+    def delete_token(self, uuid: str) -> None:
+        self.request("DELETE", f"/tokens/{uuid}")
+
+    # -- reading ---------------------------------------------------------
+    def nodes(self) -> list[Node]:
+        return [schema.node(n) for n in schema.items(self.request("GET", "/nodes"), "nodes")]
+
+    def profiles(self) -> list[Profile]:
+        answer = self.request("GET", "/config-profiles")
+        return [schema.profile(p) for p in schema.items(answer, "configProfiles")]
+
+    def hosts(self) -> list[Host]:
+        raw = schema.items(self.request("GET", "/hosts"), "hosts")
+        self.host_shape = schema.detect_shape(raw)
+        return [schema.host(h, self.host_shape) for h in raw]
+
+    def templates(self) -> list[Template]:
+        answer = self.request("GET", "/subscription-templates")
+        return [schema.template(t) for t in schema.items(answer, "templates")]
+
+    def template(self, uuid: str) -> Template:
+        return schema.template(self.request("GET", f"/subscription-templates/{uuid}"))
+
+    def squads(self) -> list[Squad]:
+        answer = self.request("GET", "/internal-squads")
+        return [schema.squad(s) for s in schema.items(answer, "internalSquads")]
+
+    def sub_settings(self) -> SubSettings:
+        return schema.sub_settings(self.request("GET", "/subscription-settings"))
+
+    def snapshot(self, version: str, panel_domain: Optional[str] = None) -> PanelSnapshot:
+        hosts = self.hosts()
+        templates = []
+        for item in self.templates():
+            if item.type == "XRAY_JSON" and item.json is None:
+                item = self.template(item.uuid)
+            templates.append(item)
+        return PanelSnapshot(
+            version=version,
+            nodes=self.nodes(),
+            hosts=hosts,
+            profiles=self.profiles(),
+            templates=templates,
+            squads=self.squads(),
+            sub_settings=self.sub_settings(),
+            host_shape=self.host_shape,
+            panel_domain=panel_domain,
+        )
+
+    # -- changes (used by «Исправление» only) ----------------------------
+    def patch_profile(self, uuid: str, config: dict) -> Profile:
+        return schema.profile(
+            self.request("PATCH", "/config-profiles", {"uuid": uuid, "config": config})
+        )
+
+    def create_host(self, fields: dict) -> Host:
+        body = schema.host_write_fields(fields, self.host_shape)
+        return schema.host(self.request("POST", "/hosts", body), self.host_shape)
+
+    def patch_host(self, uuid: str, fields: dict) -> Host:
+        body = {"uuid": uuid, **schema.host_write_fields(fields, self.host_shape)}
+        return schema.host(self.request("PATCH", "/hosts", body), self.host_shape)
+
+    def disable_hosts(self, uuids: list[str]) -> None:
+        self.request("POST", "/hosts/bulk/disable", {"uuids": list(uuids)})
+
+    def enable_hosts(self, uuids: list[str]) -> None:
+        self.request("POST", "/hosts/bulk/enable", {"uuids": list(uuids)})
+
+    def delete_host(self, uuid: str) -> None:
+        self.request("DELETE", f"/hosts/{uuid}")
+
+    def create_template(self, name: str) -> Template:
+        body = {"name": name, "templateType": "XRAY_JSON"}
+        return schema.template(self.request("POST", "/subscription-templates", body))
+
+    def patch_template(self, uuid: str, template_json: dict) -> Template:
+        body = {"uuid": uuid, "templateJson": template_json}
+        return schema.template(self.request("PATCH", "/subscription-templates", body))
+
+    def patch_squad(self, uuid: str, inbound_uuids: list[str]) -> Squad:
+        body = {"uuid": uuid, "inbounds": list(inbound_uuids)}
+        return schema.squad(self.request("PATCH", "/internal-squads", body))
+
+    def patch_sub_settings(self, uuid: str, headers: dict) -> SubSettings:
+        body = {"uuid": uuid, "customResponseHeaders": headers}
+        return schema.sub_settings(self.request("PATCH", "/subscription-settings", body))
+
+
+def _message(raw: bytes) -> str:
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return ""
+    if isinstance(payload, dict):
+        message = payload.get("message")
+        if isinstance(message, str):
+            return message[:200]
+    return ""

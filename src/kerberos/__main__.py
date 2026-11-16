@@ -111,6 +111,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     terminal = LiveTerminal(color=opts.color)
     env = Env(terminal=terminal, clock=SystemClock(), masker=Masker(opts.mask), demo=opts.demo)
+    if opts.demo:
+        from kerberos.demo.fleet import attach
+
+        attach(env)
+    else:
+        from kerberos.host import LiveHost
+        from kerberos.panel.client import urllib_transport
+
+        env.host = LiveHost()
+        env.panel_transport = urllib_transport
     try:
         return App(env).run(opts.command, opts.arg)
     finally:

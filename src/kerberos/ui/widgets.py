@@ -236,6 +236,11 @@ class TextInput:
         self.value = value
         self.pos = len(value)
         self.error: Optional[str] = None
+        self.focused = True
+
+    def clear(self) -> None:
+        self.value = ""
+        self.pos = 0
 
     def handle(self, key: str) -> Optional[str]:
         """Return the value on Enter when it is valid; None otherwise."""
@@ -267,11 +272,15 @@ class TextInput:
 
     def __rich__(self) -> RenderableType:
         shown = "•" * len(self.value) if self.secret else self.value
-        line = Text(POINTER + " ", style="accent")
-        line.append(shown[: self.pos])
-        line.append(shown[self.pos] if self.pos < len(shown) else " ", style="reverse")
-        line.append(shown[self.pos + 1 :])
-        parts: list[RenderableType] = [Text(self.label, style="bold"), line]
+        if self.focused:
+            line = Text(POINTER + " ", style="accent")
+            line.append(shown[: self.pos])
+            line.append(shown[self.pos] if self.pos < len(shown) else " ", style="reverse")
+            line.append(shown[self.pos + 1 :])
+        else:
+            line = Text("  " + shown)
+        label_style = "bold" if self.focused else "muted"
+        parts: list[RenderableType] = [Text(self.label, style=label_style), line]
         hint = self.hint
         if self.secret:
             hint = (hint + " " if hint else "") + t("input.hidden")

@@ -11,15 +11,19 @@ DOC_NETS = [ipaddress.ip_network(n) for n in ("192.0.2.0/24", "198.51.100.0/24",
 
 
 def real_v4():
-    return st.ip_addresses(v=4).filter(
-        lambda a: not is_doc_ip(str(a)) and not a.is_loopback and not a.is_unspecified
-    ).map(str)
+    return (
+        st.ip_addresses(v=4)
+        .filter(lambda a: not is_doc_ip(str(a)) and not a.is_loopback and not a.is_unspecified)
+        .map(str)
+    )
 
 
 def real_v6():
-    return st.ip_addresses(v=6).filter(
-        lambda a: not is_doc_ip(str(a)) and not a.is_loopback and not a.is_unspecified
-    ).map(str)
+    return (
+        st.ip_addresses(v=6)
+        .filter(lambda a: not is_doc_ip(str(a)) and not a.is_loopback and not a.is_unspecified)
+        .map(str)
+    )
 
 
 labels = st.from_regex(r"[a-z][a-z0-9]{1,10}", fullmatch=True)
