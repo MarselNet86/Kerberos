@@ -124,10 +124,12 @@ class Engine:
             return
         if item.fix_id == "self_steal":
             from kerberos.fixes.self_steal import SelfSteal
+            from kerberos.fixes.xui_self_steal import SelfStealXui
 
             self.event("backup", item, "running")
             self.event("backup", item, "ok")
-            SelfSteal(self, item).run()
+            kind = SelfStealXui if self.session.snapshot.kind == "3x-ui" else SelfSteal
+            kind(self, item).run()
             return
         target = self.target(item.node_uuid or "")
         change: Change = {

@@ -173,7 +173,7 @@ def rollback_flow(app: App, run_id: Optional[str] = None) -> int:
     if any(c["fixId"] in PANEL_FIXES for c in chosen):
         from kerberos.screens.panel import open_panel
 
-        opened = open_panel(app)
+        opened = open_panel(app, kind=run["panel"].get("kind", "remnawave"))
         if not isinstance(opened, tuple):
             return EXIT_PANEL if opened == EXIT_PANEL else EXIT_OK
         client = opened[1]

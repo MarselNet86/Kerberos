@@ -340,8 +340,10 @@ def step_plan(app: App, session: Session) -> Any:
             tail.append(site_preview(app, session, current))
         if any(i.fix_id == "self_steal" for i in items):
             auto = session.data.get("auto_finalize", False)
-            tail.append(Text(t("plan.finalize.auto" if auto else "plan.finalize.manual"),
-                             style="muted"))  # fmt: skip
+            key = "plan.finalize.auto" if auto else "plan.finalize.manual"
+            if session.snapshot.kind == "3x-ui":
+                key = "plan.finalize.xui"  # no timer: 3x-ui gives KERBEROS no token for it
+            tail.append(Text(t(key), style="muted"))
         if state["error"]:
             tail.append(Notice("warning", state["error"]))
         checklist.viewport = max(4, height - 4 - len(tail))
@@ -379,7 +381,7 @@ def step_plan(app: App, session: Session) -> Any:
         if hotkey(key) == "g" and items[checklist.cursor].fix_id == "self_steal":
             new_site(session, items[checklist.cursor])
             return None
-        if hotkey(key) == "f":
+        if hotkey(key) == "f" and session.snapshot.kind != "3x-ui":
             session.data["auto_finalize"] = not session.data.get("auto_finalize", False)
             return None
         if hotkey(key) == "r" and items[checklist.cursor].fix_id == "self_steal":
