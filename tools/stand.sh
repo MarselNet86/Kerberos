@@ -37,7 +37,7 @@ run_docker() {
         export DEBIAN_FRONTEND=noninteractive
         apt-get update -qq >/dev/null
         apt-get install -y -qq python3 python3-pytest >/dev/null
-        mkdir -p /tmp/k && cd /src && tar cf - '"${PAYLOAD[*]}"' | tar xf - -C /tmp/k
+        mkdir -p /tmp/k && cd /src && tar --no-xattrs -cf - '"${PAYLOAD[*]}"' | tar xf - -C /tmp/k
         cd /tmp/k && python3 -m pytest -q -p no:cacheprovider tests/agent'; then
       record "${NAMES[$i]}" docker ok
     else
@@ -63,14 +63,24 @@ run_vms() {
       failed=1
       continue
     fi
-    tar czf - "${PAYLOAD[@]}" | ssh "${ssh_opts[@]}" "$target" \
+    # No extended attributes: macOS tar adds its own, GNU tar on the VM warns about them.
+    tar --no-xattrs -czf - "${PAYLOAD[@]}" | ssh "${ssh_opts[@]}" "$target" \
       'rm -rf /tmp/kerberos-stand && mkdir -p /tmp/kerberos-stand && tar xzf - -C /tmp/kerberos-stand'
     domain_var="${VARS[$i]}_DOMAIN"
     if [ -n "${!domain_var:-}" ]; then
       printf '%s\n' "${!domain_var}" | ssh "${ssh_opts[@]}" "$target" 'cat > /tmp/kerberos-stand/domain'
     fi
+    # A fresh VM may still run cloud-init (host keys, packages): wait for it first.
     ssh "${ssh_opts[@]}" "$target" \
-      'python3 -m pytest --version >/dev/null 2>&1 || DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-pytest >/dev/null'
+      'command -v cloud-init >/dev/null 2>&1 && cloud-init status --wait >/dev/null 2>&1; true'
+    # A fresh cloud image has no package lists yet: update before installing.
+    if ! ssh "${ssh_opts[@]}" "$target" 'python3 -m pytest --version >/dev/null 2>&1 || {
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq >/dev/null && apt-get install -y -qq python3-pytest >/dev/null; }'; then
+      record "${NAMES[$i]}" pytest "FAILED: python3-pytest did not install"
+      failed=1
+      continue
+    fi
     if ssh "${ssh_opts[@]}" "$target" 'cd /tmp/kerberos-stand && python3 -m pytest -q -p no:cacheprovider tests/agent'; then
       record "${NAMES[$i]}" pytest ok
     else

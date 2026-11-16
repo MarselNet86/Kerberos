@@ -46,8 +46,12 @@ def report(name: str, ok: bool, detail: str = "") -> None:
     print(f"{'ok  ' if ok else 'FAIL'}  {name}" + (f": {detail}" if detail and not ok else ""))
 
 
-def cycle(fix_id: str, params: dict, applied, restored, confirm: bool = False) -> None:
-    """Apply, check, roll back, check, apply again, roll back."""
+def cycle(fix_id: str, params: dict, applied, restored, confirm: bool = False,
+          describe=None) -> None:  # fmt: skip
+    """Apply, check, roll back, check, apply again, roll back.
+
+    `describe` turns facts into the detail printed when a check fails.
+    """
     for round_no in (1, 2):
         change = str(uuid.uuid4())
         code, answer = agent("apply", fix_id, change, payload=params)
@@ -57,13 +61,15 @@ def cycle(fix_id: str, params: dict, applied, restored, confirm: bool = False) -
         if confirm:
             code, answer = agent("confirm", change)
             report(f"{fix_id} confirm #{round_no}", answer.get("state") == "confirmed")
-        report(f"{fix_id} effect #{round_no}", applied(facts()))
+        now = facts()
+        report(f"{fix_id} effect #{round_no}", applied(now), describe(now) if describe else "")
         code, again = agent("apply", fix_id, change, payload=params)
         report(f"{fix_id} same changeId is noop", again.get("state") == "noop")
         code, answer = agent("rollback", change)
         report(f"{fix_id} rollback #{round_no}", answer.get("state") == "rolled_back",
                json.dumps(answer))  # fmt: skip
-        report(f"{fix_id} restored #{round_no}", restored(facts()))
+        now = facts()
+        report(f"{fix_id} restored #{round_no}", restored(now), describe(now) if describe else "")
 
 
 def listen(port: int) -> socket.socket:
@@ -72,6 +78,49 @@ def listen(port: int) -> socket.socket:
     server.bind(("0.0.0.0", port))
     server.listen(1)
     return server
+
+
+WATCH_LOG = "/var/log/kerberos-watch.log"
+STAND_KEY = "/tmp/kerberos-stand-key"
+EDGE_SITE = "/etc/nginx/sites-enabled/kerberos-stand-cdn"
+EDGE_CONF = "/etc/nginx/conf.d/kerberos-edges.conf"
+EDGE_TEXT = """server {
+    listen 127.0.0.1:8098;
+    location /stand-tunnel {
+        return 200;
+    }
+    location = /cdn-check {
+        return 204;
+    }
+}
+"""
+
+
+def edge_filter() -> None:
+    """cdn.edge_only on a plain nginx site of the stand: nginx must take the filter."""
+    env = dict(os.environ, DEBIAN_FRONTEND="noninteractive")
+    if shutil.which("nginx") is None:
+        subprocess.run(["apt-get", "install", "-y", "-qq", "nginx"], env=env, check=False,
+                       capture_output=True)  # fmt: skip
+    if shutil.which("nginx") is None:
+        report("cdn.edge_only: nginx installed", False)
+        return
+    with open(EDGE_SITE, "w") as fh:
+        fh.write(EDGE_TEXT)
+    subprocess.run(["systemctl", "reload-or-restart", "nginx"], check=False)
+
+    def guarded(_facts: dict) -> bool:
+        return os.path.exists(EDGE_CONF) and "@kerberos_not_edge" in open(EDGE_SITE).read()
+
+    def clean(_facts: dict) -> bool:
+        return not os.path.exists(EDGE_CONF) and open(EDGE_SITE).read() == EDGE_TEXT
+
+    try:
+        cycle("cdn.edge_only", {"paths": ["/stand-tunnel"], "nets": ["192.0.2.0/24"]},
+              guarded, clean)  # fmt: skip
+    finally:
+        os.remove(EDGE_SITE)
+        subprocess.run(["systemctl", "reload", "nginx"], check=False)
 
 
 def main() -> int:
@@ -103,6 +152,19 @@ def main() -> int:
     finally:
         server.close()
 
+    # K8: the watch, and the CDN filter on a stand site of its own.
+    cycle("watch.install", {},
+          lambda f: f["watch"]["installed"],
+          lambda f: f["watch"]["installed"] == before["watch"]["installed"])  # fmt: skip
+    change = str(uuid.uuid4())
+    agent("apply", "watch.install", change)
+    watch = subprocess.run(["/usr/local/sbin/kerberos-watch"], capture_output=True, check=False)
+    lines = (open(WATCH_LOG).read().splitlines() if os.path.exists(WATCH_LOG) else []) or [""]
+    report("watch writes one line of counts", watch.returncode == 0 and " conn=" in lines[-1],
+           watch.stderr.decode()[-300:])  # fmt: skip
+    agent("rollback", change)
+    edge_filter()
+
     if before["nodeApi"]["port"] and before["remnanode"].get("network") == "host":
         cycle("node_api.panel_only", {"port": before["nodeApi"]["port"], "panelIp": PANEL},
               lambda f: f["nodeApi"]["panelOnly"],
@@ -127,10 +189,29 @@ def main() -> int:
               lambda f: f["remnanode"]["letsencryptMounted"]
               == before["remnanode"]["letsencryptMounted"])  # fmt: skip
 
-    old = {k["fingerprint"] for k in before["hostKeys"]}
+    # §8.5: the person's own key reaches the node: a throwaway key of this stand VM.
+    for leftover in (STAND_KEY, STAND_KEY + ".pub"):  # a run before left its key
+        if os.path.exists(leftover):
+            os.remove(leftover)
+    subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "stand@kerberos",
+                    "-f", STAND_KEY], check=True)  # fmt: skip
+    key = open(STAND_KEY + ".pub").read().strip()
+    cycle("access.admin_keys", {"keys": [key]},
+          lambda f: f["ssh"]["adminKeys"] == before["ssh"]["adminKeys"] + 1,
+          lambda f: f["ssh"]["adminKeys"] == before["ssh"]["adminKeys"])  # fmt: skip
+
+    # Taken right before the cycle: the keys of a fresh cloud VM may change at first boot.
+    old = {k["fingerprint"] for k in facts()["hostKeys"]}
+
+    def renewed(f: dict) -> set:
+        """A DSA key of the image stays as it is (tech.md §10.3); every other key is new."""
+        return {k["fingerprint"] for k in f["hostKeys"] if k["type"] not in ("ssh-dss", "DSA")}
+
     cycle("hostkeys.regenerate", {},
-          lambda f: not ({k["fingerprint"] for k in f["hostKeys"]} & old),
-          lambda f: {k["fingerprint"] for k in f["hostKeys"]} == old, confirm=True)  # fmt: skip
+          lambda f: bool(renewed(f)) and not (renewed(f) & old),
+          lambda f: {k["fingerprint"] for k in f["hostKeys"]} == old, confirm=True,
+          describe=lambda f: json.dumps(sorted(k["fingerprint"][-8:] for k in f["hostKeys"])
+                                        + ["was"] + sorted(o[-8:] for o in old)))  # fmt: skip
 
     port = next(p for p in range(24622, 32767)
                 if all(s["port"] != p for s in before["listening"]))  # fmt: skip
@@ -149,7 +230,9 @@ def main() -> int:
         timers = subprocess.run(["systemctl", "list-timers", "--all", "--no-pager"],
                                 capture_output=True, text=True).stdout  # fmt: skip
         report("undo timer is armed", f"kerberos-undo-{change}" in timers)
-        subprocess.run(["systemctl", "start", f"kerberos-undo-{change}.service"], check=False)
+        # --wait: the undo must finish before the late confirm, or the confirm may win.
+        subprocess.run(["systemctl", "--wait", "start", f"kerberos-undo-{change}.service"],
+                       check=False)  # fmt: skip
         code, answer = agent("confirm", change)
         report("timer rolled the change back", answer.get("error", {}).get("code")
                == "change_conflict")  # fmt: skip
