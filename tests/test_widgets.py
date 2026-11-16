@@ -113,8 +113,15 @@ def test_score_badge_words_and_colours():
 
 def test_finding_list_groups_and_expands():
     items = [
-        FindingItem("high", "Тема 1", "nl-1", "Вход по паролю", "Перебор", "исправит KERBEROS",
-                    details="sshd -T: passwordauthentication yes"),
+        FindingItem(
+            "high",
+            "Тема 1",
+            "nl-1",
+            "Вход по паролю",
+            "Перебор",
+            "исправит KERBEROS",
+            details="sshd -T: passwordauthentication yes",
+        ),
         FindingItem("medium", "Тема 2", "de-1", "Порт 22", "Сканеры", "вручную"),
     ]
     fl = FindingList(items)

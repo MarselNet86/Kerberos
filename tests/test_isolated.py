@@ -27,7 +27,10 @@ print(term.frames[0])
 def test_runs_without_site_packages():
     out = subprocess.run(
         [sys.executable, "-I", "-S", "-c", SCRIPT, str(ROOT)],
-        capture_output=True, text=True, check=True, cwd="/",
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd="/",
     )
     code, frame = out.stdout.split("\n", 1)
     assert code == "0"
@@ -52,4 +55,4 @@ def test_launcher_without_tty_explains():
 def test_launcher_uses_plain_sudo_and_isolated_python():
     text = (ROOT / "kerberos").read_text(encoding="utf-8")
     assert 'exec sudo -- "$0" "$@"' in text
-    assert '-I -S -c' in text
+    assert "-I -S -c" in text

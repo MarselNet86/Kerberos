@@ -4,14 +4,26 @@ from kerberos.ui.keys import KeyDecoder, hotkey
 def test_arrows_enter_space_backspace():
     d = KeyDecoder()
     assert d.feed(b"\x1b[A\x1b[B\x1b[C\x1b[D\r \x7f\t") == [
-        "up", "down", "right", "left", "enter", "space", "backspace", "tab",
+        "up",
+        "down",
+        "right",
+        "left",
+        "enter",
+        "space",
+        "backspace",
+        "tab",
     ]
 
 
 def test_application_mode_and_tilde_keys():
     d = KeyDecoder()
     assert d.feed(b"\x1bOA\x1b[3~\x1b[5~\x1b[6~\x1b[1~\x1b[4~") == [
-        "up", "delete", "pgup", "pgdn", "home", "end",
+        "up",
+        "delete",
+        "pgup",
+        "pgdn",
+        "home",
+        "end",
     ]
 
 

@@ -52,8 +52,14 @@ def test_single_is_reserve_without_balancer_injects_and_probes():
 
 def test_profile_has_every_marker():
     text = (ROOT / "templates" / "profile.json").read_text(encoding="utf-8")
-    for marker in ("__REALITY_TAG__", "__HY2_TAG__", "__REALITY_PRIVATE_KEY__",
-                   "__REALITY_SHORT_ID__", "__DOMAIN__", "__SERVER_NAMES__"):
+    for marker in (
+        "__REALITY_TAG__",
+        "__HY2_TAG__",
+        "__REALITY_PRIVATE_KEY__",
+        "__REALITY_SHORT_ID__",
+        "__DOMAIN__",
+        "__SERVER_NAMES__",
+    ):
         assert marker in text
     for name in ("subscription-reserve.json", "subscription-single.json"):
         assert "__OWN_DOMAINS__" in (ROOT / "templates" / name).read_text(encoding="utf-8")
