@@ -1,5 +1,4 @@
 {
-  "agent": "0.3.0",
   "certbot": {
     "certs": [],
     "installed": true

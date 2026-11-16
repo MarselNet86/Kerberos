@@ -32,7 +32,7 @@ import time
 from typing import Any, Callable, Optional
 
 PROTOCOL = 1
-AGENT_VERSION = "0.3.0"
+AGENT_VERSION = "0.4.0"
 AGENT_PATH = "/usr/local/sbin/kerberos-agent"
 STATE_DIR = "/var/lib/kerberos"
 
@@ -40,7 +40,7 @@ ERROR_CODES = frozenset(
     """bad_params unknown_command sha_mismatch no_admin_key sshd_test_failed ssh_port
     port_busy bridge_network docker_published mptcp_absent port80_busy certbot_failed
     nginx_test_failed realip_enabled apt_failed change_conflict no_backup backup_damaged
-    not_implemented""".split()
+    not_implemented command_failed""".split()
 )
 
 FIX_ID = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*$")
@@ -77,7 +77,7 @@ def run_command(argv: list[str], input: Optional[str] = None, timeout: float = 1
             text=True,
             timeout=timeout,
             check=False,
-            env=dict(os.environ, LC_ALL="C", LANG="C"),
+            env=dict(os.environ, LC_ALL="C", LANG="C", DEBIAN_FRONTEND="noninteractive"),
         )
     except FileNotFoundError:
         return Result(127, "", f"{argv[0]}: not found")
@@ -898,6 +898,497 @@ def cmd_edge_sources(system: System, args: list, data: dict) -> dict:
     return {"nets": [{"net": n, "count": c} for n, c in ordered]}
 
 
+# -- changes (tech.md §9.3) ---------------------------------------------------
+CHANGES_DIR = STATE_DIR + "/changes"
+PENDING_FILE = STATE_DIR + "/pending"
+UNDO_DELAY = 180
+SSHD_CONF = "/etc/ssh/sshd_config.d/10-kerberos.conf"
+AUTHORIZED_KEYS = "/root/.ssh/authorized_keys"
+HOST_KEY_NAMES = ("rsa", "ecdsa", "ed25519")
+
+
+class Plan:
+    """What one fix changes: files, packages, commands, how to undo."""
+
+    def __init__(self, fix_id: str) -> None:
+        self.fix_id = fix_id
+        self.files: dict = {}  # path -> (text or None to delete, mode)
+        self.created: list = []  # paths commands create; absent before
+        self.packages: list = []
+        self.commands: list = []  # (argv, error code), after the files
+        self.undo_before: list = []  # argv, before files are restored
+        self.undo_after: list = []  # argv, after files are restored
+        self.access = False  # timer and confirmation by a new connection
+        self.details: dict = {}
+        self.after: Optional[Callable[[System], dict]] = None
+
+    def write(self, path: str, text: Optional[str], mode: int = 0o644) -> None:
+        self.files[path] = (text, mode)
+
+    def run(self, argv: list, code: str = "command_failed") -> None:
+        self.commands.append((argv, code))
+
+
+FIXES: dict = {}
+
+
+def fix(name: str):
+    def register(builder):
+        FIXES[name] = builder
+        return builder
+
+    return register
+
+
+def change_dir(change_id: str) -> str:
+    return f"{CHANGES_DIR}/{change_id}"
+
+
+def load_record(system: System, change_id: str) -> Optional[dict]:
+    text = system.read(f"{change_dir(change_id)}/rollback.json")
+    if text is None:
+        return None
+    try:
+        return json.loads(text)
+    except ValueError as exc:
+        raise AgentError("backup_damaged", "rollback.json is not JSON") from exc
+
+
+def save_record(system: System, record: dict) -> None:
+    system.write(f"{change_dir(record['changeId'])}/rollback.json",
+                 json.dumps(record, indent=2, sort_keys=True), 0o600)  # fmt: skip
+
+
+def answer_of(record: dict, state: Optional[str] = None) -> dict:
+    return {
+        "protocol": PROTOCOL,
+        "changeId": record["changeId"],
+        "fixId": record["fixId"],
+        "state": state or record["state"],
+        "files": [item["path"] for item in record["files"]],
+        "details": record.get("details", {}),
+    }
+
+
+def file_sha(system: System, path: str) -> Optional[str]:
+    data = system.read_bytes(path)
+    return None if data is None else sha256_bytes(data)
+
+
+def mode_of(system: System, path: str) -> Optional[int]:
+    try:
+        return os.stat(system.path(path)).st_mode & 0o7777
+    except OSError:
+        return None
+
+
+def backup(system: System, change_id: str, plan: Plan) -> dict:
+    """Copy every file the change touches before anything happens (§9.3)."""
+    entries = []
+    paths = list(plan.files) + [p for p in plan.created if p not in plan.files]
+    for index, path in enumerate(paths):
+        data = system.read_bytes(path)
+        entry = {"path": path, "existed": data is not None, "mode": mode_of(system, path),
+                 "backup": None, "sha256": None}  # fmt: skip
+        if data is not None:
+            name = f"files/{index}"
+            system.write_bytes(f"{change_dir(change_id)}/{name}", data, 0o600)
+            entry["backup"] = name
+            entry["sha256"] = sha256_bytes(data)
+        entries.append(entry)
+    return {
+        "changeId": change_id,
+        "fixId": plan.fix_id,
+        "state": "applying",
+        "files": entries,
+        "undoBefore": plan.undo_before,
+        "undoAfter": plan.undo_after,
+        "access": plan.access,
+        "details": dict(plan.details),
+        "written": {},
+        "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(system.now())),
+    }
+
+
+def restore(system: System, record: dict) -> list:
+    """Files back to their bytes and modes; undo commands around it."""
+    problems = []
+    for argv in record.get("undoBefore", []):
+        if not system.run(argv).ok:
+            problems.append(" ".join(argv))
+    for entry in record["files"]:
+        path = entry["path"]
+        if entry["existed"]:
+            data = system.read_bytes(f"{change_dir(record['changeId'])}/{entry['backup']}")
+            if data is None or sha256_bytes(data) != entry["sha256"]:
+                raise AgentError("backup_damaged", path)
+            system.write_bytes(path, data, entry["mode"] if entry["mode"] is not None else 0o644)
+        elif system.exists(path):
+            os.remove(system.path(path))
+    for argv in record.get("undoAfter", []):
+        if not system.run(argv).ok:
+            problems.append(" ".join(argv))
+    return problems
+
+
+def install_packages(system: System, packages: list) -> None:
+    if not packages:
+        return
+    argv = ["apt-get", "install", "-y", "-q", *packages]
+    if system.run(argv, timeout=600).ok:
+        return
+    system.run(["apt-get", "update", "-q"], timeout=600)
+    if not system.run(argv, timeout=600).ok:
+        raise AgentError("apt_failed", " ".join(packages))
+
+
+def pending_change(system: System) -> Optional[str]:
+    value = (system.read(PENDING_FILE) or "").strip()
+    return value or None
+
+
+def cmd_apply(system: System, args: list, data: dict) -> dict:
+    fix_id, change_id = args
+    record = load_record(system, change_id)
+    if record is not None:
+        if record["fixId"] != fix_id:
+            raise AgentError("change_conflict", "the changeId belongs to another fix")
+        return answer_of(record, "noop")
+    builder = FIXES.get(fix_id)
+    if builder is None:
+        raise AgentError("not_implemented", fix_id)
+    waiting = pending_change(system)
+    if waiting:
+        other = load_record(system, waiting)
+        if other is not None and other["state"] == "pending_confirm":
+            raise AgentError("change_conflict", f"change {waiting} waits for confirmation")
+    plan = builder(system, data)
+    install_packages(system, plan.packages)
+    record = backup(system, change_id, plan)
+    save_record(system, record)
+    try:
+        for path, (text, mode) in plan.files.items():
+            if text is None:
+                if system.exists(path):
+                    os.remove(system.path(path))
+            else:
+                system.write(path, text, mode)
+        for argv, code in plan.commands:
+            result = system.run(argv, timeout=600 if argv[:1] == ["apt-get"] else 120)
+            if not result.ok:
+                raise AgentError(code, " ".join(argv))
+        if plan.after is not None:
+            record["details"].update(plan.after(system))
+    except AgentError:
+        restore(system, record)
+        record["state"] = "failed"
+        save_record(system, record)
+        raise
+    record["written"] = {e["path"]: file_sha(system, e["path"]) for e in record["files"]}
+    if plan.access:
+        unit = f"kerberos-undo-{change_id}"
+        timer = system.run(["systemd-run", f"--on-active={UNDO_DELAY}", "--unit", unit,
+                            AGENT_PATH, "rollback", change_id])  # fmt: skip
+        if not timer.ok:
+            restore(system, record)
+            record["state"] = "failed"
+            save_record(system, record)
+            raise AgentError("command_failed", "systemd-run")
+        record["state"] = "pending_confirm"
+        system.write(PENDING_FILE, change_id + "\n", 0o600)
+    else:
+        record["state"] = "applied"
+    save_record(system, record)
+    return answer_of(record)
+
+
+def stop_timer(system: System, change_id: str) -> None:
+    system.run(["systemctl", "stop", f"kerberos-undo-{change_id}.timer"])
+
+
+def cmd_confirm(system: System, args: list, data: Any) -> dict:
+    change_id = args[0]
+    record = load_record(system, change_id)
+    if record is None:
+        raise AgentError("no_backup", change_id)
+    if record["state"] in ("confirmed", "applied"):
+        return answer_of(record, "noop")
+    if record["state"] != "pending_confirm":
+        raise AgentError("change_conflict", f"change is {record['state']}")
+    stop_timer(system, change_id)
+    for argv in record.get("confirm", []):
+        if not system.run(argv).ok:
+            raise AgentError("command_failed", " ".join(argv))
+    record["state"] = "confirmed"
+    if pending_change(system) == change_id:
+        system.write(PENDING_FILE, "", 0o600)
+    save_record(system, record)
+    return answer_of(record)
+
+
+def cmd_rollback(system: System, args: list, data: Any) -> dict:
+    change_id = args[0]
+    record = load_record(system, change_id)
+    if record is None:
+        raise AgentError("no_backup", change_id)
+    if record["state"] == "rolled_back":
+        return answer_of(record, "noop")
+    if record["state"] in ("applied", "confirmed"):
+        for path, sha in record.get("written", {}).items():
+            if file_sha(system, path) != sha:
+                raise AgentError("change_conflict", f"{path} changed after KERBEROS")
+    if record["state"] == "pending_confirm":
+        stop_timer(system, change_id)
+    problems = restore(system, record)
+    record["state"] = "rolled_back"
+    record["details"]["undoProblems"] = problems
+    if pending_change(system) == change_id:
+        system.write(PENDING_FILE, "", 0o600)
+    save_record(system, record)
+    return answer_of(record)
+
+
+def cmd_plan(system: System, args: list, data: dict) -> dict:
+    builder = FIXES.get(args[0])
+    if builder is None:
+        raise AgentError("not_implemented", args[0])
+    plan = builder(system, data)
+    return {
+        "files": [{"path": p, "content": text} for p, (text, _mode) in plan.files.items()],
+        "commands": [" ".join(argv) for argv, _code in plan.commands],
+        "packages": plan.packages,
+    }
+
+
+# -- the fixes of §10.3 -------------------------------------------------------
+def nft_unit(name: str, table: str, conf: str, about: str) -> str:
+    return (
+        "[Unit]\n"
+        f"Description=KERBEROS: {about}\n"
+        "After=network-pre.target\n"
+        "Wants=network-pre.target\n\n"
+        "[Service]\n"
+        "Type=oneshot\n"
+        "RemainAfterExit=yes\n"
+        f"ExecStart=/usr/sbin/nft -f {conf}\n"
+        f"ExecStop=/usr/sbin/nft delete table {table}\n\n"
+        "[Install]\n"
+        "WantedBy=multi-user.target\n"
+    )
+
+
+def nft_table(table: str, rules: list) -> str:
+    """Loading is idempotent: the table is created, flushed and filled again."""
+    body = "\n".join(f"    {rule}" for rule in rules)
+    return (
+        f"table {table}\nflush table {table}\n"
+        f"table {table} {{\n  chain input {{\n"
+        "    type filter hook input priority -10; policy accept;\n"
+        f"{body}\n  }}\n}}\n"
+    )
+
+
+def nft_service(plan: Plan, name: str, table: str, rules: list, about: str) -> None:
+    conf = f"/etc/kerberos/{name}.nft"
+    unit = f"kerberos-{name}.service"
+    plan.write(conf, nft_table(table, rules))
+    plan.write(f"/etc/systemd/system/{unit}", nft_unit(name, table, conf, about))
+    plan.run(["systemctl", "daemon-reload"])
+    plan.run(["systemctl", "enable", unit])
+    plan.run(["systemctl", "restart", unit])
+    plan.undo_before.append(["systemctl", "disable", "--now", unit])
+    plan.undo_after.append(["systemctl", "daemon-reload"])
+
+
+@fix("mptcp.guard")
+def fix_mptcp(system: System, params: dict) -> Plan:
+    current = system.read("/proc/sys/net/mptcp/enabled")
+    if current is None:
+        raise AgentError("mptcp_absent", "no net.mptcp in this kernel")
+    plan = Plan("mptcp.guard")
+    plan.write("/etc/sysctl.d/98-kerberos-mptcp.conf", "net.mptcp.enabled = 0\n")
+    plan.run(["sysctl", "-w", "net.mptcp.enabled=0"])
+    nft_service(plan, "mptcp", "inet kerberos_mptcp",
+                ["ip protocol tcp ip hdrlength > 5 counter drop"],
+                "drop TCP packets with IP options (MPTCP guard)")  # fmt: skip
+    plan.undo_after.append(["sysctl", "-w", f"net.mptcp.enabled={current.strip() or '0'}"])
+    return plan
+
+
+def int_list(value: Any, what: str) -> list:
+    if not isinstance(value, list) or not value:
+        raise AgentError("bad_params", what)
+    result = []
+    for item in value:
+        if isinstance(item, bool) or not isinstance(item, int) or not 0 < item < 65536:
+            raise AgentError("bad_params", what)
+        result.append(item)
+    return result
+
+
+def address_param(system: System, params: dict) -> str:
+    value = str(params.get("panelIp") or panel_address(system))
+    try:
+        return str(ipaddress.ip_address(value))
+    except ValueError as exc:
+        raise AgentError("bad_params", "panelIp") from exc
+
+
+@fix("fail2ban.sshd")
+def fix_fail2ban(system: System, params: dict) -> Plan:
+    ports = int_list(params.get("sshPorts"), "sshPorts")
+    panel = address_param(system, params)
+    installed = system.exists("/usr/bin/fail2ban-client")
+    plan = Plan("fail2ban.sshd")
+    if not installed:
+        plan.packages.append("fail2ban")
+    if not system.exists("/usr/lib/python3/dist-packages/systemd"):
+        plan.packages.append("python3-systemd")
+    plan.write(
+        "/etc/fail2ban/jail.d/zz-kerberos.local",
+        "[DEFAULT]\n"
+        f"ignoreip = 127.0.0.1/8 ::1 {panel}\n"
+        "[sshd]\n"
+        "enabled = true\n"
+        f"port = {','.join(str(p) for p in ports)}\n"
+        "backend = systemd\n"
+        "maxretry = 5\n"
+        "findtime = 10m\n"
+        "bantime = 1h\n",
+    )
+    plan.run(["systemctl", "enable", "fail2ban"])
+    plan.run(["systemctl", "restart", "fail2ban"])
+    if installed:
+        plan.undo_after.append(["systemctl", "restart", "fail2ban"])
+    else:
+        plan.undo_after += [["systemctl", "disable", "--now", "fail2ban"],
+                            ["apt-get", "remove", "-y", "-q", "fail2ban"]]  # fmt: skip
+    return plan
+
+
+@fix("node_api.panel_only")
+def fix_node_api(system: System, params: dict) -> Plan:
+    port = int_list([params.get("port")], "port")[0]
+    panel = address_param(system, params)
+    remnanode = parse_remnanode(system.run(["docker", "inspect", "remnanode"]).stdout)
+    if remnanode.get("network") == "bridge":
+        raise AgentError("bridge_network", "remnanode publishes its port through Docker")
+    family = "ip6" if ":" in panel else "ip"
+    plan = Plan("node_api.panel_only")
+    nft_service(plan, "node-api", "inet kerberos_node_api", [
+        f"tcp dport {port} {family} saddr {panel} counter accept",
+        f"tcp dport {port} counter drop",
+    ], "the node API only for the panel")  # fmt: skip
+    plan.details = {"port": port, "panelIp": panel}
+    return plan
+
+
+PORT_RE = re.compile(r"^(\d{1,5})/(tcp|udp)$")
+
+
+@fix("ports.drop")
+def fix_ports(system: System, params: dict) -> Plan:
+    wanted = []
+    for item in params.get("ports") or []:
+        match = PORT_RE.match(str(item))
+        if not match or not 0 < int(match.group(1)) < 65536:
+            raise AgentError("bad_params", "ports")
+        wanted.append((int(match.group(1)), match.group(2)))
+    if not wanted:
+        raise AgentError("bad_params", "ports")
+    published = docker_published(system.run(["docker", "ps", "--format", "{{json .}}"]).stdout)
+    for sock in parse_ss_listen(system.run(["ss", "-Hlntup"]).stdout):
+        if sock["process"] == "docker-proxy":
+            published.add((sock["port"], sock["proto"]))
+    blocked = [f"{p}/{proto}" for p, proto in wanted if (p, proto) in published]
+    if blocked:
+        raise AgentError("docker_published", ", ".join(blocked))
+    existing = re.findall(
+        r"(tcp|udp) dport (\d+) drop", system.read("/etc/kerberos/ports.nft") or ""
+    )
+    ports = sorted({(int(p), proto) for proto, p in existing} | set(wanted))
+    rules = [f'iifname != "lo" {proto} dport {port} drop' for port, proto in ports]
+    plan = Plan("ports.drop")
+    nft_service(plan, "ports", "inet kerberos_ports", rules, "drop ports nobody should reach")
+    plan.details = {"ports": [f"{p}/{proto}" for p, proto in wanted]}
+    return plan
+
+
+def ssh_reload(plan: Plan) -> None:
+    plan.run(["sshd", "-t"], "sshd_test_failed")
+    plan.run(["systemctl", "try-reload-or-restart", "ssh.service"])
+    plan.undo_after.append(["systemctl", "try-reload-or-restart", "ssh.service"])
+
+
+@fix("hostkeys.regenerate")
+def fix_hostkeys(system: System, params: dict) -> Plan:
+    plan = Plan("hostkeys.regenerate")
+    existing = [p for p in collect_files(system, "/etc/ssh")
+                if os.path.basename(p).startswith("ssh_host_")]  # fmt: skip
+    for path in existing:
+        plan.write(path, None)
+    for name in HOST_KEY_NAMES:
+        for suffix in ("", ".pub"):
+            path = f"/etc/ssh/ssh_host_{name}_key{suffix}"
+            if path not in plan.files:
+                plan.created.append(path)
+    plan.run(["ssh-keygen", "-A"])
+    ssh_reload(plan)
+    plan.access = True
+
+    def new_keys(system_: System) -> dict:
+        files = {p: t for p, t in collect_files(system_, "/etc/ssh", ".pub").items()
+                 if os.path.basename(p).startswith("ssh_host_")}  # fmt: skip
+        return {"hostKeys": host_key_facts(files)}
+
+    plan.after = new_keys
+    return plan
+
+
+@fix("ssh.key_only")
+def fix_key_only(system: System, params: dict) -> Plan:
+    if count_admin_keys(system.read(AUTHORIZED_KEYS) or "") == 0:
+        raise AgentError("no_admin_key", "no key of the administrator besides KERBEROS")
+    kept = [line for line in (system.read(SSHD_CONF) or "").splitlines()
+            if line.split(" ", 1)[0].lower() == "port"]  # fmt: skip
+    lines = ["PasswordAuthentication no", "KbdInteractiveAuthentication no",
+             "PermitRootLogin prohibit-password", *kept]  # fmt: skip
+    plan = Plan("ssh.key_only")
+    plan.write(SSHD_CONF, "\n".join(lines) + "\n")
+    ssh_reload(plan)
+    plan.access = True
+    return plan
+
+
+KEY_LINE = re.compile(
+    r"^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\.com)"
+    r" [A-Za-z0-9+/=]{16,}( [\x20-\x7e]{0,200})?$"
+)
+
+
+@fix("access.admin_keys")
+def fix_admin_keys(system: System, params: dict) -> Plan:
+    keys = params.get("keys")
+    if (
+        not isinstance(keys, list)
+        or not keys
+        or not all(isinstance(k, str) and KEY_LINE.match(k.strip()) for k in keys)
+    ):
+        raise AgentError("bad_params", "keys")
+    current = system.read(AUTHORIZED_KEYS) or ""
+    lines = current.splitlines()
+    blobs = {
+        line.split()[1] for line in lines if len(line.split()) > 1 and not line.startswith("#")
+    }
+    blobs |= {w for line in lines for w in line.split() if len(w) > 40}
+    added = [k.strip() for k in keys if k.split()[1] not in blobs]
+    plan = Plan("access.admin_keys")
+    if added:
+        plan.write(AUTHORIZED_KEYS, "\n".join(lines + added) + "\n", 0o600)
+    plan.details = {"added": len(added)}
+    return plan
+
+
 # -- commands ---------------------------------------------------------------
 def cmd_version(system: System, args: list[str], data: Any) -> dict:
     return {
@@ -923,10 +1414,6 @@ def cmd_update(system: System, args: list[str], data: bytes) -> dict:
     return {"agent": match.group(1).decode()}
 
 
-def not_implemented(system: System, args: list[str], data: Any) -> dict:
-    raise AgentError("not_implemented", "this agent does not support the command yet")
-
-
 # name -> (handler, argument patterns, stdin: None | "json" | "bytes")
 COMMANDS: dict[str, tuple[Callable[[System, list[str], Any], dict], tuple, Optional[str]]] = {
     "version": (cmd_version, (), None),
@@ -934,10 +1421,10 @@ COMMANDS: dict[str, tuple[Callable[[System, list[str], Any], dict], tuple, Optio
     "watch": (cmd_watch, (), None),
     "site-check": (cmd_site_check, (), "json"),
     "edge-sources": (cmd_edge_sources, (), "json"),
-    "plan": (not_implemented, (FIX_ID,), "json"),
-    "apply": (not_implemented, (FIX_ID, CHANGE_ID), "json"),
-    "confirm": (not_implemented, (CHANGE_ID,), None),
-    "rollback": (not_implemented, (CHANGE_ID,), None),
+    "plan": (cmd_plan, (FIX_ID,), "json"),
+    "apply": (cmd_apply, (FIX_ID, CHANGE_ID), "json"),
+    "confirm": (cmd_confirm, (CHANGE_ID,), None),
+    "rollback": (cmd_rollback, (CHANGE_ID,), None),
     "update": (cmd_update, (SHA256,), "bytes"),
 }
 
