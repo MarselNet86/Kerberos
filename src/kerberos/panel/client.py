@@ -4,7 +4,9 @@ The live transport is urllib against the panel on this server; the fake is
 an in-memory panel (`kerberos.panel.fake`). The client logic (headers,
 retries, envelope, both host forms) is the same for both.
 
-The access token lives only in this object: never on disk or in a log (§7.3).
+KERBEROS signs in with an API token of the panel (§7.3): Remnawave accepts
+the admin login token only from its own web UI. The token is kept 0600 in
+/var/lib/kerberos/panel.token by S2, never in a log or a run file.
 """
 
 from __future__ import annotations
@@ -28,6 +30,28 @@ FORWARD_HEADERS = {
     "x-forwarded-for": "127.0.0.1",
     "x-real-ip": "127.0.0.1",
 }
+# Scope sections of the API token (§7.3), by the path KERBEROS calls.
+SECTIONS = {
+    "/nodes": "nodes",
+    "/config-profiles": "config-profiles",
+    "/hosts": "hosts",
+    "/subscription-templates": "subscription-template",
+    "/internal-squads": "internal-squads",
+    "/subscription-settings": "subscription-settings",
+}
+# Rights to give the token, as the panel's «create token» window takes them pasted.
+SCOPES_CHECK = [f"{section}:read" for section in SECTIONS.values()]
+SCOPES_FIX = ["nodes:read"] + [f"{s}:*" for s in SECTIONS.values() if s != "nodes"]
+
+
+def section_of(operation: str) -> tuple[str, str]:
+    """("hosts", "write") for "PATCH /hosts"; ("", kind) for a path outside the sections."""
+    method, _, path = operation.partition(" ")
+    kind = "read" if method == "GET" else "write"
+    for prefix, section in SECTIONS.items():
+        if path == prefix or path.startswith(prefix + "/"):
+            return section, kind
+    return "", kind
 
 
 class NoResponse(Exception):
@@ -70,6 +94,9 @@ class PanelClient:
         self.host_shape = "tags"
         self._shape_known = False  # learnt from GET /hosts before the first host is written
         self.calls: list[tuple[str, str]] = []
+        self.token_source = ""  # "saved" or "typed": S2 says which (§7.3)
+        self.refused = False  # the panel refused this token something (403)
+        self.wrote = False  # the panel took a change with this token
 
     @property
     def authenticated(self) -> bool:
@@ -113,6 +140,10 @@ class PanelClient:
                     attempt += 1
                     continue
                 raise PanelError("unreachable", operation=operation, detail=str(exc)) from exc
+            except ValueError as exc:
+                # Headers go out as Latin-1: a token with other letters cannot be a token.
+                code = "unauthorized" if auth and self._token else "bad_request"
+                raise PanelError(code, operation=operation, detail="not Latin-1") from exc
             if status >= 500:
                 if attempt < len(RETRY_DELAYS):
                     self.clock.sleep(RETRY_DELAYS[attempt])
@@ -123,9 +154,14 @@ class PanelClient:
         if status == 401:
             raise PanelError("unauthorized", 401, operation)
         if status == 403:
-            raise PanelError("forbidden", 403, operation)
+            self.refused = True
+            raise PanelError("forbidden", 403, operation, _message(raw))
         if status >= 400:
             raise PanelError("bad_request", status, operation, _message(raw))
+        if method != "GET":
+            self.wrote = True
+        if status == 204:
+            return None  # 3.x: bulk calls and deletes answer without a body (§7.2)
         try:
             payload = json.loads(raw.decode("utf-8")) if raw else None
         except (UnicodeDecodeError, ValueError) as exc:
@@ -137,26 +173,9 @@ class PanelClient:
             raise
 
     # -- auth (§7.3) -----------------------------------------------------
-    def password_enabled(self) -> bool:
-        return schema.auth_password_enabled(self.request("GET", "/auth/status", auth=False))
-
-    def login(self, username: str, password: str) -> None:
-        answer = self.request(
-            "POST", "/auth/login", {"username": username, "password": password}, auth=False
-        )
-        self._token = schema.access_token(answer)
-
-    def create_token(self, name: str, days: int) -> tuple[str, str]:
-        answer = schema._obj(
-            self.request("POST", "/tokens", {"name": name, "expiresInDays": days}), "token"
-        )
-        token = answer.get("token") or answer.get("accessToken")
-        if not isinstance(token, str) or not isinstance(answer.get("uuid"), str):
-            raise schema.bad("token answer")
-        return answer["uuid"], token
-
-    def delete_token(self, uuid: str) -> None:
-        self.request("DELETE", f"/tokens/{uuid}")
+    def reachable(self) -> None:
+        """The panel answers at all; what it says about its sign-in methods is not needed."""
+        self.request("GET", "/auth/status", auth=False)
 
     # -- reading ---------------------------------------------------------
     def nodes(self) -> list[Node]:
@@ -171,6 +190,10 @@ class PanelClient:
         self.host_shape = schema.detect_shape(raw)
         self._shape_known = True
         return [schema.host(h, self.host_shape) for h in raw]
+
+    def host(self, uuid: str) -> Host:
+        self.learn_shape()
+        return schema.host(self.request("GET", f"/hosts/{uuid}"), self.host_shape)
 
     def learn_shape(self) -> None:
         """§7.4: hosts are written in the form the panel reads them in (a fresh client, e.g.
@@ -225,6 +248,9 @@ class PanelClient:
     def patch_host(self, uuid: str, fields: dict) -> Host:
         self.learn_shape()
         body = {"uuid": uuid, **schema.host_write_fields(fields, self.host_shape)}
+        if "isDisabled" not in body:
+            # 2.8 sets an absent isDisabled to false: the host would be switched on (§7.4).
+            body["isDisabled"] = self.host(uuid).is_disabled
         return schema.host(self.request("PATCH", "/hosts", body), self.host_shape)
 
     def disable_hosts(self, uuids: list[str]) -> None:

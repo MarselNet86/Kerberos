@@ -215,7 +215,10 @@ def to_fix(app: App, session: Session) -> Any:
     """S6 `f` in «Проверка»: «Исправление» on the same data. The administrator key is
     asked as S4 asks it in «Исправление»; a new run of mode fix gets the findings."""
     from kerberos.screens.access import AccessScreen
+    from kerberos.screens.panel import ensure_write_token
 
+    if not ensure_write_token(app, session):
+        return None  # Esc: S6 stays
     if session.snapshot.kind == "3x-ui":
         session.data.setdefault("admin", {"mode": "local", "keys": []})
     elif "admin" not in session.data:

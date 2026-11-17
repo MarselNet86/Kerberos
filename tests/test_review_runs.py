@@ -24,8 +24,8 @@ def store_of(app):
     return RunStore(app.env.state, app.env.clock)
 
 
-# -- app 16: a finalization token no timer will use does not stay behind ----------------------
-def test_failed_timer_leaves_no_finalize_token():
+# -- app 16 (v19): the timer signs in with the saved API token; KERBEROS makes no token ------
+def test_failed_timer_is_not_reported_and_no_token_is_made():
     panel, nodes = fleet()
     app, _term, _code = fix(domain_keys(NL1, "nl-1.example.com") + ["f"] + APPLY + DONE,
                             panel, nodes)  # fmt: skip
@@ -33,10 +33,10 @@ def test_failed_timer_leaves_no_finalize_token():
     assert any(c[:1] == ("systemd-run",) for c in app.env.host.calls)  # the demo host has none
     assert run["finalizeTimer"] is None
     assert not (store_of(app).path(run["runId"]) / "finalize.token").exists()
-    assert panel.api_tokens == {}
+    assert not any(path.startswith("/tokens") for _m, path, _b in panel.log)
 
 
-def test_timer_of_a_rolled_back_run_drops_its_token():
+def test_timer_of_a_rolled_back_run_finds_nothing_to_do():
     panel, nodes = fleet()
     host = build_host()
     host.on(["systemd-run"], CommandResult(0))
@@ -44,13 +44,14 @@ def test_timer_of_a_rolled_back_run_drops_its_token():
     app, _term = make_app(keys, panel=panel, nodes=list(nodes.values()), height=46, host=host)
     app.run("fix")
     run = fix_run(app)
-    token = store_of(app).path(run["runId"]) / "finalize.token"
-    assert token.exists() and run["finalizeTimer"]
+    assert run["finalizeTimer"]
     app.env.terminal.feed(*ROLLBACK, "x")
     assert app.run("rollback") == EXIT_OK
+    writes = len(panel.mutations)
     app.env.clock.advance(24 * 3600 + 1)  # the timer fires: nothing is due any more
     assert unattended(store_of(app), panel, app.env.clock, run["runId"]) == 0
-    assert not token.exists() and panel.api_tokens == {}
+    assert len(panel.mutations) == writes
+    assert app.env.state.read_panel_token(), "the person's token stays for the next run"
 
 
 # -- app 17: KERBEROS's own finalization is not a hand edit for a later rollback --------------

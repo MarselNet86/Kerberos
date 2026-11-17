@@ -86,19 +86,6 @@ def _obj(value: Any, what: str) -> dict:
     return value
 
 
-def auth_password_enabled(value: Any) -> bool:
-    auth = _obj(_obj(value, "auth status").get("authentication"), "authentication")
-    password = _obj(auth.get("password"), "authentication.password")
-    return _bool(password, "enabled")
-
-
-def access_token(value: Any) -> str:
-    token = _str(_obj(value, "login"), "accessToken")
-    if not token:
-        raise bad("empty accessToken")
-    return token
-
-
 def node(raw: Any) -> Node:
     obj = _obj(raw, "node")
     profile = obj.get("configProfile") or {}

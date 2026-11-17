@@ -23,6 +23,7 @@ from kerberos.checks import (
     xhttp_inbounds,
 )
 from kerberos.fixes.model import Finding
+from kerberos.fixes.xhttp import effective, inbound_extra
 from kerberos.panel.model import Host, PanelSnapshot
 
 # Hosts, templates, squads, reserves and subscription settings exist only in
@@ -495,10 +496,12 @@ def xhttp_padding(data: CheckInput) -> list[Finding]:
     for item in data.nodes:
         by_uuid = {i.uuid: i.tag for i in data.snapshot.node_inbounds(item.node)}
         for inbound in xhttp_inbounds(data.snapshot, item.node):
-            server = has_padding((stream(inbound).get("xhttpSettings") or {}).get("extra"))
+            server_extra = inbound_extra(inbound)
+            server = has_padding(server_extra)
             hosts = [h for h in node_hosts(data, item) if by_uuid.get(h.inbound_uuid or "")
                      == inbound.get("tag") and not h.is_disabled]  # fmt: skip
-            clients = [has_padding(h.xhttp_extra) for h in hosts]
+            # What each client gets: its host's extra, or the inbound's when it has none.
+            clients = [has_padding(effective(h.xhttp_extra, server_extra)) for h in hosts]
             complete = server and all(clients)
             partial = not complete and (server or any(clients))
             evidence = {"inbound": inbound.get("tag"), "server": server,
@@ -512,8 +515,9 @@ def xhttp_padding(data: CheckInput) -> list[Finding]:
 def xhttp_uplink_get(data: CheckInput) -> list[Finding]:
     result = []
     for item in data.nodes:
-        for _inbound, host in cdn_xhttp_hosts(data, item):
-            method = str((host.xhttp_extra or {}).get("uplinkHTTPMethod") or "POST").upper()
+        for inbound, host in cdn_xhttp_hosts(data, item):
+            extra = effective(host.xhttp_extra, inbound_extra(inbound)) or {}
+            method = str(extra.get("uplinkHTTPMethod") or "POST").upper()
             result.append(finding("xhttp.uplink_get", host_target(host), method == "GET",
                                   {"host": host.remark, "method": method}))  # fmt: skip
     return result
@@ -530,8 +534,9 @@ def max_post_bytes(value) -> Optional[int]:
 def xhttp_post_size(data: CheckInput) -> list[Finding]:
     result = []
     for item in data.nodes:
-        for _inbound, host in cdn_xhttp_hosts(data, item):
-            size = max_post_bytes((host.xhttp_extra or {}).get("scMaxEachPostBytes"))
+        for inbound, host in cdn_xhttp_hosts(data, item):
+            extra = effective(host.xhttp_extra, inbound_extra(inbound)) or {}
+            size = max_post_bytes(extra.get("scMaxEachPostBytes"))
             if size is not None:
                 evidence = {"host": host.remark, "scMaxEachPostBytes": size}
                 result.append(

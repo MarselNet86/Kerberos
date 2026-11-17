@@ -4,6 +4,12 @@ It keeps panel objects in memory, answers in the `{response: ...}` envelope,
 and checks every request against the contract of tech.md §7.4: missing
 headers, unknown fields, wrong types and unknown uuids fail loudly, as a
 strict panel would. Failures can be injected per endpoint.
+
+It behaves like the real backend where KERBEROS once went wrong (§7.3, §7.4):
+an admin login token is refused without the browser header, API tokens have
+scopes per section, 3.x answers 204 without a body to bulk calls and deletes,
+2.8 enables a host whose PATCH lacks `isDisabled`, remarks, tags and template
+names have limits, and a profile PATCH may store a normalized config.
 """
 
 from __future__ import annotations
@@ -15,7 +21,7 @@ import re
 import secrets
 import uuid as uuidlib
 from dataclasses import dataclass
-from typing import Any, Optional, Union
+from typing import Any, Callable, Optional, Union
 from urllib.parse import urlsplit
 
 from kerberos.panel.client import FORWARD_HEADERS, NoResponse, Unreachable
@@ -37,6 +43,7 @@ COMMON_HOST_FIELDS = {
     "serverDescription",
     "isHidden",
     "overrideSniFromAddress",
+    "keepSniBlank",
     "vlessRouteId",
     "allowInsecure",
     "shuffleHost",
@@ -46,6 +53,18 @@ COMMON_HOST_FIELDS = {
     "excludedInternalSquads",
 }
 SHAPE_FIELDS = {"tags": {"tags", "xhttpExtraParams"}, "tag": {"tag", "xHttpExtraParams"}}
+CLIENT_TYPE_HEADER = "x-remnawave-client-type"  # the panel's own web UI sends "browser"
+ADMIN_ONLY_FROM_BROWSER = "For API requests you must create own API-token in the admin dashboard."
+TEMPLATE_NAME = re.compile(r"[A-Za-z0-9_\s-]{2,255}")
+# Scope sections of the endpoints KERBEROS may call: what an API token needs (§7.3).
+SECTIONS = {
+    "/nodes": "nodes",
+    "/config-profiles": "config-profiles",
+    "/hosts": "hosts",
+    "/subscription-templates": "subscription-template",
+    "/internal-squads": "internal-squads",
+    "/subscription-settings": "subscription-settings",
+}
 
 
 class ContractError(Exception):
@@ -56,8 +75,11 @@ class ContractError(Exception):
 class Failure:
     method: str
     path: str
-    kind: Union[int, str]  # HTTP status, "timeout", "refused" or "lost" (applied, no answer)
+    # HTTP status, "timeout", "refused", "lost" (applied, no answer) or "applied:<status>"
+    # (applied, then that status: the panel failed after it stored the change).
+    kind: Union[int, str]
     times: int = 1
+    after: int = 0  # matching requests let through first
 
 
 _rng = random.Random()
@@ -77,16 +99,21 @@ class FakePanel:
         self,
         *,
         shape: str = "tags",
+        version: str = "3.4.11",
         password_enabled: bool = True,
         credentials: tuple[str, str] = ("admin", "admin-password"),
-        accept_any_login: bool = False,
+        accept_any_token: bool = False,
+        normalize_profile: Optional[Callable[[dict], dict]] = None,
     ) -> None:
         self.shape = shape
+        self.version = version
+        self.major = int(version.split(".")[0])
         self.password_enabled = password_enabled
         self.credentials = credentials
-        self.accept_any_login = accept_any_login
-        self.sessions: set[str] = set()
-        self.api_tokens: dict[str, str] = {}  # token -> uuid
+        self.accept_any_token = accept_any_token  # the demo: any token is a full-access one
+        self.normalize_profile = normalize_profile
+        self.sessions: set[str] = set()  # admin login tokens: only the web UI may use them
+        self.api_tokens: dict[str, list[str]] = {}  # token -> scopes
         self.nodes: list[dict] = []
         self.profiles: list[dict] = []
         self.hosts: list[dict] = []
@@ -98,13 +125,15 @@ class FakePanel:
         self.forbidden: set[tuple[str, str]] = set()
 
     # -- setup -----------------------------------------------------------
-    def add_api_token(self, token: Optional[str] = None) -> str:
+    def add_api_token(self, token: Optional[str] = None, scopes: tuple = ("*",)) -> str:
         token = token or "rw-" + secrets.token_hex(16)
-        self.api_tokens[token] = new_uuid()
+        self.api_tokens[token] = list(scopes)
         return token
 
-    def fail(self, method: str, path: str, kind: Union[int, str], times: int = 1) -> None:
-        self.failures.append(Failure(method, path, kind, times))
+    def fail(
+        self, method: str, path: str, kind: Union[int, str], times: int = 1, after: int = 0
+    ) -> None:
+        self.failures.append(Failure(method, path, kind, times, after))
 
     @property
     def mutations(self) -> list[tuple[str, str, Any]]:
@@ -140,6 +169,7 @@ class FakePanel:
         self.log.append((method, path, copy.deepcopy(data)))
         failure = self._failure(method, path)
         lost = False
+        applied_status = 0
         if failure is not None:
             if failure.kind == "timeout":
                 raise NoResponse("timed out")
@@ -147,12 +177,15 @@ class FakePanel:
                 raise Unreachable("connection refused")
             if failure.kind == "lost":
                 lost = True
+            elif str(failure.kind).startswith("applied:"):
+                applied_status = int(str(failure.kind).split(":", 1)[1])
             else:
                 return self._json(int(failure.kind), {"message": "injected"})
         if path not in ("/auth/status", "/auth/login"):
             token = lowered.get("authorization", "").removeprefix("Bearer ").strip()
-            if token not in self.sessions and token not in self.api_tokens:
-                return self._json(401, {"message": "Unauthorized"})
+            refused = self._refusal(token, lowered, method, path)
+            if refused is not None:
+                return refused
         if (method, path) in self.forbidden:
             return self._json(403, {"message": "Forbidden"})
         try:
@@ -161,11 +194,43 @@ class FakePanel:
             return self._json(400, {"message": str(exc)})
         if lost:
             raise NoResponse("connection reset after the request")
+        if applied_status:
+            return self._json(applied_status, {"message": "injected after the change"})
+        if status == 204:
+            return 204, b""
         return self._json(status, {"response": answer} if status < 400 else answer)
+
+    def _refusal(self, token: str, headers: dict, method: str, path: str) -> Optional[tuple]:
+        """401 for an unknown token, 403 for what the panel refuses a known one (§7.3)."""
+        if token in self.sessions:
+            if headers.get(CLIENT_TYPE_HEADER) != "browser":
+                return self._json(403, {"message": ADMIN_ONLY_FROM_BROWSER})
+            return None
+        if token in self.api_tokens:
+            scopes = self.api_tokens[token]
+        elif self.accept_any_token and token:
+            scopes = ["*"]
+        else:
+            return self._json(401, {"message": "Unauthorized"})
+        section = next((s for p, s in SECTIONS.items() if path == p or path.startswith(p + "/")),
+                       None)  # fmt: skip
+        if path.startswith("/tokens"):
+            return self._json(403, {"message": "Forbidden resource"})  # admin login token only
+        kind = "read" if method == "GET" else "write"
+        if section is None or {"*", f"{section}:*", f"{section}:{kind}"} & set(scopes):
+            return None
+        return self._json(403, {"message": "Forbidden resource"})
+
+    def _deleted(self) -> tuple[int, Any]:
+        """3.x answers bulk calls and deletes with 204 and no body; 2.8 with a body."""
+        return (204, None) if self.major >= 3 else (200, {"isDeleted": True})
 
     def _failure(self, method: str, path: str) -> Optional[Failure]:
         for failure in self.failures:
             if failure.method == method and failure.path == path and failure.times > 0:
+                if failure.after > 0:
+                    failure.after -= 1
+                    return None
                 failure.times -= 1
                 return failure
         return None
@@ -195,17 +260,6 @@ class FakePanel:
             token = "jwt-" + secrets.token_hex(16)
             self.sessions.add(token)
             return 200, {"accessToken": token}
-        if method == "POST" and path == "/tokens":
-            body = self._body(data, {"name": str, "expiresInDays": int})
-            token = self.add_api_token()
-            return 200, {"uuid": self.api_tokens[token], "token": token, "name": body["name"]}
-        if method == "DELETE" and path.startswith("/tokens/"):
-            ref = path.rsplit("/", 1)[1]
-            match = [t for t, u in self.api_tokens.items() if u == ref]
-            if not match:
-                return 404, {"message": "token not found"}
-            del self.api_tokens[match[0]]
-            return 200, {"isDeleted": True}
         if method == "GET" and path == "/nodes":
             return 200, copy.deepcopy(self.nodes)
         if method == "GET" and path == "/config-profiles":
@@ -221,11 +275,15 @@ class FakePanel:
         if method == "PATCH" and path == "/config-profiles":
             body = self._body(data, {"uuid": str, "config": dict})
             profile = self._find(self.profiles, body["uuid"], "config profile")
-            profile["config"] = copy.deepcopy(body["config"])
+            config = copy.deepcopy(body["config"])
+            # The panel stores the config validated and sorted, not byte for byte (§10.4).
+            profile["config"] = self.normalize_profile(config) if self.normalize_profile else config
             self._sync_inbounds(profile)
             return 200, copy.deepcopy(profile)
         if method == "GET" and path == "/hosts":
             return 200, copy.deepcopy(self.hosts)
+        if method == "GET" and path.startswith("/hosts/") and path.count("/") == 2:
+            return 200, copy.deepcopy(self._find(self.hosts, path.rsplit("/", 1)[1], "host"))
         if method == "POST" and path == "/hosts":
             host = self._host_fields(data, create=True)
             host["uuid"] = new_uuid()
@@ -237,18 +295,23 @@ class FakePanel:
                 raise ContractError("uuid is required")
             host = self._find(self.hosts, data["uuid"], "host")
             fields = self._host_fields({k: v for k, v in data.items() if k != "uuid"}, create=False)
+            if self.major < 3 and "isDisabled" not in fields:
+                # 2.8: `isDisabled: z.boolean().default(false)` turns the host back on.
+                fields["isDisabled"] = False
             host.update(fields)
             return 200, copy.deepcopy(host)
         if method == "POST" and path in ("/hosts/bulk/disable", "/hosts/bulk/enable"):
             body = self._body(data, {"uuids": list})
             for ref in body["uuids"]:
                 self._find(self.hosts, ref, "host")["isDisabled"] = path.endswith("disable")
+            if self.major >= 3:
+                return 204, None
             return 200, [copy.deepcopy(self._find(self.hosts, r, "host")) for r in body["uuids"]]
         if method == "DELETE" and path.startswith("/hosts/"):
             ref = path.rsplit("/", 1)[1]
             self._find(self.hosts, ref, "host")
             self.hosts = [h for h in self.hosts if h["uuid"] != ref]
-            return 200, {"isDeleted": True}
+            return self._deleted()
         if method == "GET" and path == "/subscription-templates":
             listing = [{k: v for k, v in t.items() if k != "templateJson"} for t in self.templates]
             return 200, {"total": len(listing), "templates": copy.deepcopy(listing)}
@@ -259,6 +322,9 @@ class FakePanel:
             body = self._body(data, {"name": str, "templateType": str})
             if body["templateType"] != "XRAY_JSON":
                 raise ContractError("templateType must be XRAY_JSON")
+            if not TEMPLATE_NAME.fullmatch(body["name"]):
+                raise ContractError("Name can only contain letters, numbers, underscores, dashes "
+                                    "and spaces")  # fmt: skip
             if any(t["name"] == body["name"] for t in self.templates):
                 return 409, {"message": "template name exists"}
             item = {
@@ -329,6 +395,15 @@ class FakePanel:
             for name in ("remark", "address", "port", "inbound"):
                 if name not in data:
                     raise ContractError(f"{name} is required")
+        if "remark" in data:
+            limit = 100 if self.major >= 3 else 40
+            remark = data["remark"]
+            # zod counts UTF-16 code units: a flag emoji is four of them.
+            if (
+                not isinstance(remark, str)
+                or not 1 <= len(remark.encode("utf-16-le")) // 2 <= limit
+            ):
+                raise ContractError(f"Remark must be 1 to {limit} characters")
         if "inbound" in data:
             ref = data["inbound"]
             if not isinstance(ref, dict):
@@ -345,10 +420,12 @@ class FakePanel:
             tags = data["tags"]
             if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
                 raise ContractError("tags must be a list of strings")
+            if len(tags) > 10:
+                raise ContractError("Maximum 10 tags")
             for tag in tags:
-                _check_tag(tag)
+                _check_tag(tag, 36)
         if self.shape == "tag" and data.get("tag") is not None:
-            _check_tag(data["tag"])
+            _check_tag(data["tag"], 32)  # 2.2–2.7: one tag of up to 32 characters
         if "port" in data and (not isinstance(data["port"], int) or isinstance(data["port"], bool)):
             raise ContractError("port must be a number")
         return copy.deepcopy(data)
@@ -377,9 +454,11 @@ class FakePanel:
         profile["inbounds"] = result
 
 
-def _check_tag(tag: str) -> None:
+def _check_tag(tag: str, limit: int) -> None:
     if not re.fullmatch(r"[A-Z0-9_:]+", tag):
         raise ContractError(f"tag {tag!r} does not match ^[A-Z0-9_:]+$")
+    if len(tag) > limit:
+        raise ContractError(f"tag {tag!r}: each tag must be less than {limit} characters")
 
 
 # -- builders of raw panel objects (tests and the demo fleet) ----------------
@@ -458,6 +537,7 @@ def raw_host(
         "serverDescription": None,
         "isHidden": hidden,
         "overrideSniFromAddress": False,
+        "keepSniBlank": False,
         "allowInsecure": False,
         "shuffleHost": False,
         "mihomoX25519": False,

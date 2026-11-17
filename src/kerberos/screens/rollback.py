@@ -288,6 +288,10 @@ def rollback_flow(app: App, run_id: Optional[str] = None) -> int:
             return EXIT_PANEL if opened == EXIT_PANEL else EXIT_OK
         client = opened[1]
     failed = roll_back(app, run, chosen, client)
+    if client is not None:
+        from kerberos.screens.panel import settle_token
+
+        settle_token(app, client)
     record = store.new_run("rollback", run["panel"], run["nodes"])
     record["changes"] = copy.deepcopy(chosen)
     record["findings"] = run.get("findings", [])

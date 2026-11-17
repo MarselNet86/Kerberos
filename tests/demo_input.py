@@ -41,7 +41,7 @@ def grant_access(env: Env) -> dict:
 
 def demo_snapshot(env: Env):
     client = PanelClient("http://127.0.0.1:3000/api", env.panel_transport, env.clock)
-    client.login("admin", "any")
+    client.set_token(env.panel_transport.add_api_token())
     return client, client.snapshot("2.8.1", "panel.example.com")
 
 

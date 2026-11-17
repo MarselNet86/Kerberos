@@ -15,9 +15,8 @@ TEXT: dict[str, str] = {
     "mode.fix": "Исправление: план, разрешение, изменения",
     "mode.rollback": "Откат прошлого запуска",
     "panel.found": "Нашёл Remnawave {version} на этом сервере",
-    "panel.login": "Логин администратора панели",
     "panel.password": "Пароль (не сохраняется)",
-    "panel.token": "API-токен панели: Настройки → API-токены",
+    "panel.token": "API-токен панели",
     "panel.ok": "Панель подключена: нод {nodes}, хостов {hosts}",
     "nodes.title": "Какие ноды защищать?",
     "access.hostkey": "Ключ сервера {node}: {fingerprint}. Это ваш сервер?",
@@ -202,17 +201,50 @@ TEXT: dict[str, str] = {
     "panel.api_invalid": "нужен адрес вида http://127.0.0.1:3000/api",
     "panel.api": "API: {api}",
     "panel.domain": "Домен панели: {domain}",
-    "panel.login_hint": "Войдите как администратор панели. Пароль нужен только на время входа.",
     "panel.token_hint": (
-        "Вход по паролю в панели выключен, поэтому нужен API-токен. "
-        "Браузер понадобится только чтобы создать его в панели."
+        "Remnawave пускает программы только по API-токену. Создайте его в панели: "
+        "Настройки Remnawave → Токены API → Создать токен API. Панель покажет токен "
+        "один раз: скопируйте его сюда."
     ),
+    "panel.token_rights.check": (
+        "Права: «Полный доступ» или только чтение. Этот список прав можно вставить "
+        "в окне создания токена:"
+    ),
+    "panel.token_rights.fix": (
+        "Права: «Полный доступ» или чтение и запись. Этот список прав можно вставить "
+        "в окне создания токена:"
+    ),
+    "panel.token_saved_note": (
+        "KERBEROS сохранит токен на этом сервере, читать его может только root. "
+        "В следующий раз вводить его не придётся."
+    ),
+    "panel.token.stale": "Сохранённый токен панель больше не принимает: введите новый.",
+    "panel.token.used": "Вход по сохранённому API-токену",
+    "panel.token.readonly": (
+        "Сохранённый токен вводили для «Проверки». Чтобы что-то изменить в панели, "
+        "у токена должны быть права на запись."
+    ),
+    "panel.token.keep": "Оставить сохранённый токен",
+    "panel.token.keep.hint": "у него «Полный доступ» или права на запись",
+    "panel.token.new": "Ввести другой токен",
     "panel.connecting": "Подключаюсь к панели…",
     "panel.loading": "Читаю ноды, хосты и профили…",
-    "panel.err.login": "Неверный логин или пароль",
     "panel.err.token": "Токен не подходит",
-    "panel.err.password_off": "Вход по паролю в панели выключен",
-    "panel.err.forbidden": "У токена нет прав: {operation}",
+    "panel.err.forbidden": (
+        "У токена нет прав на {kind}: {section}. Создайте токен с этими правами "
+        "или с полным доступом."
+    ),
+    "panel.err.forbidden.other": (
+        "Панель отказала в запросе {operation}: создайте токен с полным доступом."
+    ),
+    "panel.right.read": "чтение",
+    "panel.right.write": "запись",
+    "panel.section.nodes": "ноды (nodes)",
+    "panel.section.hosts": "хосты (hosts)",
+    "panel.section.config-profiles": "профили конфигурации (config-profiles)",
+    "panel.section.subscription-template": "шаблоны подписки (subscription-template)",
+    "panel.section.internal-squads": "внутренние сквады (internal-squads)",
+    "panel.section.subscription-settings": "настройки подписки (subscription-settings)",
     "panel.err.server": (
         "Панель отвечает ошибкой {status}. Обычно она перезапускается: подождите минуту "
         "и нажмите Enter."
@@ -844,6 +876,15 @@ TEXT: dict[str, str] = {
     "cli.interrupted": "Прервано.",
     "error.rollback_failed": "не откатилось и осталось на месте: нужна ручная проверка",
     "error.internal_error": "внутренняя ошибка KERBEROS",
+    "error.forbidden": (
+        "панель отказала API-токену в правах: в следующий раз KERBEROS попросит "
+        "токен с правами «Исправления»"
+    ),
+    "fin.reason": "Причина: {reason}.",
+    "error.unauthorized": "панель больше не принимает API-токен",
+    "error.server_error": "панель ответила ошибкой",
+    "error.bad_request": "панель отклонила запрос",
+    "error.no_response": "панель не ответила на запрос",
     "error.pair_not_ready": "у одной из нод пары нет копий хостов на своём домене",
     "error.reserve_chain": "нода не может быть резервом и основой одновременно",
     "plan.reserve.is_reserve": "{node} уже резерв для {main}: у резерва не бывает своего резерва",

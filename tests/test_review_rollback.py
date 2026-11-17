@@ -27,7 +27,7 @@ def everything(*names):
 
 
 EVERYTHING = everything("nl-1")
-ROLLBACK = ["enter", "enter", "enter"] + list("admin") + ["enter"] + list("pw") + ["enter"]
+ROLLBACK = ["enter", "enter", "enter"]  # run, changes, consent; the panel: the saved token
 NL1 = "203.0.113.10"
 
 

@@ -317,9 +317,18 @@ class App:
         if not agree(self, t("fin.title"), Consent(Group(*lines), t("fin.accept"), t("fin.keys"))):
             return EXIT_OK
         failed = finalize_items(opened[1], store, pairs)
+        from kerberos.screens.panel import settle_token
+
+        settle_token(self, opened[1])
         if failed:
+            from kerberos.screens.fix import error_text
+
             names = ", ".join(self.mask(item["nodeName"]) for item in failed)
-            self.notice("error", t("fin.failed", n=len(failed), nodes=names), t("fin.title"))
+            text = t("fin.failed", n=len(failed), nodes=names)
+            reasons = sorted({item["error"] for item in failed if item.get("error")})
+            if reasons:
+                text += " " + t("fin.reason", reason="; ".join(error_text(r) for r in reasons))
+            self.notice("error", text, t("fin.title"))
             return EXIT_PANEL
         self.notice("info", t("fin.done", n=len(pairs)), t("fin.title"))
         return EXIT_OK

@@ -24,7 +24,7 @@ TO_PLAN += ["enter", "enter", "enter"]
 APPLY = ["enter", "enter"]  # S7 → consent → accept
 DONE = ["enter"]  # S9
 # The run, all its changes, consent, the panel login; the result notice comes after.
-ROLLBACK = ["enter", "enter", "enter"] + list("admin") + ["enter"] + list("pw") + ["enter"]
+ROLLBACK = ["enter", "enter", "enter"]  # run, changes, consent; the panel: the saved token
 NL1 = row_of("nl-1", "self_steal")
 NL2 = row_of("nl-2", "self_steal")
 
@@ -193,9 +193,11 @@ def test_self_steal_whose_undo_fails_keeps_what_stayed():
     profile = changes_of(run, "self_steal.profile")[0]
     assert profile["state"] == "applied"
     stuck(profile, "node_offline", "server_error")
-    for fix_id in ("self_steal.hosts", "self_steal.site"):
-        assert changes_of(run, fix_id)[0]["state"] == "rolled_back"
+    assert changes_of(run, "self_steal.hosts")[0]["state"] == "rolled_back"
     assert not [h for h in base.hosts if h["sni"] == "nl-1.example.com"]
+    # v19: the profile stayed on the site, so the site stays too, for `kerberos rollback`.
+    stuck(changes_of(run, "self_steal.site")[0], "node_offline", "rollback_skipped")
+    assert "nl-1.example.com" in nodes["nl-1"].state["sites"]
 
 
 # -- app 4: a change cut short is offered by rollback; a panel bug leaves nothing half done -

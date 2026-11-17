@@ -17,7 +17,7 @@ from datetime import timedelta
 from typing import Any, Optional
 
 from kerberos.checks import spec
-from kerberos.fixes.hosts import copy_fields, hysteria_host, mismatches
+from kerberos.fixes.hosts import copy_fields, fit_remark, hysteria_host, mismatches
 from kerberos.fixes.journal import iso
 from kerberos.fixes.model import ROLLBACK_FAILED, Change
 from kerberos.fixes.panel_changes import digest, save_snapshot, undo
@@ -159,11 +159,35 @@ class SelfSteal:
             "tags": tags,
         }
         self.engine.save()
-        patched = self.panel_call(lambda: self.client.patch_profile(profile.uuid, new))
+        try:
+            patched = self.panel_call(lambda: self.client.patch_profile(profile.uuid, new))
+        except StepFailed:
+            self.landed(change, profile.uuid, current.config)
+            raise
+        # The panel stores the config normalized: a rollback compares with what it holds.
+        change["details"]["written"] = digest(patched.config)
+        change["details"]["writtenPath"] = save_snapshot(
+            self.engine.store, run_id, f"profile-{profile.uuid}-written", patched.config
+        )
+        self.engine.save()
         profile.config, profile.inbounds = patched.config, patched.inbounds
         self.applied(change)
         had_hysteria = any(is_hysteria(i) for i in current.config.get("inbounds") or [])
         return patched, had_hysteria, tags
+
+    def landed(self, change: Change, uuid: str, before: dict) -> None:
+        """A PATCH whose answer failed may still have landed, normalized by the panel: then
+        what the panel holds is KERBEROS's write, and the undo puts the snapshot back."""
+        try:
+            now = next((p for p in self.client.profiles() if p.uuid == uuid), None)
+        except PanelError:
+            return
+        if now is not None and digest(now.config) != digest(before):
+            change["details"]["written"] = digest(now.config)
+            change["details"]["writtenPath"] = save_snapshot(
+                self.engine.store, self.engine.run["runId"], f"profile-{uuid}-written", now.config
+            )
+            self.engine.save()
 
     def squads(self, patched: Any, had_hysteria: bool, tags: dict) -> None:
         if had_hysteria:
@@ -213,7 +237,7 @@ class SelfSteal:
             h.inbound_uuid == hysteria.uuid for h in sources
         )
         if hysteria and reality_sources and not has_hy2_host:
-            remark = f"{reality_sources[0].remark} Hysteria2".strip()
+            remark = fit_remark(reality_sources[0].remark, " Hysteria2")
             fields = hysteria_host(
                 reality_sources[0], self.domain, patched.uuid, hysteria.uuid, remark
             )
@@ -222,12 +246,14 @@ class SelfSteal:
         # Old hosts go off only now, after every copy exists and was read back.
         old = [h.uuid for h in sources]
         if old:
-            self.panel_call(lambda: self.client.disable_hosts(old))
+            # Journaled first: an answer that never comes still leaves them to switch back on.
             change["details"]["disabled"] = old
+            self.engine.save()
+            self.panel_call(lambda: self.client.disable_hosts(old))
         self.applied(change)
 
     def template_uuid(self) -> Any:
-        """§10.9: copies get «KERBEROS» in a pair with a reserve, else «без резерва»."""
+        """§10.9: copies get «KERBEROS» in a pair with a reserve, else «KERBEROS single»."""
         paired = self.item.params.get("reserve") or self.item.params.get("reserveOf")
         try:
             templates = self.engine.panel_fixes.templates()
@@ -365,14 +391,21 @@ class SelfSteal:
     def undo_all(self, reason: str) -> bool:
         """Everything done goes back in reverse order; False: something stayed in place."""
         half, self.current = self.current, None
+        blocked = False
         # The step caught half way (a panel change: agent steps settle themselves) first.
         for change in ([half] if half is not None else []) + list(reversed(self.done)):
+            if blocked:
+                # A later step stayed in place and may need this one: Reality on a profile
+                # that was not put back still points at the site (§11.4, rollback_skipped).
+                self.engine.settle(change, reason, "rollback_skipped")
+                continue
             if change["fixId"] in AGENT_STEPS:
                 error = self.engine.rollback(self.target, change["changeId"])
             else:
                 error = undo(self.client, change, ask=self.engine.ask_undo)
             if not self.engine.settle(change, reason, error):
                 self.clean = False
+                blocked = True
         if self.clean:
             self.engine.failed += 1
         self.engine.save()
