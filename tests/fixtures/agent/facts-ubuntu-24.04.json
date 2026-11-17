@@ -1,4 +1,5 @@
 {
+  "acme": [],
   "certbot": {
     "certs": [],
     "installed": false
