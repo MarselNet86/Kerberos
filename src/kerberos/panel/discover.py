@@ -165,6 +165,10 @@ def discover_xui(host: Host) -> Optional[PanelLocation]:
         "listen": listen,
         "subPort": sub_port if settings.get("subEnable", "").lower() == "true" else 0,
         "twoFactor": settings.get("twoFactorEnable", "").lower() == "true",
+        # Where the CLI of §10.10 writes and KERBEROS reads back; XUI_PORT pins the port.
+        "db": f"{folder}/x-ui.db" if folder else XUI_DB,
+        "dbFolder": folder,
+        "envPort": bool(env.get("XUI_PORT")),
     }
     return PanelLocation(
         api=f"{'https' if tls else 'http'}://{address}:{port}{path}",

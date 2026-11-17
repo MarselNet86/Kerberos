@@ -196,6 +196,10 @@ class Collector:
             address = first_v4(self.resolve_into(data, domain))
             if address:
                 data.panel_page = self.env.prober.http(address, 443, domain, "/")
+            if self.snapshot.kind != "3x-ui":
+                from kerberos.fixes.portal import detect_caddy
+
+                data.panel_proxy = detect_caddy(host, domain)  # read only
         masker = getattr(self.env, "masker", None)
         if masker is not None:
             # Names only the nodes know (their sites, certificates) are masked like the panel's.

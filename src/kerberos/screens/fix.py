@@ -18,7 +18,13 @@ from kerberos.copy import TEXT, t
 from kerberos.fixes.engine import Engine
 from kerberos.fixes.journal import RunStore, iso
 from kerberos.fixes.model import is_applied
-from kerberos.fixes.plan import NEEDS_INPUT, PlanItem, build_plan, follow_admin_key
+from kerberos.fixes.plan import (
+    NEEDS_INPUT,
+    PERSON_MARKS,
+    PlanItem,
+    build_plan,
+    follow_admin_key,
+)
 from kerberos.flow import BACK, EXIT_OK, NEXT
 from kerberos.report.view import change_target, counts
 from kerberos.screens.check import (
@@ -61,6 +67,11 @@ def warning_of(item: PlanItem, kind: str = "remnawave") -> Optional[str]:
         return t("fix.edge_only.warning")
     if item.fix_id == "xhttp.padding":
         return t("fix.padding.warning")
+    if item.fix_id == "panel.portal":
+        return t("fix.portal.warning")
+    if item.fix_id == "xui.panel_hide":
+        port = item.params.get("port")
+        return t("fix.xui_hide.warning", port=port) if port else t("fix.xui_hide.warning.path")
     return None
 
 
@@ -311,7 +322,74 @@ def waits_for_input(item: PlanItem) -> bool:
         return item.params.get("dns") != "ok"
     if item.fix_id == "cdn.edge_only":
         return not item.params.get("nets")
+    if item.fix_id == "panel.portal":
+        return not item.params.get("login")
     return False
+
+
+def ask_portal_login(app: App, session: Session, item: PlanItem) -> None:
+    """§10.10: the login and password of the portal, typed twice; they stay in memory
+    (the password never reaches the plan or the journal) until the env file is written."""
+    from kerberos.fixes.portal import LOGIN_RE, PASSWORD_RE
+
+    fields = [TextInput(t("plan.portal.login"), value=item.params.get("login") or ""),
+              TextInput(t("plan.portal.password"), secret=True),
+              TextInput(t("plan.portal.repeat"), secret=True)]  # fmt: skip
+    state: dict[str, Any] = {"focus": 0, "error": None}
+
+    def body(_w: int, _h: int) -> RenderableType:
+        for i, field in enumerate(fields):
+            field.focused = i == state["focus"]
+        parts: list[RenderableType] = [
+            Text(t("plan.portal.title"), style="bold"),
+            Text(t("plan.portal.hint"), style="muted"),
+            Text(""),
+        ]
+        for field in fields:
+            parts += [field, Text("")]
+        if state["error"]:
+            parts.append(Notice("error", state["error"]))
+        return Group(*parts)
+
+    def handle(key: str) -> Optional[str]:
+        if key == "esc":
+            return "back"
+        if key in ("tab", "down"):
+            state["focus"] = (state["focus"] + 1) % len(fields)
+            return None
+        if key == "up":
+            state["focus"] = (state["focus"] - 1) % len(fields)
+            return None
+        if key == "enter":
+            if state["focus"] < len(fields) - 1:
+                state["focus"] += 1
+                return None
+            return "submit"
+        fields[state["focus"]].handle(key)
+        state["error"] = None
+        return None
+
+    keys = (("Tab", t("keys.field")), ("Enter", t("keys.next")), ("Esc", t("keys.back")))
+    try:
+        while app.interact(t("plan.title"), body, keys, handle, typing=True) == "submit":
+            login = fields[0].value.strip()
+            password = fields[1].value
+            if not LOGIN_RE.fullmatch(login):
+                state["error"], state["focus"] = t("plan.portal.bad_login"), 0
+            elif not PASSWORD_RE.fullmatch(password):
+                state["error"], state["focus"] = t("plan.portal.bad_password"), 1
+            elif password != fields[2].value:
+                state["error"], state["focus"] = t("plan.portal.mismatch"), 2
+            else:
+                session.data["portal"] = {"login": login, "password": password}
+                item.params["login"] = login
+                item.selected = True
+                return
+            fields[1].clear()
+            fields[2].clear()
+    finally:
+        for field in fields[1:]:
+            field.clear()
 
 
 # -- S7 -------------------------------------------------------------------------
@@ -340,6 +418,9 @@ def note_of(app: App, item: PlanItem) -> str:
     elif item.fix_id == "cdn.edge_only":
         nets = item.params.get("nets")
         note = t("plan.edges.ok", n=len(nets)) if nets else t("plan.edges.none")
+    elif item.fix_id == "panel.portal":
+        login = item.params.get("login")
+        note = t("plan.portal.ok", login=login) if login else t("plan.portal.none")
     elif warning_of(item):
         note = t("plan.has_warning")
     return app.mask(note)
@@ -445,7 +526,7 @@ def step_plan(app: App, session: Session) -> Any:
         pressed again, it takes back what it marked."""
         waiting = {i for i, item in enumerate(items) if waits_for_input(item)}
         marked = {i for i, item in enumerate(items)
-                  if not (item.blocked or i in waiting or item.fix_id == "ssh.port")}  # fmt: skip
+                  if not (item.blocked or i in waiting or item.fix_id in PERSON_MARKS)}  # fmt: skip
         if marked <= checklist.selected:
             checklist.selected -= marked
         else:
@@ -468,6 +549,11 @@ def step_plan(app: App, session: Session) -> Any:
             if item.selected:
                 checklist.selected.add(checklist.cursor)
             return None
+        if hotkey(key) == "p" and free and item.fix_id == "panel.portal":
+            ask_portal_login(app, session, item)
+            if item.selected:
+                checklist.selected.add(checklist.cursor)
+            return None
         if hotkey(key) == "g" and free and item.fix_id == "self_steal":
             new_site(session, item)
             return None
@@ -484,11 +570,11 @@ def step_plan(app: App, session: Session) -> Any:
             return None
         result = checklist.handle(key)
         if result == "done":
+            needs = {"self_steal": "plan.need_domain", "cdn.edge_only": "plan.need_edges",
+                     "panel.portal": "plan.need_portal"}  # fmt: skip
             for i, item in enumerate(items):
                 if i in checklist.selected and waits_for_input(item):
-                    state["error"] = t(
-                        "plan.need_domain" if item.fix_id == "self_steal" else "plan.need_edges"
-                    )
+                    state["error"] = t(needs[item.fix_id])
                     return None
             for item in items:
                 if item.fix_id == "reserve" and item.selected and not pair_ready(items, item):
@@ -508,6 +594,8 @@ def step_plan(app: App, session: Session) -> Any:
             hints.append(("g", t("keys.site")))
         elif item is not None and not item.blocked and item.fix_id == "cdn.edge_only":
             hints.append(("e", t("keys.edges")))
+        elif item is not None and not item.blocked and item.fix_id == "panel.portal":
+            hints.append(("p", t("keys.portal")))
         hints.append((t("keys.space"), t("keys.toggle")))
         if len(hints) == 1:
             hints.append(("a", t("keys.all_but_port")))
@@ -580,6 +668,7 @@ def step_apply(app: App, session: Session) -> Any:
     from kerberos.screens.rollback import ask_old_port
 
     engine.ask_old_port = lambda port, command: ask_old_port(app, port, command)
+    engine.ask_portal = lambda link, login: ask_portal(app, link, login)
     session.data["engine"] = engine
     app.busy = True
 
@@ -620,6 +709,34 @@ def ask_outside(app: App, port: int, command: str) -> bool:
                  Text(t("apply.outside.keys"), style="muted"))  # fmt: skip
     app.draw(t("s8.title"), body)
     return app.term.read_key() == "enter"
+
+
+def masked_link(app: App, link: str) -> str:
+    """The secret path of a panel link is hidden with the addresses when masking."""
+    if not app.env.masker.enabled:
+        return link
+    head, _, _secret = link.partition("://")[2].partition("/")
+    return app.mask(f"{link.partition('://')[0]}://{head}/") + "…"
+
+
+def ask_portal(app: App, link: str, login: Optional[str]) -> bool:
+    """§10.10: the person logs in at the new link from their browser; Enter: in, Esc: no.
+    Three minutes without an answer count as no: everything goes back."""
+    from kerberos.fixes.portal import LOGIN_WAIT
+
+    text = (t("apply.portal", link=masked_link(app, link), login=login) if login
+            else t("apply.xui_panel", link=masked_link(app, link)))  # fmt: skip
+    body = Group(Notice("warning", text), Text(t("apply.portal.keys"), style="muted"))
+    deadline = app.env.clock.monotonic() + LOGIN_WAIT
+
+    def handle(key: str) -> Optional[str]:
+        return {"enter": "yes", "esc": "no"}.get(key)
+
+    def tick() -> Optional[str]:
+        return "no" if app.env.clock.monotonic() >= deadline else None
+
+    keys = (("Enter", t("keys.logged_in")), ("Esc", t("keys.not_logged_in")))
+    return app.interact(t("s8.title"), body, keys, handle, timeout=1, tick=tick) == "yes"
 
 
 def ask_overwrite(app: App, diff: str) -> bool:
@@ -754,11 +871,34 @@ def new_ports(
         # `kerberos ssh` works only with the administrator key on this server (§8.5).
         key = "s9.login.admin" if admin else "s9.login"
         lines.append(Text(t(key, command=command, node=name), style="bold"))
+    lines += panel_links(app, run)
     if not lines:
         return None
     if compact:
         return Group(*lines)
     return Panel(Group(*lines), box=box.HEAVY, border_style="accent", expand=False)
+
+
+def panel_links(app: App, run: dict) -> list[RenderableType]:
+    """§10.10: the new way into the panel stands out like a new SSH port."""
+    from kerberos.fixes.panel_changes import load_snapshot
+
+    lines: list[RenderableType] = []
+    for change in run["changes"]:
+        if change["fixId"] not in ("panel.portal", "xui.panel_hide"):
+            continue
+        if change["state"] != "confirmed" or rollback_failed(change):
+            continue
+        saved = load_snapshot(change["details"].get("linkPath")) or {}
+        if not saved.get("link"):
+            continue
+        link = masked_link(app, saved["link"])
+        if change["fixId"] == "panel.portal":
+            lines.append(Text(t("s9.portal", link=link), style="accent"))
+            lines.append(Text(t("s9.portal.login", login=saved.get("login", "")), style="bold"))
+        else:
+            lines.append(Text(t("s9.xui_panel", link=link), style="accent"))
+    return lines
 
 
 def command_lines(label: str, command: str) -> list[RenderableType]:

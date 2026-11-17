@@ -65,6 +65,8 @@ class Engine:
         # The same, when a confirmed new port goes back after its recheck: the person
         # tries the old port from outside (§9.3).
         self.ask_old_port: Callable[[int, str], bool] = lambda _port, _command: False
+        # §10.10: the person logs in at the new link of the panel from their browser.
+        self.ask_portal: Callable[[str, Optional[str]], bool] = lambda _link, _login: False
         self._panel_fixes = None
 
     @property
@@ -166,6 +168,13 @@ class Engine:
                 self.panel_fixes.run(item)
             except Exception as exc:  # noqa: BLE001 - a panel change is never left half done
                 self.panel_fixes.abandon(item, exc)
+            return
+        from kerberos.fixes.portal import PORTAL_FIXES
+
+        if item.fix_id in PORTAL_FIXES:
+            from kerberos.fixes.portal import run_portal
+
+            run_portal(self, item)
             return
         if item.fix_id == "self_steal":
             from kerberos.fixes.self_steal import SelfSteal

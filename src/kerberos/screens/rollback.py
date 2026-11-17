@@ -201,6 +201,20 @@ def roll_back(app: App, run: dict, changes: list, client=None) -> list:
             failed.append(change)
             store.save(run)
             continue
+        from kerberos.fixes.portal import PORTAL_FIXES, undo_change
+
+        if change["fixId"] in PORTAL_FIXES:
+            # Files and commands of this server (§10.10): no panel sign-in needed.
+            reason = undo_change(app.env.host, change, ask=lambda diff: ask_diff(app, diff))
+            if reason:
+                note_failure(change, reason)
+                failed.append(change)
+            else:
+                note_back(change)
+                change["state"] = "rolled_back"
+                change["finishedAt"] = iso(app.env.clock)
+            store.save(run)
+            continue
         if change["fixId"] in PANEL_FIXES:
             reason = (
                 undo(client, change, ask=lambda diff: ask_diff(app, diff))
