@@ -81,16 +81,11 @@ def test_templates_squads_and_settings_round_trip():
     assert client.sub_settings().headers["ping-type"] == "proxy-head"
 
 
-def test_login_and_password_status():
-    panel = FakePanel(credentials=("admin", "s3cret"))
+def test_panel_answers_without_a_token():
+    panel = FakePanel()
     client = PanelClient(API, panel, FakeClock())
-    assert client.password_enabled() is True
-    with pytest.raises(PanelError) as exc:
-        client.login("admin", "wrong")
-    assert exc.value.code == "unauthorized" and not client.authenticated
-    client.login("admin", "s3cret")
-    assert client.authenticated
-    assert client.nodes() == []
+    client.reachable()
+    assert panel.log == [("GET", "/auth/status", None)] and not client.authenticated
 
 
 def test_token_401_and_403():
@@ -103,7 +98,7 @@ def test_token_401_and_403():
     client.set_token(panel.add_api_token())
     panel.forbidden.add(("PATCH", "/hosts"))
     with pytest.raises(PanelError) as exc:
-        client.patch_host("x", {"fingerprint": "firefox"})
+        client.patch_host("x", {"fingerprint": "firefox", "isDisabled": False})
     assert exc.value.code == "forbidden" and exc.value.operation == "PATCH /hosts"
 
 
@@ -165,7 +160,7 @@ def test_every_request_carries_forward_headers():
         seen.append(headers)
         return 200, b'{"response": {"authentication": {"password": {"enabled": true}}}}'
 
-    PanelClient(API, transport, FakeClock()).password_enabled()
+    PanelClient(API, transport, FakeClock()).reachable()
     assert seen[0]["x-forwarded-proto"] == "https"
     assert seen[0]["x-forwarded-for"] == "127.0.0.1"
     assert seen[0]["x-real-ip"] == "127.0.0.1"

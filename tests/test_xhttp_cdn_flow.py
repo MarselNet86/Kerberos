@@ -15,7 +15,7 @@ from kerberos.flow import EXIT_OK, EXIT_PARTIAL
 TO_PLAN = login_keys() + ["enter", "enter"] + ["enter"] * 5 + ["esc"] + ["enter", "enter"]
 TO_PLAN += ["enter", "enter", "enter"]
 APPLY = ["enter", "enter", "enter"]  # S7 → consent → accept → S9 Enter
-ROLLBACK = ["enter", "enter", "enter"] + list("admin") + ["enter"] + list("pw") + ["enter", "x"]
+ROLLBACK = ["enter", "enter", "enter", "x"]  # the panel: the token saved by the fix run
 CDN_ROW = row_of("fi-1", "cdn.edge_only")
 TEMPLATE_ROW = row_of("template", "sub.template")
 WATCH_ROW = row_of("nl-1", "watch.install")

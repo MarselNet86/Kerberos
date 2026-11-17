@@ -15,7 +15,7 @@ from kerberos.flow import EXIT_OK
 TO_PLAN = login_keys() + ["enter", "enter"] + ["enter"] * 5 + ["esc"] + ["enter", "enter"]
 TO_PLAN += ["enter", "enter", "enter"]
 APPLY = ["enter", "enter", "enter"]
-ROLLBACK = ["enter", "enter", "enter"] + list("admin") + ["enter"] + list("pw") + ["enter", "x"]
+ROLLBACK = ["enter", "enter", "enter", "x"]  # the panel: the token saved by the fix run
 NL1, NL2 = row_of("nl-1", "self_steal"), row_of("nl-2", "self_steal")
 HOST_FINGERPRINT = row_of("host", "host.fingerprint")
 
@@ -74,7 +74,7 @@ def test_hosts_move_to_kerberos_templates_and_back():
     assert {subscription.RESERVE_NAME, subscription.SINGLE_NAME} <= set(by_name)
     moved = {h["remark"]: h["xrayJsonTemplateUuid"] for h in panel.hosts
              if h["remark"] in ("NL Reality", "DE Reality")}  # fmt: skip
-    # NL-1 has a hidden reserve on NL-2: «KERBEROS»; DE-1 has none: «без резерва».
+    # NL-1 has a hidden reserve on NL-2: «KERBEROS»; DE-1 has none: «KERBEROS single».
     assert moved["NL Reality"] == by_name[subscription.RESERVE_NAME]["uuid"]
     assert moved["DE Reality"] == by_name[subscription.SINGLE_NAME]["uuid"]
     app.env.terminal.feed(*ROLLBACK)

@@ -28,8 +28,11 @@ def fleet(panel=None, nodes=None):
     return panel, nodes
 
 
-def run_fix(extra, panel, nodes, height=46, state=None):
-    app, term = make_app(TO_PLAN + list(extra), panel=panel, nodes=list(nodes.values()),
+def run_fix(extra, panel, nodes, height=46, state=None, keys_before=None):
+    """«Исправление» to S7, then `extra`. With a saved token S2 types none: `keys_before`
+    answers its questions instead of the token."""
+    start = TO_PLAN if keys_before is None else list(keys_before) + TO_PLAN[len(login_keys()) :]
+    app, term = make_app(start + list(extra), panel=panel, nodes=list(nodes.values()),
                          height=height, state=state)  # fmt: skip
     return app, term, app.run("fix")
 
@@ -223,20 +226,36 @@ def test_unattended_finalization_with_the_saved_token():
 
     panel, nodes = fleet()
     host = build_host()
-    host.on(["systemd-run"], CommandResult(0))  # the timer is set: the token is kept for it
+    host.on(["systemd-run"], CommandResult(0))  # the timer is set
     keys = TO_PLAN + domain_keys(NL1_SELF_STEAL, "nl-1.example.com") + ["f"] + APPLY
     app, term = make_app(keys, panel=panel, nodes=list(nodes.values()), height=46, host=host)
     app.run("fix")
     store = store_of(app)
     run = store.runs()[0]
-    token_file = store.path(run["runId"]) / "finalize.token"
-    assert token_file.exists() and oct(token_file.stat().st_mode)[-3:] == "600"
+    assert run["finalizeTimer"] and not (store.path(run["runId"]) / "finalize.token").exists()
     assert any(c[:1] == ("systemd-run",) for c in app.env.host.calls)
     assert seen(term, t("s9.finalize.auto"))
     app.env.clock.advance(24 * 3600 + 1)
     assert unattended(store, panel, app.env.clock, run["runId"]) == 0
     assert server_names(profile_of(panel, "nl-1")["config"]) == ["nl-1.example.com"]
-    assert not token_file.exists() and panel.api_tokens == {}
+    assert store.runs()[0]["pending"] == []
+
+
+def test_unattended_finalization_without_a_saved_token_waits_for_the_person():
+    from kerberos.demo.fleet import build_host
+    from kerberos.host import CommandResult
+
+    panel, nodes = fleet()
+    host = build_host()
+    host.on(["systemd-run"], CommandResult(0))
+    keys = TO_PLAN + domain_keys(NL1_SELF_STEAL, "nl-1.example.com") + ["f"] + APPLY
+    app, _term = make_app(keys, panel=panel, nodes=list(nodes.values()), height=46, host=host)
+    app.run("fix")
+    store = store_of(app)
+    app.env.state.panel_token.unlink()  # the person removed it
+    app.env.clock.advance(24 * 3600 + 1)
+    assert unattended(store, panel, app.env.clock, store.runs()[0]["runId"]) == 3
+    assert store.runs()[0]["pending"], "S1 reminds of it"
 
 
 def test_two_nodes_get_different_stub_sites():
@@ -259,7 +278,7 @@ def _input_of(app):
     from kerberos.panel.client import PanelClient
 
     client = PanelClient("http://127.0.0.1:3000/api", app.env.panel_transport, app.env.clock)
-    client.login("admin", "pw")
+    client.set_token(app.env.panel_transport.add_api_token())
     snapshot = client.snapshot("2.8.1", "panel.example.com")
     selected = [n.uuid for n in snapshot.nodes if not n.is_disabled]
     access = {u: r.access for u, r in app.env.state.nodes().items()}

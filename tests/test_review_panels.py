@@ -119,7 +119,7 @@ def test_fresh_client_writes_hosts_in_the_tag_form():
 
     panel = build_panel("tag")
     client = PanelClient("http://127.0.0.1:3000/api", panel, FakeClock())
-    client.login("admin", "any")  # as `kerberos rollback` does: no host read before the write
+    client.set_token(panel.add_api_token())  # as `kerberos rollback`: no host read before writing
     host = next(h for h in panel.hosts if h["remark"] == "DE Reality")
     client.patch_host(host["uuid"], {"tags": ["DE1_BACK"], "isHidden": False})
     assert host["tag"] == "DE1_BACK" and "tags" not in host

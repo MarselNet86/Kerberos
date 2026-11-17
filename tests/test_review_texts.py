@@ -6,7 +6,7 @@ the names of the sections below) through the fake terminal.
 
 from datetime import datetime
 
-from helpers import flat, login_keys, make_app, row_of, seen, typed
+from helpers import TOKEN, flat, login_keys, make_app, row_of, seen, typed
 
 from kerberos.copy import plural, t
 from kerberos.demo.fleet import build_nodes, build_panel
@@ -25,7 +25,7 @@ QUIT = ["q", "enter"]
 # «Исправление»: S4 with «Мои ключи» and the checklist, its summary, whois, S6 → S7.
 TO_PLAN = TO_S4 + ALL_NODES + ["enter", "enter"] + ["enter", "enter", "enter"]
 APPLY = ["enter", "enter", "enter"]  # S7 → consent → accept → S9 Enter
-ROLLBACK = ["enter", "enter", "enter"] + login_keys() + ["x"]  # run, changes, consent, panel
+ROLLBACK = ["enter", "enter", "enter", "x"]  # run, changes, consent; the saved token
 CHOOSE_XUI = ["down", "enter"]  # S2: 3x-ui is the second panel of the demo server
 XUI_LOGIN = typed("admin") + ["enter"] + typed("pw") + ["enter"]
 SHARED = fingerprint(demo_blob("hoster-image"))  # nl-1 and nl-2: one image of the hoster
@@ -33,7 +33,8 @@ SHARED = fingerprint(demo_blob("hoster-image"))  # nl-1 and nl-2: one image of t
 
 def strict_panel():
     panel = build_panel()
-    panel.accept_any_login = False
+    panel.accept_any_token = False
+    panel.add_api_token(TOKEN)
     return panel
 
 
@@ -182,7 +183,7 @@ def test_s4_question_and_answers_fit_when_the_node_table_does_not():
 def test_finalize_lists_what_stays_and_what_goes():
     app, term = fix_with_self_steal()
     app.env.clock.advance(24 * 3600)
-    term.feed(*(login_keys() + ["x"]))  # sign in to the panel, then leave the consent
+    term.feed("x")  # the panel takes the saved token; then leave the consent
     assert app.run("finalize") == EXIT_OK
     item = t("fin.item", node="nl-1", domain="nl-1.example.com", old="www.example.net")
     asked = first(term, item)
@@ -312,7 +313,7 @@ def test_typed_3xui_address_is_not_called_found():
 def test_finalization_speaks_without_jargon():
     app, term = fix_with_self_steal()
     app.env.clock.advance(24 * 3600)
-    term.feed("enter", *login_keys(), "enter", "x", *QUIT)  # S1: the finalize item first
+    term.feed("enter", "enter", "x", *QUIT)  # S1: the finalize item first; the saved token
     assert app.run() == EXIT_OK
     s1 = term.frames[first(term, t("mode.finalize"))]
     assert "self-steal" not in s1

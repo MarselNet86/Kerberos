@@ -3,12 +3,12 @@
 Old server names leave `serverNames`; clients that did not refresh their
 subscription in a day stop connecting through this node. Run by hand
 (`kerberos finalize`, reminded on S1) or by a systemd timer on the panel
-server that uses a separate panel token kept 0600 until it is used.
+server that signs in with the API token S2 saved (an API token cannot
+create another one, §7.3).
 """
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -17,8 +17,6 @@ from kerberos.fixes.journal import RunStore, iso
 from kerberos.fixes.profile import finalize_profile
 from kerberos.panel.client import PanelClient
 from kerberos.panel.errors import PanelError
-
-TOKEN_FILE = "finalize.token"
 
 
 def parse_time(value: str) -> datetime:
@@ -50,8 +48,9 @@ def finalize_items(client: PanelClient, store: RunStore, pairs: list) -> list:
                     raise PanelError("bad_response", detail="profile is gone")
                 config = finalize_profile(profile.config, item["domain"])
                 if config != profile.config:
-                    client.patch_profile(profile.uuid, config)
-                    remember_final(store, run, item, config)
+                    # What the panel stored, normalized, is what a rollback compares with.
+                    patched = client.patch_profile(profile.uuid, config)
+                    remember_final(store, run, item, patched.config)
         except PanelError as exc:
             item["error"] = exc.code
             failed.append(item)
@@ -97,78 +96,48 @@ def finalize_xui(client: Any, store: RunStore, run: dict, item: dict) -> None:
         )
 
 
-def schedule(app: Any, client: PanelClient, run: dict, launcher: str) -> bool:
-    """«Сделать автоматически»: a 2-day panel token and a systemd timer for the run.
+def schedule(app: Any, run: dict, launcher: str) -> bool:
+    """«Сделать автоматически»: a systemd timer for the run, with the saved API token.
 
     `finalizeTimer` names the timer only when there is one: S9 says «automatic» by it.
     """
     store = RunStore(app.env.state, app.env.clock)
     run["finalizeTimer"] = None
-    try:
-        token_uuid, token = client.create_token("kerberos-finalize", 2)
-    except PanelError:
+    if store.state.read_panel_token() is None:
         store.save(run)
-        return False
-    path = store.path(run["runId"]) / TOKEN_FILE
-    api = run["panel"].get("api", "")
-    store.state.write_private(path, json.dumps({"uuid": token_uuid, "token": token, "api": api}))
+        return False  # nothing the timer could sign in with
     unit = f"kerberos-finalize-{run['runId']}"
     result = app.env.host.run(["systemd-run", "--on-active=24h", "--unit", unit, launcher,
                                "finalize", run["runId"]])  # fmt: skip
     if result.ok:
         run["finalizeTimer"] = unit
-    else:
-        # No timer will use the token: it must not lie around for two days (§7.3).
-        forget_token(client, token_uuid, path)
     store.save(run)
     return result.ok
 
 
-def forget_token(client: PanelClient, token_uuid: str, path: Any) -> None:
-    """The finalization token leaves the panel and the disk."""
-    try:
-        client.delete_token(token_uuid)
-    except PanelError:
-        pass  # it expires in two days anyway
-    path.unlink(missing_ok=True)
-
-
-def drop_saved_token(store: RunStore, transport: Any, clock: Clock, run_id: str) -> None:
-    """The token of a run whose timer has nothing to do (its self-steal went back)."""
-    path = store.path(run_id) / TOKEN_FILE
-    try:
-        saved = json.loads(path.read_text(encoding="utf-8"))
-        api, token, token_uuid = saved["api"], saved["token"], saved["uuid"]
-    except (OSError, ValueError, KeyError, TypeError):
-        return  # no token, or one KERBEROS cannot read: nothing it could delete
-    client = PanelClient(api, transport, clock)
-    client.set_token(token)
-    forget_token(client, token_uuid, path)
-
-
 def unattended(store: RunStore, transport: Any, clock: Clock, run_id: Optional[str]) -> int:
-    """`kerberos finalize` without a terminal: the timer's call with the saved token."""
+    """`kerberos finalize` without a terminal: the timer's call with the saved API token.
+
+    3: no token, the panel refused, or a 3x-ui run (finalized in the terminal, §7.6);
+    such runs stay pending and S1 reminds of them.
+    """
     pairs = due_items(store, clock.now(), run_id)
     if not pairs:
-        if run_id is not None:
-            drop_saved_token(store, transport, clock, run_id)
         return 0
+    token = store.state.read_panel_token()
     code = 0
     for run in {id(r): r for r, _i in pairs}.values():
-        path = store.path(run["runId"]) / TOKEN_FILE
-        try:
-            saved = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        if run["panel"].get("kind") == "3x-ui" or token is None:
             code = 3
             continue
-        client = PanelClient(saved["api"], transport, clock)
-        client.set_token(saved["token"])
+        client = PanelClient(run["panel"].get("api", ""), transport, clock)
+        client.set_token(token)
         if finalize_items(client, store, [(r, i) for r, i in pairs if r is run]):
             code = 3
-            continue
-        try:
-            client.delete_token(saved["uuid"])
-        except PanelError:
-            pass
-        path.unlink(missing_ok=True)
+        if client.refused:
+            # Not allowed to change the profile: the person gives a token with that right.
+            store.state.panel_token.unlink(missing_ok=True)
+            return 3
+        if client.wrote:
+            store.state.mark_panel_token_writable()
     return code

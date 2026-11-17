@@ -74,6 +74,10 @@ class State:
         return self.root / "nodes.json"
 
     @property
+    def panel_token(self) -> Path:
+        return self.root / "panel.token"
+
+    @property
     def runs(self) -> Path:
         return self.root / "runs"
 
@@ -119,6 +123,35 @@ class State:
             fh.write(text)
         os.chmod(tmp, 0o600)
         os.replace(tmp, path)
+
+    def _panel_token(self) -> dict:
+        """{token, write}: `write` once the token was given for changes or made one (§7.3)."""
+        try:
+            text = self.panel_token.read_text(encoding="utf-8").strip()
+        except OSError:
+            return {}
+        try:
+            data = json.loads(text)
+        except ValueError:
+            return {"token": text} if text else {}  # a bare token: its rights are not known
+        return data if isinstance(data, dict) and isinstance(data.get("token"), str) else {}
+
+    def read_panel_token(self) -> Optional[str]:
+        """The Remnawave API token S2 saved (§7.3); None when there is none."""
+        return self._panel_token().get("token") or None
+
+    def panel_token_can_write(self) -> bool:
+        return self._panel_token().get("write") is True
+
+    def write_panel_token(self, token: str, write: bool) -> None:
+        self.ensure()
+        data = {"token": token.strip(), "write": bool(write)}
+        self.write_private(self.panel_token, json.dumps(data) + "\n")
+
+    def mark_panel_token_writable(self) -> None:
+        token = self.read_panel_token()
+        if token and not self.panel_token_can_write():
+            self.write_panel_token(token, True)
 
     def public_key(self, admin: bool = False) -> Optional[str]:
         path = (self.admin_key if admin else self.key).with_suffix(".pub")

@@ -1,6 +1,6 @@
 """S4 access to the nodes (tech.md §6, §8, K2)."""
 
-from helpers import login_keys, make_app, seen
+from helpers import TOKEN, login_keys, make_app, seen
 
 from kerberos.copy import t
 from kerberos.demo.fleet import build_nodes, build_panel
@@ -8,6 +8,7 @@ from kerberos.nodes import bootstrap
 from kerberos.nodes.keys import PublicKey, demo_blob
 
 TO_S4 = login_keys() + ["enter", "enter"]
+AGAIN_S4 = ["enter", "enter"]  # a later run: the saved token, S2 asks nothing (§7.3)
 INTRO = ["enter"]  # «Проверка»: S4 first says what it installs
 # nl-1, nl-2, de-1 (python: install), fi-1 confirm the host key; kz-1 is unreachable.
 ALL_NODES = ["enter", "enter", "enter", "enter", "enter", "esc"]
@@ -16,7 +17,8 @@ QUIT = ["q", "enter"]
 
 def strict_panel():
     panel = build_panel()
-    panel.accept_any_login = False
+    panel.accept_any_token = False
+    panel.add_api_token(TOKEN)
     return panel
 
 
@@ -65,7 +67,7 @@ def test_host_key_change_stops_commands_to_the_node():
     app, _ = run_check(nodes)
     state = app.env.state
     nodes[0].host_key = PublicKey("ssh-ed25519", demo_blob("reinstalled"))
-    keys = TO_S4 + INTRO + ["esc", "esc"] + ["enter", "x"] + QUIT  # skip nl-1's new key; kz-1
+    keys = AGAIN_S4 + INTRO + ["esc", "esc"] + ["enter", "x"] + QUIT  # skip nl-1's new key; kz-1
     app, term = make_app(keys, nodes=nodes, state=state, panel=strict_panel())
     start = len(app.env.transport.log)
     app.run("check")
@@ -81,7 +83,7 @@ def test_new_host_key_can_be_confirmed():
     state = app.env.state
     nodes[0].host_key = PublicKey("ssh-ed25519", demo_blob("reinstalled"))
     # «Пропустить ноду» is preselected for a changed key: ↑ to confirm it.
-    keys = TO_S4 + INTRO + ["up", "enter", "esc"] + ["enter", "x"] + QUIT
+    keys = AGAIN_S4 + INTRO + ["up", "enter", "esc"] + ["enter", "x"] + QUIT
     app, term = make_app(keys, nodes=nodes, state=state, panel=strict_panel())
     app.run("check")
     assert state.pinned("203.0.113.10", 22) == demo_blob("reinstalled")

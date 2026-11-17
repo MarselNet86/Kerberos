@@ -604,10 +604,13 @@ def step_apply(app: App, session: Session) -> Any:
     finally:
         app.busy = False
     finish_run(app, session, engine)
+    from kerberos.screens.panel import settle_token
+
+    settle_token(app, session.panel)
     if session.data.get("auto_finalize") and session.data["run"]["pending"]:
         from kerberos.fixes.finalize import schedule
 
-        schedule(app, session.panel, session.data["run"], launcher())
+        schedule(app, session.data["run"], launcher())
     return NEXT
 
 

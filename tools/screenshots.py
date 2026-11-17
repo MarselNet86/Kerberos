@@ -37,9 +37,10 @@ def typed(text: str) -> list[str]:
     return ["space" if ch == " " else ch for ch in text]
 
 
-# S2 login; S3 all nodes; S4: five host keys, kz-1 skipped, «Мои ключи», the summary;
-# whois allowed; S6 → S7. The keys of S7 come from the plan itself (plan_keys).
-TO_PLAN = typed("admin") + ["enter"] + typed("admin-password") + ["enter"]
+# S2 API token (the demo panel takes any); S3 all nodes; S4: five host keys, kz-1 skipped,
+# «Мои ключи», the summary; whois allowed; S6 → S7. The keys of S7 come from the plan
+# itself (plan_keys).
+TO_PLAN = typed("rw-demo-token") + ["enter"]
 TO_PLAN += ["enter", "enter"] + ["enter"] * 5 + ["esc"] + ["enter", "enter"]
 TO_PLAN += ["enter", "enter", "enter"]
 APPLY = ["enter", "enter", "enter"]  # S7 → consent → accept → S9 Enter

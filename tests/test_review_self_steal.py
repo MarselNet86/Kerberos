@@ -52,7 +52,7 @@ def add_inbound(panel, name, inbound):
 
 def logged_in(panel):
     client = PanelClient("http://127.0.0.1:3000/api", panel, FakeClock())
-    client.login("admin", "any")
+    client.set_token(panel.add_api_token())
     return client
 
 
@@ -210,7 +210,7 @@ def test_rollback_asks_before_overwriting_a_host_template_edited_later():
     assert code == EXIT_OK
     templates = {tpl["name"]: tpl["uuid"] for tpl in panel.templates}
     host = next(h for h in panel.hosts if h["remark"] == "DE Reality")
-    assert host["xrayJsonTemplateUuid"] == templates["KERBEROS без резерва"]
+    assert host["xrayJsonTemplateUuid"] == templates["KERBEROS single"]
     host["xrayJsonTemplateUuid"] = templates["KERBEROS"]  # chosen by hand after KERBEROS
     app.env.terminal.feed(*ROLLBACK, "esc", "esc", "x")  # leave the diff, refuse, close
     assert app.run("rollback") == EXIT_ROLLBACK_FAILED

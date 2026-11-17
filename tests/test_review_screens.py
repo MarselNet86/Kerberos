@@ -135,7 +135,7 @@ def test_finalize_consent_at_80x24_has_its_own_keys():
     assert code == EXIT_OK
     app.env.clock.advance(24 * 3600 + 1)
     term.height = 24
-    term.feed(*typed("admin"), "enter", *typed("pw"), "enter", "down", "esc")
+    term.feed("down", "esc")  # the panel takes the token the fix run saved
     assert app.run("finalize") == EXIT_OK
     consent = [f for f in titled(term, "fin.title") if t("fin.accept") in f]
     assert len(consent) == 2 and all(t("fin.keys") in flat(f) for f in consent)
@@ -353,17 +353,19 @@ def test_esc_on_s6_neither_collects_nor_asks_whois_again():
 
 
 def test_f_on_s6_goes_on_to_the_plan_on_the_same_data():
-    keys = ["f", "enter", "enter", "enter", "enter", "enter"]  # admin key, plan, consent, S9
+    # The token of the check (keep it), the admin key, plan, consent, S9.
+    keys = ["f", "enter", "enter", "enter", "enter", "enter", "enter"]
     app, term, code = check_app(keys, width=100, height=30)
     assert code == EXIT_OK
     runs = RunStore(app.env.state, app.env.clock).runs()
     fix, check = runs[0], runs[1]
     assert (fix["mode"], check["mode"]) == ("fix", "check")
     assert fix["findings"] == check["findings"] and fix["changes"]
-    logins = [f for f in term.frames if t("panel.login") in f]
-    assert logins and all(t("panel.login") in f for f in logins[:2])
+    # One sign-in: «Исправление» goes on with the panel of the check, no second S2.
+    assert [p for _m, p, _b in app.env.panel_transport.log].count("/auth/status") == 1
     assert len([f for f in term.frames if t("s5.whois.question")[:30] in flat(f)]) == 1
     assert seen(term, t("access.admin.choose")), "the administrator key is asked"
+    assert seen(term, t("panel.token.readonly")), "a token given for the check is asked about"
     assert titled(term, "plan.title") and titled(term, "done.title")
 
 

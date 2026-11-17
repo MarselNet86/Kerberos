@@ -56,8 +56,12 @@ def typed(text: str) -> list[str]:
     return ["space" if ch == " " else ch for ch in text]
 
 
-def login_keys(user: str = "admin", password: str = "admin-password") -> list[str]:
-    return typed(user) + ["enter"] + typed(password) + ["enter"]
+TOKEN = "rw-test-token"  # the demo panel takes any API token (§7.3)
+
+
+def login_keys(token: str = TOKEN) -> list[str]:
+    """S2 with no saved token: the API token typed in, then Enter."""
+    return typed(token) + ["enter"]
 
 
 def make_app(
