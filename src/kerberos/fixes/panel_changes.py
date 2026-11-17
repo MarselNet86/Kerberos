@@ -74,11 +74,15 @@ def undo(client: PanelClient, change: dict,
     fix_id, details = change["fixId"], change["details"]
     try:
         if fix_id == "self_steal.hosts":
-            if details.get("disabled"):
-                client.enable_hosts(details["disabled"])
-            existing = {h.uuid for h in client.hosts()}
+            current = {h.uuid: h for h in client.hosts()}
+            # Only what is off now: a request that never landed leaves nothing to undo.
+            off = [
+                u for u in details.get("disabled") or [] if u in current and current[u].is_disabled
+            ]
+            if off:
+                client.enable_hosts(off)
             for uuid in details.get("created", []):
-                if uuid in existing:
+                if uuid in current:
                     client.delete_host(uuid)
             return None
         if fix_id == "sub.templates":
@@ -96,14 +100,19 @@ def undo(client: PanelClient, change: dict,
                 headers["ping-type"] = previous["ping-type"]
             else:
                 headers.pop("ping-type", None)
+            if headers == dict(current.headers):
+                return None  # nothing of KERBEROS is there: the write never landed
             client.patch_sub_settings(current.uuid, headers)
             return None
         if fix_id == "host.fingerprint":
             if "previous" not in details:
                 return None
-            client.patch_host(
-                change["params"]["host"], {"fingerprint": details.get("previous", "")}
-            )
+            uuid = change["params"]["host"]
+            host = next((h for h in client.hosts() if h.uuid == uuid), None)
+            previous = details.get("previous", "") or ""
+            if host is None or host.fingerprint == previous:
+                return None  # deleted since, or never written: nothing to put back
+            client.patch_host(uuid, {"fingerprint": previous})
             return None
         if fix_id == "reserve":
             return undo_hosts(client, details, reserve_fields, dict, ask)

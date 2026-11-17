@@ -1,8 +1,9 @@
 """Copies of hosts for self-steal (tech.md §10.4 step 3). Pure functions.
 
 A copy keeps every field of the source except: `sni` (the own domain),
-`overrideSniFromAddress` (false), `fingerprint` (the source's, or firefox if
-empty), and, when given, the subscription template, tags and visibility.
+`overrideSniFromAddress` and `keepSniBlank` (false: either would hide the
+domain from clients), `fingerprint` (the source's, or firefox if empty), and,
+when given, the subscription template, tags and visibility.
 """
 
 from __future__ import annotations
@@ -15,9 +16,11 @@ from kerberos.panel.model import Host
 # Fields of the answer that a new host does not take.
 NOT_COPIED = {"uuid", "viewPosition"}
 KEEP = object()
+REMARK_LIMIT = 40  # 2.8 takes remarks up to 40 UTF-16 code units, 3.x up to 100 (§7.4)
 CHANGED = {
     "sni",
     "overrideSniFromAddress",
+    "keepSniBlank",
     "fingerprint",
     "xrayJsonTemplateUuid",
     "tags",
@@ -49,6 +52,7 @@ def copy_fields(
     fields["xhttpExtraParams"] = copy.deepcopy(source.xhttp_extra)
     fields["sni"] = domain
     fields["overrideSniFromAddress"] = False
+    fields["keepSniBlank"] = False
     fields["fingerprint"] = source.fingerprint or "firefox"
     fields["isDisabled"] = False
     if template_uuid is not KEEP:
@@ -56,6 +60,18 @@ def copy_fields(
     if hidden is not None:
         fields["isHidden"] = hidden
     return fields
+
+
+def _units(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
+
+
+def fit_remark(base: str, suffix: str, limit: int = REMARK_LIMIT) -> str:
+    """`base` + `suffix` within the panel's remark limit; `base` is cut, never `suffix`."""
+    base = base.strip()
+    while base and _units(base + suffix) > limit:
+        base = base[:-1].rstrip()
+    return (base + suffix).strip() if base else suffix.strip()
 
 
 def hysteria_host(
@@ -79,6 +95,7 @@ def mismatches(sent: dict, got: Host) -> list[str]:
         "sni": got.sni,
         "fingerprint": got.fingerprint,
         "overrideSniFromAddress": got.override_sni,
+        "keepSniBlank": bool(got.raw.get("keepSniBlank", False)),
         "isHidden": got.is_hidden,
         "address": got.address,
         "port": got.port,
