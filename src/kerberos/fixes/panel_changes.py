@@ -228,7 +228,10 @@ def undo_profile(client: PanelClient, change: dict,
 
 
 def undo_uplink(client: PanelClient, change: dict) -> Optional[str]:
-    """Only uplinkHTTPMethod goes back; the rest of the host's extra stays as it is now."""
+    """The host's extra as it was, when nobody touched it since; else only the method goes back.
+
+    A host that had no extra of its own gets none again: it follows its inbound once more.
+    """
     from kerberos.fixes import xhttp
 
     details = change["details"]
@@ -238,6 +241,11 @@ def undo_uplink(client: PanelClient, change: dict) -> Optional[str]:
     host = next((h for h in client.hosts() if h.uuid == uuid), None)
     if host is None:
         return "gone"
+    before = load_snapshot(change.get("before"))
+    written = load_snapshot(details.get("writtenPath"))
+    if isinstance(before, dict) and written is not None and host.xhttp_extra == written:
+        client.patch_host(uuid, {"xhttpExtraParams": before.get("extra")})
+        return None
     if str((host.xhttp_extra or {}).get("uplinkHTTPMethod", "")).upper() != "GET":
         return None  # changed back meanwhile: nothing of KERBEROS is left
     extra = xhttp.uplink_back(host.xhttp_extra, details["previous"], details.get("extraWasNone"))

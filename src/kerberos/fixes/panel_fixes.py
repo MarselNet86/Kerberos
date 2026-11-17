@@ -338,6 +338,8 @@ class PanelFixes:
         self.engine.save()
         self.client.patch_profile(profile.uuid, config)
         for host in hosts:
+            if xhttp.own_extra(host.xhttp_extra) is None:
+                continue  # it hands out the inbound's extra, padding included (§10.6)
             fields = written[uuids[host.inbound_uuid]]
             self.client.patch_host(host.uuid,
                                    {"xhttpExtraParams": xhttp.with_padding(host.xhttp_extra,
@@ -345,18 +347,40 @@ class PanelFixes:
         return change
 
     def uplink(self, item: Any) -> Change:
-        """§10.6: only the host's extra: uploads go as GET, which the CDN lets through."""
+        """§10.6: only the host's extra: uploads go as GET, which the CDN lets through.
+
+        A host without its own extra hands out the inbound's: it gets a copy of that
+        with the method, or it would lose the inbound's other fields.
+        """
         host_uuid = item.params["host"]
         params = {"host": host_uuid, "remark": item.params.get("remark", "")}
         change = self.change("xhttp.uplink_get", item.target, params)
         host = next((h for h in self.client.hosts() if h.uuid == host_uuid), None)
         if host is None:
             raise PanelError("bad_response", "the host is gone")
-        change["details"] = {"previous": (host.xhttp_extra or {}).get("uplinkHTTPMethod"),
-                             "extraWasNone": host.xhttp_extra is None}  # fmt: skip
+        inbound = self.inbound_extra(host.inbound_uuid)
+        own = xhttp.own_extra(host.xhttp_extra)
+        written = xhttp.uplink_get(own if own is not None else inbound)
+        previous = (xhttp.effective(host.xhttp_extra, inbound) or {}).get("uplinkHTTPMethod")
+        # The extras may carry padding values: 0600 snapshots, never run.json (§10.6).
+        self.snapshot(change, f"host-{host_uuid[:8]}-extra", {"extra": host.xhttp_extra})
+        change["details"] = {
+            "previous": previous,
+            "extraWasNone": own is None,
+            "writtenPath": save_snapshot(self.engine.store, self.engine.run["runId"],
+                                         f"host-{host_uuid[:8]}-extra-written", written),
+        }  # fmt: skip
         self.engine.save()
-        self.client.patch_host(host_uuid, {"xhttpExtraParams": xhttp.uplink_get(host.xhttp_extra)})
+        self.client.patch_host(host_uuid, {"xhttpExtraParams": written})
         return change
+
+    def inbound_extra(self, inbound_uuid: Optional[str]) -> Optional[dict]:
+        """The extra of the inbound a host belongs to, as the panel holds it now."""
+        for profile in self.client.profiles():
+            for inbound in profile.inbounds:
+                if inbound.uuid == inbound_uuid:
+                    return xhttp.inbound_extra(profile.inbound_config(inbound.tag))
+        return None
 
     # -- checking again --------------------------------------------------------
     def recheck(self, item: Any, change: Change) -> bool:
@@ -398,15 +422,18 @@ class PanelFixes:
         if profile is None:
             return False
         for tag in details["inbounds"]:
-            inbound = profile.inbound_config(tag) or {}
-            server = xhttp.padding_of(((inbound.get("streamSettings") or {})
-                                       .get("xhttpSettings") or {}).get("extra"))  # fmt: skip
+            server_extra = xhttp.inbound_extra(profile.inbound_config(tag))
+            server = xhttp.padding_of(server_extra)
             if not server or server != written.get(tag):
                 return False
             for host_uuid, host_tag in details["hosts"].items():
                 host = hosts.get(host_uuid)
                 if host_tag != tag:
                     continue
-                if host is None or xhttp.padding_of(host.xhttp_extra) != server:
+                # A client gets its host's extra, or the inbound's when the host has none.
+                if (
+                    host is None
+                    or xhttp.padding_of(xhttp.effective(host.xhttp_extra, server_extra)) != server
+                ):
                     return False
         return True

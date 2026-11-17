@@ -1,10 +1,11 @@
 """XHTTP padding and the uplink method (tech.md §10.6). Pure functions.
 
 Padding fields must match on the server (the inbound's `extra` in the
-profile) and on every client (the `extra` of each host of that inbound),
-or the tunnel breaks. The key and the header are random per inbound, so
-the fleet shares no signature. Rollback removes only the keys KERBEROS
-added.
+profile) and on every client, or the tunnel breaks. A client gets the host's
+`extra` when it is not empty, else the inbound's whole (the panel does not
+merge them): a host without its own `extra` follows the inbound. The key
+and the header are random per inbound, so the fleet shares no signature.
+Rollback removes only the keys KERBEROS added.
 """
 
 from __future__ import annotations
@@ -39,6 +40,24 @@ def padding_fields(rng: random.Random) -> dict:
         "xPaddingPlacement": "queryInHeader",
         "xPaddingMethod": "tokenish",
     }
+
+
+def own_extra(extra: Any) -> Optional[dict]:
+    """The host's own extra, or None when the panel would hand out the inbound's."""
+    return extra if isinstance(extra, dict) and extra else None
+
+
+def effective(host_extra: Any, inbound_extra: Any) -> Optional[dict]:
+    """The extra a client of this host gets (§10.6)."""
+    own = own_extra(host_extra)
+    if own is not None:
+        return own
+    return inbound_extra if isinstance(inbound_extra, dict) else None
+
+
+def inbound_extra(inbound: Optional[dict]) -> Optional[dict]:
+    extra = (((inbound or {}).get("streamSettings") or {}).get("xhttpSettings") or {}).get("extra")
+    return extra if isinstance(extra, dict) else None
 
 
 def has_padding(extra: Optional[dict]) -> bool:
