@@ -106,6 +106,35 @@ def ip_addr() -> str:
     ])  # fmt: skip
 
 
+XUI_MAIN_PID = "4242"
+
+
+def attach_xui_cli(host, panel) -> None:
+    """`x-ui setting -port -webBasePath` writes the settings; SIGHUP to the main process
+    makes the web server serve them, as the real 3x-ui does (§10.10)."""
+    from kerberos.panel.discover import base_path
+
+    def setting(argv, _stdin):
+        args = list(argv[argv.index("setting") + 1 :])
+        table = host.databases[XUI_DB]
+        for flag, key in (("-port", "webPort"), ("-webBasePath", "webBasePath")):
+            if flag in args:
+                table[key] = args[args.index(flag) + 1]
+        return CommandResult(0, "settings updated\n")
+
+    def hup(_argv, _stdin):
+        table = host.databases[XUI_DB]
+        panel.base = base_path(table.get("webBasePath", "/"))
+        panel.port = int(table.get("webPort") or 2053)
+        return CommandResult(0)
+
+    host.on([XUI_BIN, "setting"], setting)
+    host.on(["systemctl", "show", "-p", "MainPID", "--value", "x-ui"],
+            CommandResult(0, XUI_MAIN_PID + "\n"))  # fmt: skip
+    host.on(["kill", "-HUP", XUI_MAIN_PID], hup)
+    host.on(["ufw"], CommandResult(0))
+
+
 def attach_xui(env) -> None:
     """Add the 3x-ui server to a demo environment: its panel, its node, its files."""
     node = xui_node()
@@ -114,6 +143,7 @@ def attach_xui(env) -> None:
     host = env.host
     host.databases[XUI_DB] = dict(SETTINGS)
     host.on([XUI_BIN, "-v"], CommandResult(0, f"{XUI_VERSION}\n"))
+    attach_xui_cli(host, env.xui_transport)
     host.on(["ip", "-j", "addr", "show"], CommandResult(0, ip_addr()))
     host.on(["python3", "-"], lambda _argv, stdin: env.transport.local_bootstrap(stdin))
     host.files["/etc/ssh/ssh_host_ed25519_key.pub"] = (

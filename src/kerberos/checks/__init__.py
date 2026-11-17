@@ -39,6 +39,7 @@ class CheckInput:
     asn: Optional[dict] = None  # ip -> AsInfo; None: whois not allowed
     panel_ssh: Optional[dict] = None  # `sshd -T` of the panel server
     panel_page: Optional[HttpResult] = None
+    panel_proxy: Optional[dict] = None  # the Caddy in front of the panel (§10.10)
 
     # -- helpers shared by the rules --------------------------------------
     def node_data(self, uuid: str) -> Optional[NodeData]:

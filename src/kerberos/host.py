@@ -2,8 +2,10 @@
 
 KERBEROS runs on the panel server and asks it a few things: docker for the
 panel (§7.1), ssh-keygen and ssh-keyscan (§8), sshd -T for its own SSH, the
-hostname. Live runs subprocesses; the fake answers from a table, so tests
-and --demo never touch the machine they run on.
+hostname. The portal in front of the panel (§10.10) also writes files there:
+Caddyfile, compose, an env file. Live runs subprocesses and touches the disk;
+the fake answers from a table, so tests and --demo never touch the machine
+they run on.
 """
 
 from __future__ import annotations
@@ -35,6 +37,12 @@ class Host(Protocol):
     def read_env_keys(self, path: str, keys: Sequence[str]) -> dict[str, str]: ...
 
     def read_text(self, path: str) -> Optional[str]: ...
+
+    def write_text(self, path: str, text: str, mode: Optional[int] = None) -> None: ...
+
+    def file_mode(self, path: str) -> Optional[int]: ...
+
+    def remove(self, path: str) -> None: ...
 
     def read_settings(self, path: str, keys: Sequence[str]) -> Optional[dict[str, str]]: ...
 
@@ -94,6 +102,28 @@ class LiveHost:
         except OSError:
             return None
 
+    def write_text(self, path: str, text: str, mode: Optional[int] = None) -> None:
+        """Atomically, with `mode` (or the file's own one, or 0644 for a new file)."""
+        keep = self.file_mode(path)
+        tmp = f"{path}.kerberos-tmp"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.chmod(tmp, mode if mode is not None else (keep if keep is not None else 0o644))
+        os.replace(tmp, path)
+
+    def file_mode(self, path: str) -> Optional[int]:
+        try:
+            return os.stat(path).st_mode & 0o7777
+        except OSError:
+            return None
+
+    def remove(self, path: str) -> None:
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+
     def hostname(self) -> str:
         return socket.gethostname()
 
@@ -131,6 +161,7 @@ class FakeHost:
 
     commands: dict[tuple[str, ...], Responder] = field(default_factory=dict)
     files: dict[str, str] = field(default_factory=dict)
+    modes: dict[str, int] = field(default_factory=dict)
     name: str = "panel"
     databases: dict[str, dict[str, str]] = field(default_factory=dict)  # path -> settings
     calls: list[tuple[str, ...]] = field(default_factory=list)
@@ -158,6 +189,18 @@ class FakeHost:
 
     def read_text(self, path: str) -> Optional[str]:
         return self.files.get(path)
+
+    def write_text(self, path: str, text: str, mode: Optional[int] = None) -> None:
+        keep = self.modes.get(path, 0o644 if path not in self.files else 0o644)
+        self.files[path] = text
+        self.modes[path] = mode if mode is not None else keep
+
+    def file_mode(self, path: str) -> Optional[int]:
+        return self.modes.get(path, 0o644) if path in self.files else None
+
+    def remove(self, path: str) -> None:
+        self.files.pop(path, None)
+        self.modes.pop(path, None)
 
     def hostname(self) -> str:
         return self.name

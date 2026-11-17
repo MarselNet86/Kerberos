@@ -63,7 +63,8 @@ def test_discovery_reads_only_named_settings():
     assert location.kind == "3x-ui" and location.version == "2.6.2"
     assert location.api == "https://127.0.0.1:54321/secret-path/"
     assert location.info == {"port": 54321, "secretPath": True, "tls": True, "listen": "",
-                             "subPort": 2096, "twoFactor": False}  # fmt: skip
+                             "subPort": 2096, "twoFactor": False, "db": XUI_DB,
+                             "dbFolder": "", "envPort": False}  # fmt: skip
     assert "hunter2" not in repr(location) and "s3cr3t" not in repr(location)
 
 
@@ -130,14 +131,18 @@ def test_remnawave_checks_stay_out():
     assert "reality.foreign_sni" in found and "xui.panel_exposed" in found
 
 
-@pytest.mark.parametrize("info, exposed", [
-    (INFO, True),
-    ({**INFO, "port": 54321, "secretPath": True, "tls": True}, False),
-    ({**INFO, "port": 54321, "secretPath": True, "tls": False}, True),
-    ({**INFO, "listen": "127.0.0.1"}, False),
+@pytest.mark.parametrize("info, exposed, clear", [
+    (INFO, True, True),
+    ({**INFO, "port": 54321, "secretPath": True, "tls": True}, False, False),
+    ({**INFO, "port": 54321, "secretPath": True, "tls": False}, False, True),
+    ({**INFO, "port": 54321, "secretPath": False, "tls": True}, True, False),
+    ({**INFO, "listen": "127.0.0.1"}, False, False),
 ])  # fmt: skip
-def test_panel_exposed(info, exposed):
+def test_panel_exposed(info, exposed, clear):
+    """v20: the port and the path are xui.panel_exposed, TLS is xui.panel_tls on its own."""
     found = checked(snapshot(raw_inbound(1, 443), info=info), facts())
     panel = next(f for f in found if f["checkId"] == "xui.panel_exposed")
     assert panel["ok"] is not exposed
-    assert set(panel["evidence"]) == {"port", "secretPath", "tls"}, "no secret path in reports"
+    assert set(panel["evidence"]) == {"port", "secretPath"}, "no secret path in reports"
+    tls = next(f for f in found if f["checkId"] == "xui.panel_tls")
+    assert tls["ok"] is not clear

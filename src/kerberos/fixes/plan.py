@@ -37,11 +37,16 @@ PANEL_ORDER = (
     "host.fingerprint",
     "xhttp.padding",
     "xhttp.uplink_get",
+    "panel.portal",
+    "xui.panel_hide",
 )
 # Fixes of a node that live in the panel: no agent access is needed for them.
 PANEL_NODE_FIXES = {"xhttp.padding"}
-# Fixes that wait for input in S7: a domain with matching DNS, a confirmed list of nets.
-NEEDS_INPUT = {"self_steal", "cdn.edge_only"}
+# Fixes that wait for input in S7: a domain with matching DNS, a confirmed list of nets,
+# the login of the portal (§10.10).
+NEEDS_INPUT = {"self_steal", "cdn.edge_only", "panel.portal"}
+# Changes of how the person gets in: never marked by default nor by `a` (§6 S7).
+PERSON_MARKS = {"ssh.port", "xui.panel_hide", "panel.portal"}
 
 # Fixes this version of KERBEROS can apply; the rest stay findings in the report.
 IMPLEMENTED = {
@@ -61,6 +66,8 @@ IMPLEMENTED = {
     "xhttp.uplink_get",
     "cdn.edge_only",
     "watch.install",
+    "panel.portal",
+    "xui.panel_hide",
 }
 ACCESS_FIXES = {"ssh.key_only", "ssh.port", "hostkeys.regenerate"}
 RISK_RANK = {"high": 0, "medium": 1, "low": 2, "info": 3}
@@ -153,6 +160,15 @@ def build_plan(
                 if port not in item.params["ports"]:
                     item.params["ports"].append(port)
     used_layouts = site_layouts_in_use(data)
+    hide = items.get(("panel", "xui.panel_hide"))
+    if hide is not None:
+        info = data.snapshot.panel_info or {}
+        facts = (data.nodes[0].facts or {}) if data.nodes else {}
+        taken = {i.params.get("port") for i in items.values() if i.fix_id == "ssh.port"}
+        port = None
+        while not info.get("envPort") and port in (None, *taken):
+            port = choose_port(facts, rng)  # XUI_PORT pins the port: only the path moves
+        hide.params = {"port": port}
     for item in list(items.values()):
         node = data.node_data(item.node_uuid or "")
         facts = node.facts if node else {}
@@ -190,7 +206,7 @@ def build_plan(
         item.selected = (
             item.blocked is None
             and item.risk in ("high", "medium")
-            and item.fix_id not in ("ssh.port", "watch.install", *NEEDS_INPUT)
+            and item.fix_id not in ("watch.install", *PERSON_MARKS, *NEEDS_INPUT)
         )
     node_index = {n.node.uuid: i for i, n in enumerate(data.nodes)}
     return sorted(items.values(), key=lambda i: order_key(i, node_index))

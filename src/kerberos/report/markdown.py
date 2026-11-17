@@ -11,6 +11,7 @@ from kerberos.report.view import action, change_target, details, fill, problems,
 
 
 def render(run: Run, mask: Optional[Callable[[str], str]] = None) -> str:
+    masking = mask is not None  # the secret path of a panel link goes too (§10.10)
     mask = mask or (lambda value: value)
     names = {n["uuid"]: n["name"] for n in run["nodes"]}
     lines = [f"# {t('report.title.' + run['mode'])}", ""]
@@ -91,6 +92,21 @@ def render(run: Run, mask: Optional[Callable[[str], str]] = None) -> str:
                 port = change["details"].get("newPort")
                 command = f"ssh -p {port} root@{node['address'] if node else '?'}"
                 lines.append("  - **" + t("report.ssh_port", port=port, command=command) + "**")
+            if (change["fixId"] in ("panel.portal", "xui.panel_hide")
+                    and change["state"] == "confirmed" and not stuck):  # fmt: skip
+                from kerberos.fixes.panel_changes import load_snapshot
+
+                saved = load_snapshot(change["details"].get("linkPath")) or {}
+                if saved.get("link"):
+                    # report.md is 0600 (§12.3): the person finds the new way in here.
+                    link = saved["link"]
+                    if masking:
+                        scheme, _, rest = link.partition("://")
+                        link = f"{scheme}://{rest.partition('/')[0]}/…"
+                    key = (
+                        "report.portal" if change["fixId"] == "panel.portal" else "report.xui_panel"
+                    )
+                    lines.append("  - **" + t(key, link=link, login=saved.get("login", "")) + "**")
         lines += ["", t("report.backups")]
     lines += ["", f"## {t('report.nodes')}", "", t("report.nodes.head"), "|---|---|---|---|"]
     for node in run["nodes"]:

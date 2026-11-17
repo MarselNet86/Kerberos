@@ -14,7 +14,7 @@ import secrets
 from typing import Any, Optional, Union
 from urllib.parse import urlsplit
 
-from kerberos.panel.client import NoResponse
+from kerberos.panel.client import NoResponse, Unreachable
 from kerberos.panel.fake import ContractError
 
 UPDATE_FIELDS = {
@@ -30,6 +30,7 @@ class FakeXui:
                  credentials: tuple = ("admin", "admin-password"), two_factor: str = "",
                  accept_any_login: bool = False) -> None:  # fmt: skip
         self.base = base
+        self.port: Optional[int] = None  # once set, only this port answers (a moved panel)
         self.version = version  # 2: no CSRF, JSON strings; 3: CSRF, objects in answers
         self.domain = domain
         self.credentials = credentials
@@ -62,6 +63,8 @@ class FakeXui:
     def __call__(self, method: str, url: str, headers: dict, body: Optional[bytes],
                  timeout: float) -> tuple[int, bytes]:  # fmt: skip
         parts = urlsplit(url)
+        if self.port is not None and parts.port != self.port:
+            raise Unreachable("connection refused")
         if not parts.path.startswith(self.base):
             return 404, b"404 page not found"
         path = parts.path[len(self.base) :]

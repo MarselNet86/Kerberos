@@ -434,26 +434,58 @@ def cdn_origin_direct(data: CheckInput) -> list[Finding]:
     return result
 
 
-@check("panel.public", "scanning", "medium", None, "manual", panels=REMNAWAVE)
+@check("panel.public", "scanning", "medium", "panel.portal", "fix", panels=REMNAWAVE)
 def panel_public(data: CheckInput) -> list[Finding]:
+    """The Remnawave login page on the panel's domain; KERBEROS puts a portal in front of
+    it only behind Caddy in Docker as the Remnawave docs set it up (§10.10)."""
+    from kerberos.fixes.portal import page_shows_panel
+
     page = data.panel_page
     if not data.snapshot.panel_domain or page is None:
         return []
-    exposed = page.status == 200 and "remnawave" in page.body.lower()
-    return [finding("panel.public", "panel", not exposed, {"status": page.status})]
+    proxy = (data.panel_proxy or {}).get("proxy", "none")
+    return [finding("panel.public", "panel", not page_shows_panel(page),
+                    {"status": page.status, "proxy": proxy},
+                    fix_id="panel.portal" if proxy == "caddy" else None)]  # fmt: skip
 
 
-@check("xui.panel_exposed", "scanning", "medium", None, "manual", panels=("3x-ui",))
+def xui_public(info: dict) -> bool:
+    return str(info.get("listen") or "") in ("", "0.0.0.0", "::", "[::]")
+
+
+@check("xui.panel_exposed", "scanning", "medium", "xui.panel_hide", "fix", panels=("3x-ui",))
 def xui_panel_exposed(data: CheckInput) -> list[Finding]:
-    """The 3x-ui web panel on all addresses with the default port, no secret path or no TLS."""
+    """The 3x-ui web panel on all addresses with the default port or no secret path.
+
+    KERBEROS moves it (§10.10) unless only the port is weak and XUI_PORT pins it.
+    """
     info = data.snapshot.panel_info
     if not info:
         return []
-    public = str(info.get("listen") or "") in ("", "0.0.0.0", "::", "[::]")
-    weak = info.get("port") == 2053 or not info.get("secretPath") or not info.get("tls")
-    evidence = {"port": info.get("port"), "secretPath": bool(info.get("secretPath")),
-                "tls": bool(info.get("tls"))}  # fmt: skip
-    return [finding("xui.panel_exposed", "panel", not (public and weak), evidence)]
+    weak = info.get("port") == 2053 or not info.get("secretPath")
+    evidence = {"port": info.get("port"), "secretPath": bool(info.get("secretPath"))}
+    movable = bool(info.get("db")) and (not info.get("envPort") or not info.get("secretPath"))
+    return [finding("xui.panel_exposed", "panel", not (xui_public(info) and weak), evidence,
+                    fix_id="xui.panel_hide" if movable else None)]  # fmt: skip
+
+
+@check("xui.panel_tls", "scanning", "low", None, "manual", panels=("3x-ui",))
+def xui_panel_tls(data: CheckInput) -> list[Finding]:
+    """The panel on all addresses without TLS: its login and password go in clear."""
+    info = data.snapshot.panel_info
+    if not info:
+        return []
+    return [finding("xui.panel_tls", "panel", not (xui_public(info) and not info.get("tls")),
+                    {"tls": bool(info.get("tls"))})]  # fmt: skip
+
+
+@check("xui.panel_2fa", "scanning", "low", None, "manual", panels=("3x-ui",))
+def xui_panel_2fa(data: CheckInput) -> list[Finding]:
+    info = data.snapshot.panel_info
+    if not info:
+        return []
+    return [finding("xui.panel_2fa", "panel", bool(info.get("twoFactor")),
+                    {"twoFactor": bool(info.get("twoFactor"))})]  # fmt: skip
 
 
 @check("panel_server.ssh", "scanning", "high", None, "manual", panels=REMNAWAVE)
