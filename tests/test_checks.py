@@ -27,7 +27,7 @@ SECTION_10_2 = {
     "sub.probe_interval", "exit.ru_traffic", "reserve.missing", "reserve.same_asn",
     "node.blocked", "watch.missing",
 }  # fmt: skip
-XUI_ONLY = {"xui.panel_exposed"}  # §7.6: checked on a 3x-ui server, see test_xui.py
+XUI_ONLY = {"xui.panel_exposed", "xui.panel_tls", "xui.panel_2fa"}  # §7.6, test_xui_model.py
 
 
 @pytest.fixture(scope="module")
