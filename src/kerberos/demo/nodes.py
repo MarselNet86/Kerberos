@@ -259,7 +259,8 @@ class DemoProber(FakeProber):
             return HttpResult(204, {}, "")
         return NOT_FOUND
 
-    def http(self, ip: str, port: int, host: str, path: str = "/", *, tls: bool = True):
+    def http(self, ip: str, port: int, host: str, path: str = "/", *, tls: bool = True,
+             headers=None):  # fmt: skip
         if ip in CDN_EDGES and port == 443 and CDN_EDGES[ip] in self.by_address:
             self.calls.append(("http", ip, port, host, path))
             return self._origin(self.by_address[CDN_EDGES[ip]], ip, path)
@@ -274,7 +275,7 @@ class DemoProber(FakeProber):
                 if ok
                 else (HttpResult(None))
             )
-        return super().http(ip, port, host, path, tls=tls)
+        return super().http(ip, port, host, path, tls=tls, headers=headers)
 
 
 def build_prober(panel=None, nodes=None) -> FakeProber:

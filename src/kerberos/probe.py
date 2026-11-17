@@ -34,8 +34,9 @@ class Prober(Protocol):
     def tls_names(self, ip: str, port: int = 443, sni: Optional[str] = None) -> TlsResult: ...
 
     def http(
-        self, ip: str, port: int, host: str, path: str = "/", *, tls: bool = True
-    ) -> HttpResult: ...
+        self, ip: str, port: int, host: str, path: str = "/", *, tls: bool = True,
+        headers: Optional[dict] = None,
+    ) -> HttpResult: ...  # fmt: skip
 
     def resolve(self, name: str) -> list[str]: ...
 
@@ -69,11 +70,13 @@ class LiveProber:
             return TlsResult(False, [], type(exc).__name__)
 
     def http(
-        self, ip: str, port: int, host: str, path: str = "/", *, tls: bool = True
-    ) -> HttpResult:
+        self, ip: str, port: int, host: str, path: str = "/", *, tls: bool = True,
+        headers: Optional[dict] = None,
+    ) -> HttpResult:  # fmt: skip
+        extra = "".join(f"{key}: {value}\r\n" for key, value in (headers or {}).items())
         request = (
             f"GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: Mozilla/5.0\r\n"
-            "Accept: */*\r\nConnection: close\r\n\r\n"
+            f"Accept: */*\r\n{extra}Connection: close\r\n\r\n"
         ).encode()
         data = b""
         try:
@@ -151,6 +154,9 @@ class FakeProber:
     dns: dict = field(default_factory=dict)  # name -> [ip]
     pings: dict = field(default_factory=dict)  # ip -> bool
     auth: Optional[object] = None  # callable(ip, port) -> methods, or None
+    # callable(ip, port, host, path, headers) -> HttpResult or None: a server whose
+    # answers change while KERBEROS works on it (the portal of §10.10)
+    responder: Optional[object] = None
     calls: list = field(default_factory=list)
 
     def tls_names(self, ip: str, port: int = 443, sni: Optional[str] = None) -> TlsResult:
@@ -158,9 +164,14 @@ class FakeProber:
         return self.tls.get((ip, sni), self.tls.get(ip, TlsResult(False, [], "refused")))
 
     def http(
-        self, ip: str, port: int, host: str, path: str = "/", *, tls: bool = True
-    ) -> HttpResult:
+        self, ip: str, port: int, host: str, path: str = "/", *, tls: bool = True,
+        headers: Optional[dict] = None,
+    ) -> HttpResult:  # fmt: skip
         self.calls.append(("http", ip, port, host, path))
+        if callable(self.responder):
+            answer = self.responder(ip, port, host, path, dict(headers or {}))
+            if answer is not None:
+                return answer
         return self.pages.get((ip, port, host, path), HttpResult(None))
 
     def resolve(self, name: str) -> list[str]:
