@@ -72,6 +72,7 @@ def base_facts(address: str) -> dict:
         },  # fmt: skip
         "nginx": {"installed": False, "realip": False, "sites": []},
         "certbot": {"installed": False, "certs": []},
+        "acme": [],
         "watch": {"installed": False},
     }
 

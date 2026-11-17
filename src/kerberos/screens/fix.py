@@ -278,6 +278,21 @@ def node_name(session: Session, target: str, params: Optional[dict] = None) -> s
     return change_target(target, params or {}, names)
 
 
+def node_renewals(session: Session, target: str) -> list:
+    """Certificates of the node that renew on :80 themselves: self-steal moves them
+    to the webroot of its nginx (§10.4, K16)."""
+    uuid = target.partition(":")[2]
+    for data in session.data["input"].nodes:
+        if data.node.uuid == uuid:
+            return list((data.facts or {}).get("acme") or [])
+    return []
+
+
+def renewals_text(app: App, renewals: list) -> str:
+    return ", ".join(f"{app.mask(str(r.get('name', '')))} ({r.get('tool', '')})"
+                     for r in renewals)  # fmt: skip
+
+
 def error_text(code: Optional[str]) -> str:
     if not code:
         return ""
@@ -443,6 +458,10 @@ def plan_details(app: App, session: Session, item: PlanItem) -> RenderableType:
                               style="risk.medium"))  # fmt: skip
         if item.fix_id == "self_steal":
             lines.append(site_preview(app, session, item))
+            renewals = node_renewals(session, item.target)
+            if renewals:
+                lines.append(Text(t("plan.renewals", names=renewals_text(app, renewals)),
+                                  style="muted"))  # fmt: skip
         warning = warning_of(item, session.snapshot.kind)
         if warning:
             lines.append(Text(t("plan.details.warning", text=warning), style="muted"))
@@ -633,6 +652,16 @@ def consent(app: App, session: Session, items: list[PlanItem]) -> bool:
         )
     for name, labels in by_node.items():
         lines.append(Hanging(f"  {app.mask(name)}: " + "; ".join(labels), indent=4))
+    for item in chosen:
+        renewals = node_renewals(session, item.target) if item.fix_id == "self_steal" else []
+        if renewals:
+            name = app.mask(node_name(session, item.target, item.params))
+            lines.append(
+                Hanging(
+                    "  " + t("consent.renewals", node=name, names=renewals_text(app, renewals)),
+                    indent=4,
+                )
+            )
     for text in consent_warnings(app, session, chosen):
         lines.append(Notice("warning", text))
     return agree(app, t("consent.title"), Consent(Group(*lines), t("consent.accept")))
@@ -836,6 +865,10 @@ def change_lines(app: App, session: Session, run: dict) -> list[RenderableType]:
                                           background=site["background"],
                                           accent=site["accent"]), indent=4,
                                  style="muted"))  # fmt: skip
+        renewals = change["details"].get("renewals")
+        if change["fixId"] == "self_steal.site" and applied(change) and renewals:
+            lines.append(Hanging("  " + t("s9.renewals", names=renewals_text(app, renewals)),
+                                 indent=4, style="muted"))  # fmt: skip
         if change["fixId"] == "self_steal.hosts" and applied(change):
             lines.append(Hanging("  " + t("s9.hosts", created=len(change["details"]["created"]),
                                           disabled=len(change["details"]["disabled"])),

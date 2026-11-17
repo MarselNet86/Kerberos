@@ -200,7 +200,11 @@ def apply_site(node: FakeNode, params: dict, change_id: str) -> tuple[dict, Call
         raise NodeAgentError("port80_busy", "port 80")
     if node.state.get("certbot_fails"):
         raise NodeAgentError("certbot_failed", "challenge failed")
-    saved = copy.deepcopy({k: facts[k] for k in ("nginx", "certbot")})
+    # Renewals that open :80 themselves move to the webroot of nginx (§10.4, K16).
+    moved = copy.deepcopy(facts.get("acme") or [])
+    if moved and node.state.get("acme_fails"):
+        raise NodeAgentError("acme_check_failed", moved[0]["names"][0])
+    saved = copy.deepcopy({k: facts[k] for k in ("nginx", "certbot", "acme") if k in facts})
     saved_site = node.state.get("site")
     saved_sites = copy.deepcopy(node.state.get("sites", {}))
     layout = template_hash(site_html(seed, domain))
@@ -216,6 +220,7 @@ def apply_site(node: FakeNode, params: dict, change_id: str) -> tuple[dict, Call
         "installed": True,
         "certs": certs + [{"domain": domain, "notAfter": "2027-02-14T00:00:00Z"}],
     }
+    facts["acme"] = []
     node.state["site"] = domain
     node.state.setdefault("sites", {})[domain] = {"template": layout, "altSvc": None, "status": 200}
 
@@ -228,7 +233,9 @@ def apply_site(node: FakeNode, params: dict, change_id: str) -> tuple[dict, Call
     theme = spec["theme"]
     site = {"title": spec["title"], "kind": spec["kind"], "background": theme["background"],
             "accent": theme["accent"]}  # fmt: skip
-    return {"domain": domain, "template": layout, "siteSeed": seed, "site": site}, undo
+    renewals = [{"tool": r["tool"], "name": r["name"], "names": r["names"]} for r in moved]
+    return {"domain": domain, "template": layout, "siteSeed": seed, "site": site,
+            "renewals": renewals}, undo  # fmt: skip
 
 
 def apply_mount(node: FakeNode, params: dict, change_id: str) -> tuple[dict, Callable]:

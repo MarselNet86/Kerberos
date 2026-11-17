@@ -215,6 +215,8 @@ def node_names(data: CheckInput) -> list[str]:
         for site in (facts.get("nginx") or {}).get("sites", []):
             names += [n for n in site.get("serverNames", []) if isinstance(n, str)]
         names += [c.get("domain") for c in (facts.get("certbot") or {}).get("certs", [])]
+        for renewal in facts.get("acme") or []:
+            names += [renewal.get("name"), *renewal.get("names", [])]
     for tls in data.tls.values():
         names += list(tls.names)
     return [n for n in dict.fromkeys(names) if isinstance(n, str) and n and not is_ip(n)]
