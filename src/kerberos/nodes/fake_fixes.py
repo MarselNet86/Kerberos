@@ -202,6 +202,9 @@ def apply_site(node: FakeNode, params: dict, change_id: str) -> tuple[dict, Call
         raise NodeAgentError("certbot_failed", "challenge failed")
     # Renewals that open :80 themselves move to the webroot of nginx (§10.4, K16).
     moved = copy.deepcopy(facts.get("acme") or [])
+    blocked = [r for r in moved if r.get("blocked")]
+    if blocked:
+        raise NodeAgentError("acme_standalone", f"{blocked[0]['name']}: {blocked[0]['blocked']}")
     if moved and node.state.get("acme_fails"):
         raise NodeAgentError("acme_check_failed", moved[0]["names"][0])
     saved = copy.deepcopy({k: facts[k] for k in ("nginx", "certbot", "acme") if k in facts})

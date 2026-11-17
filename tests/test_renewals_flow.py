@@ -8,7 +8,17 @@ import copy
 
 import pytest
 from helpers import seen
-from test_xui_flow import APPLY, ROLLBACK, TO_PLAN, last_run, local_node, reality, steal, xui_app
+from test_xui_flow import (
+    APPLY,
+    ROLLBACK,
+    STEAL_ROW,
+    TO_PLAN,
+    last_run,
+    local_node,
+    reality,
+    steal,
+    xui_app,
+)
 
 from kerberos.checks import CheckInput, NodeData
 from kerberos.checks.collect import node_names
@@ -59,6 +69,16 @@ def test_nginx_without_the_probe_rolls_self_steal_back():
     assert seen(term, t("error.acme_check_failed"))
     assert reality(app)["target"] == "www.example.net:443"  # Reality was never moved
     assert [r["name"] for r in local_node(app).state["facts"]["acme"]] == [XUI_IP]
+
+
+def test_a_renewal_that_cannot_move_blocks_self_steal():
+    keys = TO_PLAN + ["down"] * STEAL_ROW + ["esc", "q", "enter"]  # the row, its details, out
+    app, term = xui_app(keys)
+    local_node(app).state["facts"]["acme"][0]["blocked"] = "cli.ini"
+    app.run("fix")
+    assert seen(term, t("plan.blocked.acme_standalone"))
+    applies = [cmd for _a, cmd in app.env.transport.log if cmd.startswith("apply")]
+    assert applies == []
 
 
 def test_masking_learns_the_names_of_renewals():

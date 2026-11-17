@@ -284,7 +284,7 @@ def node_renewals(session: Session, target: str) -> list:
     uuid = target.partition(":")[2]
     for data in session.data["input"].nodes:
         if data.node.uuid == uuid:
-            return list((data.facts or {}).get("acme") or [])
+            return [r for r in (data.facts or {}).get("acme") or [] if not r.get("blocked")]
     return []
 
 
