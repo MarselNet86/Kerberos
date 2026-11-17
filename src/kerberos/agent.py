@@ -45,7 +45,7 @@ ERROR_CODES = frozenset(
     """bad_params unknown_command sha_mismatch no_admin_key sshd_test_failed ssh_port
     port_busy bridge_network docker_published mptcp_absent port80_busy certbot_failed
     nginx_test_failed realip_enabled apt_failed change_conflict no_backup backup_damaged
-    not_implemented command_failed panel_not_peer acme_check_failed""".split()
+    not_implemented command_failed panel_not_peer acme_check_failed acme_standalone""".split()
 )
 
 FIX_ID = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*$")
@@ -101,7 +101,7 @@ class System:
         environ: Optional[dict] = None,
         fetch: Optional[Callable[..., tuple]] = None,
         now: Optional[Callable[[], float]] = None,
-        http: Optional[Callable[[str, str], tuple]] = None,
+        http: Optional[Callable[[str, str, str], tuple]] = None,
     ) -> None:
         self.root = root
         self._run = run
@@ -914,10 +914,11 @@ def collect_facts(system: System) -> dict:
                 "name": r["name"],
                 "names": r["names"],
                 "notAfter": cert_not_after(system.path(r["cert"])),
+                **({"blocked": r["reason"]} if r["state"] == "blocked" else {}),
             }
             for r in renewals(system)
-            if not r["moved"]
-        ],  # fmt: skip
+            if r["state"] != "moved"
+        ],
         "watch": {
             "installed": system.exists("/usr/local/sbin/kerberos-watch")
             and system.exists("/etc/cron.d/kerberos-watch")
@@ -980,16 +981,16 @@ def https_get(host: str, port: int, sni: str, path: str, timeout: float = 10.0) 
     return status, headers, body
 
 
-def http_local(host: str, path: str, timeout: float = 10.0) -> tuple:
-    """(status, body) of a GET to nginx on this server, port 80, with the Host a
-    certificate authority would send for `host` (§10.4, K16)."""
+def http_local(address: str, host: str, path: str, timeout: float = 10.0) -> tuple:
+    """(status, body) of a GET to nginx on this server, port 80 of `address`, with the
+    Host a certificate authority would send for `host` (§10.4, K16)."""
     name = f"[{host}]" if ":" in host else host
     request = (
         f"GET {path} HTTP/1.1\r\nHost: {name}\r\nUser-Agent: kerberos-agent\r\n"
         "Connection: close\r\n\r\n"
     )
     data = b""
-    with socket.create_connection(("127.0.0.1", 80), timeout=timeout) as conn:
+    with socket.create_connection((address, 80), timeout=timeout) as conn:
         conn.sendall(request.encode())
         while len(data) < 65536:
             chunk = conn.recv(65536)
@@ -3054,10 +3055,18 @@ def domain_param(params: dict) -> str:
 # it is taken. Once nginx of self-steal holds it, they renew through its webroot.
 ACME_HOME = "/root/.acme.sh"
 CERTBOT_RENEWAL = "/etc/letsencrypt/renewal"
+CERTBOT_CLI = "/etc/letsencrypt/cli.ini"
+CERTBOT_PRE_HOOKS = "/etc/letsencrypt/renewal-hooks/pre"
 CHALLENGES = f"{ACME_ROOT}/.well-known/acme-challenge"
+PROBE_NAME = "kerberos-check"
+PROBE = f"{CHALLENGES}/{PROBE_NAME}"
 ACME_KEY = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
 ACME_B64 = re.compile(r"^__ACME_BASE64__START_(.*)__ACME_BASE64__END_$", re.S)
 STANDALONE = "no"  # acme.sh writes this into Le_Webroot for --standalone
+STOP_WORD = re.compile(r"\b(stop|kill|killall|pkill|quit)\b", re.I)
+# Keys of cli.ini that choose how every certbot renewal proves its names: they beat
+# the renewal files, so a moved file would change nothing.
+CERTBOT_METHOD_KEYS = frozenset({"authenticator", "standalone", "webroot", "webroot-path"})
 
 
 def acme_value(raw: str) -> str:
@@ -3097,9 +3106,10 @@ def acme_roots(values: dict, count: int) -> list:
     return [roots[min(i, len(roots) - 1)] for i in range(count)]
 
 
-def renews_on_80(port: str, pre_hook: str) -> bool:
-    """Standalone on port 80, and no hook frees the port first (one that stops nginx)."""
-    return port.strip().strip("'\"") in ("", "80") and "nginx" not in pre_hook
+def stops_nginx(hook: str) -> bool:
+    """A hook that stops nginx before a renewal: standalone then gets :80 by itself and
+    keeps working. A reload or a test of nginx frees nothing."""
+    return "nginx" in hook.lower() and bool(STOP_WORD.search(hook))
 
 
 def conf_key(line: str) -> str:
@@ -3142,6 +3152,22 @@ def certbot_conf(text: str) -> tuple:
     return top, params
 
 
+def certbot_global(system: System) -> tuple:
+    """(the hooks certbot runs before every renewal, whether cli.ini sets the method)."""
+    hooks = []
+    folder = system.path(CERTBOT_PRE_HOOKS)
+    for entry in sorted(os.listdir(folder)) if os.path.isdir(folder) else []:
+        hooks.append(system.read(f"{CERTBOT_PRE_HOOKS}/{entry}") or "")
+    keys = {}
+    for line in (system.read(CERTBOT_CLI) or "").splitlines():
+        stripped = line.strip()
+        if stripped and stripped[0] not in "#;[":
+            key, _, value = stripped.partition("=")
+            keys[key.strip().lower().replace("_", "-")] = value.strip()
+    hooks.append(keys.get("pre-hook", ""))
+    return "\n".join(hooks), bool(CERTBOT_METHOD_KEYS & set(keys))
+
+
 def our_webroot(path: Optional[str]) -> bool:
     return (path or "").strip().rstrip(", ") == ACME_ROOT
 
@@ -3158,17 +3184,35 @@ def cert_names(path: str) -> list:
 
 
 def renewal_name(name: str) -> Optional[str]:
-    """The name as nginx and the CA see it, or None: what nginx cannot answer for."""
-    name = name.strip().lower().rstrip(".")
+    """The name as nginx and the CA see it (IDN in punycode), or None for what nginx
+    cannot answer for, such as an IPv6 zone index."""
+    name = name.strip().rstrip(".")
+    if "%" in name:
+        return None
     try:
         return ipaddress.ip_address(name).compressed
     except ValueError:
-        return name if DOMAIN.match(name) else None
+        pass
+    try:
+        name = name.encode("idna").decode("ascii").lower()
+    except UnicodeError:
+        return None
+    return name if DOMAIN.match(name) else None
+
+
+def to_move(item: dict) -> dict:
+    """«move», or «blocked» when nginx could not answer for one of its names."""
+    names = [renewal_name(n) for n in item["names"]]
+    if None in names:
+        return {**item, "state": "blocked", "reason": "name"}
+    return {**item, "names": names, "state": "move"}
 
 
 def renewals(system: System) -> list:
-    """Certificates renewed through port 80 of this server: standalone ones (`moved`
-    false: they open :80 themselves) and those already on KERBEROS's webroot."""
+    """Certificates renewed through port 80 of this server, each with its `state`: «move»
+    (it opens :80 itself and self_steal.site moves it), «moved» (on KERBEROS's webroot
+    already) or «blocked» (KERBEROS cannot move it: `reason`). Renewals whose hook stops
+    nginx first get :80 by themselves and are left out."""
     found = []
     home = system.path(ACME_HOME)
     for entry in sorted(os.listdir(home)) if os.path.isdir(home) else []:
@@ -3182,15 +3226,16 @@ def renewals(system: System) -> list:
         if not domains or domains[0] != main:
             continue
         pairs = list(zip(domains, acme_roots(values, len(domains))))
+        item = {"tool": "acme.sh", "name": main, "path": path,
+                "cert": f"{ACME_HOME}/{entry}/{main}.cer"}  # fmt: skip
         standalone = [d for d, root in pairs if root == STANDALONE]
         kept = [d for d, root in pairs if our_webroot(root)]
-        cert = f"{ACME_HOME}/{entry}/{main}.cer"
-        if standalone and renews_on_80(values.get("Le_HTTPPort", ""), values.get("Le_PreHook", "")):
-            found.append({"tool": "acme.sh", "name": main, "path": path, "names": standalone,
-                          "moved": False, "cert": cert})  # fmt: skip
+        on80 = values.get("Le_HTTPPort", "").strip() in ("", "80")
+        if standalone and on80 and not stops_nginx(values.get("Le_PreHook", "")):
+            found.append(to_move({**item, "names": standalone}))
         elif kept:
-            found.append({"tool": "acme.sh", "name": main, "path": path, "names": kept,
-                          "moved": True, "cert": cert})  # fmt: skip
+            found.append({**item, "names": kept, "state": "moved"})
+    hooks, cli_method = certbot_global(system)
     folder = system.path(CERTBOT_RENEWAL)
     for entry in sorted(os.listdir(folder)) if os.path.isdir(folder) else []:
         path = f"{CERTBOT_RENEWAL}/{entry}"
@@ -3204,11 +3249,18 @@ def renewals(system: System) -> list:
         item = {"tool": "certbot", "name": entry[: -len(".conf")], "path": path,
                 "names": names, "cert": top["cert"]}  # fmt: skip
         method = params.get("authenticator")
-        if method == "standalone" and renews_on_80(params.get("http01_port", ""),
-                                                   params.get("pre_hook", "")):  # fmt: skip
-            found.append({**item, "moved": False})
+        on80 = params.get("http01_port", "").strip() in ("", "80")
+        if (
+            method == "standalone"
+            and on80
+            and not stops_nginx(f"{params.get('pre_hook', '')}\n{hooks}")
+        ):
+            if cli_method:  # cli.ini picks the method of every renewal: a moved file would not
+                found.append({**item, "state": "blocked", "reason": "cli.ini"})
+            else:
+                found.append(to_move(item))
         elif method == "webroot" and our_webroot(params.get("webroot_path")):
-            found.append({**item, "moved": True})
+            found.append({**item, "state": "moved"})
     return found
 
 
@@ -3226,41 +3278,50 @@ def set_acme_key(text: str, key: str, value: str) -> str:
     )
 
 
-def certbot_move(text: str) -> str:
-    """[renewalparams] with `authenticator = webroot` and KERBEROS's `webroot_path`."""
+def certbot_move(text: str) -> tuple:
+    """(the conf with `authenticator = webroot` and KERBEROS's `webroot_path`, the entries
+    of [[webroot_map]] it pointed at KERBEROS's webroot too: they beat `webroot_path`)."""
     lines = certbot_lines(text)
     has_path = any(s == "params" and conf_key(line) == "webroot_path" for s, line in lines)
     out = []
+    old_map = {}
     for section, line in lines:
-        key = conf_key(line) if section == "params" else ""
-        if key == "authenticator":
+        key = conf_key(line)
+        if section == "params" and key == "authenticator":
             out.append("authenticator = webroot\n")
             if not has_path:
                 out.append(f"webroot_path = {ACME_ROOT},\n")
-        elif key == "webroot_path":
+        elif section == "params" and key == "webroot_path":
             out.append(f"webroot_path = {ACME_ROOT},\n")
+        elif section == "map" and key:
+            old_map[key] = conf_value(line)
+            out.append(f"{key} = {ACME_ROOT}\n")
         else:
             out.append(line)
-    return "".join(out)
+    return "".join(out), old_map
 
 
-def certbot_back(text: str, before: Optional[str]) -> Optional[str]:
-    """Standalone again; None when the method is no longer KERBEROS's webroot. Entries
-    of [[webroot_map]] that point at the webroot go: certbot writes them after a renewal."""
+def certbot_back(text: str, before: dict) -> Optional[str]:
+    """Standalone again, with the old `webroot_path` and map entries; None when the method
+    is no longer KERBEROS's webroot. Map entries certbot itself wrote for the webroot after
+    a renewal go."""
     lines = certbot_lines(text)
     _top, params = certbot_conf(text)
     if params.get("authenticator") != "webroot" or not our_webroot(params.get("webroot_path")):
         return None
+    old_path = before.get("webroot_path")
+    old_map = before.get("webroot_map") or {}
     out = []
     for section, line in lines:
         key = conf_key(line)
         if section == "params" and key == "authenticator":
             out.append("authenticator = standalone\n")
         elif section == "params" and key == "webroot_path":
-            if before is not None:
-                out.append(f"webroot_path = {before}\n")
+            if old_path is not None:
+                out.append(f"webroot_path = {old_path}\n")
         elif section == "map" and key and our_webroot(conf_value(line)):
-            continue
+            if key in old_map:
+                out.append(f"{key} = {old_map[key]}\n")
         else:
             out.append(line)
     result = []
@@ -3274,36 +3335,41 @@ def certbot_back(text: str, before: Optional[str]) -> Optional[str]:
 
 
 def move_renewals(system: System, record: dict, moves: list) -> None:
-    """Once nginx answers every name with a probe from the webroot, as a CA would ask
-    for it, the renewals move there; each move is in the record before its file."""
-    token = f"kerberos-check-{record['changeId'][:8]}"
-    probe = f"{CHALLENGES}/{token}"
+    """Once nginx answers every name with a probe from the webroot, asked at a public
+    address of the server the way a CA asks, the renewals move there; each move is in
+    the record before its file. Who reaches :80 from outside does not change: these
+    renewals were answered on this port before, by their own listener."""
+    v4, _v6 = parse_ip_addr(system.run(["ip", "-j", "addr", "show"]).stdout)
+    address = v4[0] if v4 else "127.0.0.1"
     content = base64.b32encode(os.urandom(15)).decode().lower()
-    system.write(probe, content + "\n", 0o644)
+    system.write(PROBE, content + "\n", 0o644)
     try:
         for name in dict.fromkeys(n for move in moves for n in move["names"]):
             try:
-                status, body = system.http(name, f"/.well-known/acme-challenge/{token}")
+                status, body = system.http(
+                    address, name, f"/.well-known/acme-challenge/{PROBE_NAME}"
+                )
             except OSError:
                 status, body = 0, ""
             if status != 200 or body.strip() != content:
                 raise AgentError("acme_check_failed", name)
     finally:
-        if system.exists(probe):
-            os.remove(system.path(probe))
+        if system.exists(PROBE):
+            os.remove(system.path(PROBE))
     for move in moves:
         text = system.read(move["path"])
         if text is None:
             raise AgentError("acme_check_failed", move["path"])
         if move["tool"] == "acme.sh":
-            before = acme_conf(text).get("Le_Webroot", "")
+            before: Any = acme_conf(text).get("Le_Webroot", "")
             after = ",".join(ACME_ROOT if r.strip() == STANDALONE else r.strip()
                              for r in before.split(","))  # fmt: skip
             new = set_acme_key(text, "Le_Webroot", after)
         else:
-            before = certbot_conf(text)[1].get("webroot_path")
+            new, old_map = certbot_move(text)
+            before = {"webroot_path": certbot_conf(text)[1].get("webroot_path"),
+                      "webroot_map": old_map}  # fmt: skip
             after = f"{ACME_ROOT},"
-            new = certbot_move(text)
         record.setdefault("renewals", []).append(
             {"path": move["path"], "tool": move["tool"], "before": before, "after": after}
         )
@@ -3350,16 +3416,15 @@ def fix_site(system: System, params: dict) -> Plan:
     if any(s["process"] != "nginx" or not nginx_active for s in on80):
         raise AgentError("port80_busy", ", ".join(s["process"] or "?" for s in on80))
     found = renewals(system)
-    names = []
+    blocked = [r for r in found if r["state"] == "blocked"]
+    if blocked:  # self-steal would leave it without a way to renew
+        raise AgentError("acme_standalone", f"{blocked[0]['name']}: {blocked[0]['reason']}")
+    moves = [r for r in found if r["state"] == "move"]
+    names: list = []
     for item in found:
-        for raw in item["names"]:
-            name = renewal_name(raw)
-            if name is None:
-                raise AgentError("acme_check_failed", raw)  # nginx could not answer for it
+        for name in filter(None, map(renewal_name, item["names"])):
             if name != domain and name not in names:
                 names.append(name)
-    moves = [{**item, "names": [renewal_name(n) for n in item["names"]]}
-             for item in found if not item["moved"]]  # fmt: skip
     served = tuple(f"[{n}]" if ":" in n else n for n in names)
     had_nginx = system.exists("/usr/sbin/nginx")
     plan = Plan("self_steal.site")
@@ -3390,6 +3455,8 @@ def fix_site(system: System, params: dict) -> Plan:
                             ["systemctl", "disable", "--now", "nginx"]]  # fmt: skip
     # Last: nginx answers for their names only once the final config is loaded.
     plan.moves = moves
+    if moves:
+        plan.created.append(PROBE)  # an interrupted apply takes the probe away too
     spec = site_spec(seed)
     plan.details = {"domain": domain, "template": template_hash(page), "siteSeed": seed,
                     "site": {"title": spec["title"], "kind": spec["kind"],

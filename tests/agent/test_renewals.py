@@ -77,10 +77,12 @@ class Nginx:
     def __init__(self, root: str) -> None:
         self.root = root
         self.asked: list = []
+        self.addresses: list = []
         self.down = False
 
-    def __call__(self, host, path):
+    def __call__(self, address, host, path):
         self.asked.append(host)
+        self.addresses.append(address)
         conf = Path(self.root, agent.SITE_CONF.lstrip("/"))
         block = conf.read_text().split("server {")[1] if conf.exists() else ""
         names = re.search(r"server_name ([^;]+);", block)
@@ -244,10 +246,13 @@ def test_standalone_on_another_port_is_not_ours(node):
     assert agent.collect_facts(node)["acme"] == []
 
 
-def test_a_name_nginx_cannot_answer_stops_before_any_change(node, recorder):
-    with_acme(node, alt="*.example.net")
+@pytest.mark.parametrize("alt", ["*.example.net", "fe80::1%eth0", "fe80::1%x;}server{"])
+def test_a_name_nginx_cannot_answer_stops_before_any_change(node, recorder, alt):
+    with_acme(node, alt=alt)
+    [fact] = agent.collect_facts(node)["acme"]
+    assert fact["blocked"] == "name"
     _change, code, answer = apply(node)
-    assert answer["error"]["code"] == "acme_check_failed"
+    assert answer["error"]["code"] == "acme_standalone"
     assert not [c for c in recorder.calls if c[0] in ("nginx", "certbot", "apt-get")]
     assert read(node, agent.SITE_CONF) is None
 
@@ -265,7 +270,7 @@ def test_only_standalone_domains_of_a_conf_move(node):
     write(node, conf, acme_text(domain="old.example.com", alt="www.old.example.com",
                                 webroot="/var/www/html,no"))  # fmt: skip
     [found] = agent.renewals(node)
-    assert (found["names"], found["moved"]) == (["www.old.example.com"], False)
+    assert (found["names"], found["state"]) == (["www.old.example.com"], "move")
     _change, code, answer = apply(node)
     assert code == 0, answer
     assert agent.acme_conf(read(node, conf))["Le_Webroot"] == f"/var/www/html,{agent.ACME_ROOT}"
@@ -287,3 +292,85 @@ def test_a_move_in_the_record_but_not_in_the_file_is_not_left(node):
     agent.revert_renewals(node, record)
     assert "renewalsLeft" not in record["details"]
     assert read(node, ACME_CONF) == acme_text()
+
+
+GLOBAL_STOP = "/etc/letsencrypt/renewal-hooks/pre/stop-nginx.sh"
+
+
+def test_a_global_certbot_hook_that_stops_nginx_keeps_its_renewal(node):
+    with_certbot(node)
+    write(node, GLOBAL_STOP, "#!/bin/sh\nsystemctl stop nginx\n", 0o755)
+    assert agent.collect_facts(node)["acme"] == []
+    _change, code, answer = apply(node)
+    assert code == 0, answer
+    assert read(node, CERTBOT_CONF) == certbot_text()  # it frees :80 itself, as before
+
+
+@pytest.mark.parametrize("hook", ["systemctl reload nginx", "nginx -t && echo ok"])
+def test_a_hook_that_does_not_stop_nginx_does_not_free_the_port(node, hook):
+    with_certbot(node, extra=f"pre_hook = {hook}\n")
+    assert [r["name"] for r in agent.collect_facts(node)["acme"]] == ["old.example.com"]
+    _change, code, answer = apply(node)
+    assert code == 0, answer
+    assert "authenticator = webroot" in read(node, CERTBOT_CONF)
+
+
+@pytest.mark.parametrize("cli", ["authenticator = standalone\n", "standalone = true\n",
+                                 "webroot-path = /var/www/html\n"])  # fmt: skip
+def test_cli_ini_that_picks_the_method_stops_self_steal(node, recorder, cli):
+    with_certbot(node)
+    write(node, agent.CERTBOT_CLI, "rsa-key-size = 4096\n" + cli)
+    [fact] = agent.collect_facts(node)["acme"]
+    assert fact["blocked"] == "cli.ini"
+    _change, code, answer = apply(node)
+    assert answer["error"]["code"] == "acme_standalone"
+    assert read(node, CERTBOT_CONF) == certbot_text()
+    assert not [c for c in recorder.calls if c[0] in ("nginx", "certbot", "apt-get")]
+
+
+def test_an_old_webroot_map_follows_the_move_and_comes_back(node):
+    old = "webroot_path = /var/www/html,\n"
+    text = certbot_text(extra=old) + "[[webroot_map]]\nold.example.com = /var/www/html\n"
+    with_certbot(node)
+    write(node, CERTBOT_CONF, text)
+    change, code, answer = apply(node)
+    assert code == 0, answer
+    moved = read(node, CERTBOT_CONF)
+    # certbot's webroot plugin takes the map before webroot_path: both point at nginx now
+    assert f"old.example.com = {agent.ACME_ROOT}" in moved
+    assert f"webroot_path = {agent.ACME_ROOT}," in moved and "/var/www/html" not in moved
+    code, answer = call(node, ["rollback", change])
+    assert code == 0, answer
+    assert read(node, CERTBOT_CONF) == text
+
+
+def test_an_idn_name_is_served_in_punycode(node, nginx):
+    name = "пример.рф"
+    conf = f"{agent.ACME_HOME}/{name}_ecc/{name}.conf"
+    write(node, conf, acme_text(domain=name))
+    _change, code, answer = apply(node)
+    assert code == 0, answer
+    assert f"server_name {DOMAIN} xn--e1afmkfd.xn--p1ai;" in read(node, agent.SITE_CONF)
+    assert nginx.asked == ["xn--e1afmkfd.xn--p1ai"]
+
+
+def test_the_probe_goes_to_a_public_address_of_the_server(node, nginx, recorder):
+    addresses = [{"ifname": "lo", "addr_info": [{"family": "inet", "local": "127.0.0.1",
+                                                  "scope": "host"}]},
+                 {"ifname": "eth0", "addr_info": [{"family": "inet", "local": IP,
+                                                    "scope": "global"}]}]  # fmt: skip
+    recorder.on(["ip", "-j", "addr", "show"], agent.Result(0, json.dumps(addresses)))
+    with_acme(node)
+    _change, code, answer = apply(node)
+    assert code == 0, answer
+    assert nginx.addresses == [IP]  # nginx picks servers by that address first, as for the CA
+
+
+def test_the_probe_is_part_of_the_change(node):
+    with_acme(node)
+    change, code, _answer = apply(node)
+    assert code == 0
+    record = json.loads(read(node, f"{agent.change_dir(change)}/rollback.json"))
+    entry = next(e for e in record["files"] if e["path"] == agent.PROBE)
+    assert entry["existed"] is False  # an interrupted apply or its rollback removes it
+    assert not os.path.exists(node.path(agent.PROBE))
