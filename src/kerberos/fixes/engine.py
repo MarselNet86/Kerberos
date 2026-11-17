@@ -66,7 +66,9 @@ class Engine:
         # tries the old port from outside (§9.3).
         self.ask_old_port: Callable[[int, str], bool] = lambda _port, _command: False
         # §10.10: the person logs in at the new link of the panel from their browser.
-        self.ask_portal: Callable[[str, Optional[str]], bool] = lambda _link, _login: False
+        self.ask_portal: Callable[[str, Optional[str], str], bool] = lambda _link, _login, _where: (
+            False
+        )
         self._panel_fixes = None
 
     @property

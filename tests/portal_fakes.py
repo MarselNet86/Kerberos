@@ -134,7 +134,12 @@ class FakeCaddy:
         token = headers.get("Authorization", "").startswith("Bearer ")
         if path.startswith("/api/sub/"):
             return HttpResult(404, {}, '{"message":"Not found"}')
-        if path.startswith("/api/") and token:
+        # Past the portal with a token, except /api/auth/*: login and status stay behind it.
+        if (
+            path.startswith("/api/")
+            and token
+            and not (self.portal and path.startswith("/api/auth/"))
+        ):
             return HttpResult(200, {}, '{"response":[]}')
         if not self.portal or (path == "/" and "leak" in self.fail):
             if path == "/":

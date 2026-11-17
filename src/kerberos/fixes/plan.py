@@ -46,7 +46,7 @@ PANEL_NODE_FIXES = {"xhttp.padding"}
 # the login of the portal (§10.10).
 NEEDS_INPUT = {"self_steal", "cdn.edge_only", "panel.portal"}
 # Changes of how the person gets in: never marked by default nor by `a` (§6 S7).
-PERSON_MARKS = {"ssh.port", "xui.panel_hide"}
+PERSON_MARKS = {"ssh.port", "xui.panel_hide", "panel.portal"}
 
 # Fixes this version of KERBEROS can apply; the rest stay findings in the report.
 IMPLEMENTED = {

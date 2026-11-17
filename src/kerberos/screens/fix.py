@@ -668,7 +668,9 @@ def step_apply(app: App, session: Session) -> Any:
     from kerberos.screens.rollback import ask_old_port
 
     engine.ask_old_port = lambda port, command: ask_old_port(app, port, command)
-    engine.ask_portal = lambda link, login: ask_portal(app, link, login)
+    engine.ask_portal = lambda link, login, where: ask_portal(
+        app, link, login, where, cancel=engine.cancel
+    )
     session.data["engine"] = engine
     app.busy = True
 
@@ -719,14 +721,25 @@ def masked_link(app: App, link: str) -> str:
     return app.mask(f"{link.partition('://')[0]}://{head}/") + "…"
 
 
-def ask_portal(app: App, link: str, login: Optional[str]) -> bool:
+def ask_portal(app: App, link: str, login: Optional[str], where: str = "",
+               cancel: Optional[Any] = None) -> bool:  # fmt: skip
     """§10.10: the person logs in at the new link from their browser; Enter: in, Esc: no.
-    Three minutes without an answer count as no: everything goes back."""
+
+    Three minutes without an answer count as no: everything goes back. Ctrl+C means no
+    too and stops the run after it; `q` is no way out here, it would leave the change
+    half confirmed. With masking on, the full link is in the 0600 file `where`.
+    """
     from kerberos.fixes.portal import LOGIN_WAIT
 
-    text = (t("apply.portal", link=masked_link(app, link), login=login) if login
-            else t("apply.xui_panel", link=masked_link(app, link)))  # fmt: skip
-    body = Group(Notice("warning", text), Text(t("apply.portal.keys"), style="muted"))
+    def body(_w: int, _h: int) -> RenderableType:
+        text = (t("apply.portal", link=masked_link(app, link), login=login) if login
+                else t("apply.xui_panel", link=masked_link(app, link)))  # fmt: skip
+        parts: list[RenderableType] = [Notice("warning", text)]
+        if app.env.masker.enabled and where:
+            parts.append(Text(t("apply.portal.masked", path=where), style="muted"))
+        parts.append(Text(t("apply.portal.keys"), style="muted"))
+        return Group(*parts)
+
     deadline = app.env.clock.monotonic() + LOGIN_WAIT
 
     def handle(key: str) -> Optional[str]:
@@ -735,8 +748,15 @@ def ask_portal(app: App, link: str, login: Optional[str]) -> bool:
     def tick() -> Optional[str]:
         return "no" if app.env.clock.monotonic() >= deadline else None
 
-    keys = (("Enter", t("keys.logged_in")), ("Esc", t("keys.not_logged_in")))
-    return app.interact(t("s8.title"), body, keys, handle, timeout=1, tick=tick) == "yes"
+    def interrupt() -> Optional[str]:
+        if cancel is not None:
+            cancel()
+        return "no"
+
+    keys = (("Enter", t("keys.logged_in")), ("Esc", t("keys.not_logged_in")),
+            ("Ctrl+C", t("keys.interrupt")))  # fmt: skip
+    return app.interact(t("s8.title"), body, keys, handle, typing=True, timeout=1,
+                        tick=tick, interrupt=interrupt) == "yes"  # fmt: skip
 
 
 def ask_overwrite(app: App, diff: str) -> bool:

@@ -194,7 +194,14 @@ def roll_back(app: App, run: dict, changes: list, client=None) -> list:
     store = RunStore(app.env.state, app.env.clock)
     # Reverse journal order: changes of one second share a timestamp.
     position = {id(c): i for i, c in enumerate(run["changes"])}
-    for change in sorted(changes, key=lambda c: position.get(id(c), -1), reverse=True):
+    from kerberos.fixes.portal import PORTAL_FIXES
+
+    ordered = sorted(changes, key=lambda c: position.get(id(c), -1), reverse=True)
+    # The way into the panel goes back last: the client of this rollback signed in where
+    # the panel is now, and the panel's other changes still need it there (§10.10).
+    ordered = ([c for c in ordered if c["fixId"] not in PORTAL_FIXES]
+               + [c for c in ordered if c["fixId"] in PORTAL_FIXES])  # fmt: skip
+    for change in ordered:
         nodes = nodes_of(change)
         if nodes & blocked:
             note_failure(change, "rollback_skipped")

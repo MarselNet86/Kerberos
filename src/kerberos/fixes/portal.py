@@ -125,9 +125,23 @@ def split_blocks(text: str) -> Optional[list[Block]]:
     return blocks
 
 
+def strip_comment(line: str) -> str:
+    """The line without its comment: `#` starts one only at the start of a token and
+    outside quotes, so `header X "a#b"` keeps its value."""
+    quote = None
+    for i, ch in enumerate(line):
+        if quote:
+            if ch == quote:
+                quote = None
+        elif ch in ('"', "`"):
+            quote = ch
+        elif ch == "#" and (i == 0 or line[i - 1] in " \t"):
+            return line[:i]
+    return line
+
+
 def uncommented(text: str) -> str:
-    return "\n".join(line.split("#", 1)[0] if not line.lstrip().startswith("#") else ""
-                     for line in text.splitlines())  # fmt: skip
+    return "\n".join(strip_comment(line) for line in text.splitlines())
 
 
 def addresses(head: str) -> list[str]:
@@ -144,11 +158,11 @@ def has_barrier(text: str) -> bool:
 
 
 def panel_block(blocks: list[Block], domain: str) -> Optional[Block]:
+    """The one site block of the panel's domain; None when there are several (another
+    scheme or port would keep the panel open past the portal)."""
     wanted = domain.lower().rstrip(".")
-    for block in blocks:
-        if any(site_name(a) == wanted for a in addresses(block.head)):
-            return block
-    return None
+    found = [b for b in blocks if any(site_name(a) == wanted for a in addresses(b.head))]
+    return found[0] if len(found) == 1 else None
 
 
 def plain_proxy(body: str) -> Optional[tuple[str, list[str]]]:
@@ -222,6 +236,7 @@ SITE_PORTAL = """\
 /{$REMNAWAVE_CUSTOM_LOGIN_ROUTE}/auth
 \t@kerberos_token {
 \t\tpath /api/*
+\t\tnot path /api/auth/*
 \t\theader Authorization "Bearer *"
 \t}
 \troute {
@@ -256,6 +271,8 @@ def portal_caddyfile(text: str, domain: str, users_path: str) -> Optional[str]:
     blocks = split_blocks(text)
     if blocks is None or has_barrier(text):
         return None
+    if re.search(r"^\s*(import|tls\s+/)", uncommented(text), re.M):
+        return None  # files the validation container would not see
     glob = blocks[0] if blocks and not addresses(blocks[0].head) else None
     if glob is not None and re.search(r"^\s*(order|security)\b", uncommented(glob.body), re.M):
         return None
@@ -338,7 +355,8 @@ def compose_with_portal(text: str, service: str) -> Optional[str]:
     for i in range(env + 1, end):
         if not meaningful(lines[i]):
             continue
-        if _indent(lines[i]) <= keys:
+        compact = _indent(lines[i]) == keys and lines[i].lstrip().startswith("- ")
+        if _indent(lines[i]) <= keys and not compact:
             break  # the next key of the service: the list ended
         items.append(i)
     if any(ENV_FILE in lines[i] for i in items):
@@ -387,6 +405,8 @@ def detect_caddy(host: Any, domain: Optional[str]) -> dict:
     machine = host.run(["uname", "-m"], timeout=10)
     if machine.ok and machine.stdout.strip() not in ("x86_64", "amd64"):
         return {"proxy": "arch"}  # the image is built for amd64 only: the pull would fail
+    if not host.run(["docker", "compose", "version"], timeout=20).ok:
+        return {"proxy": "custom"}  # compose v1 only: KERBEROS speaks the plugin
     verdict = {"proxy": "custom"}
     for name in found:
         result = inspect_caddy(host, name, domain)
@@ -490,13 +510,17 @@ class Runner:
         self.event("backup", "running")
         try:
             self.apply(change)
-        except StepFailed as exc:
+        except Exception as exc:  # noqa: BLE001 - the panel's way in is never left half changed
+            code = exc.code if isinstance(exc, StepFailed) else "internal_error"
+            if code == "internal_error":
+                self.store.log(self.engine.run, f"{self.fix_id}: internal error "
+                                                f"{type(exc).__name__}")  # fmt: skip
             error = self.undo(change)
-            rolled = self.engine.settle(change, exc.code, error)
+            rolled = self.engine.settle(change, code, error)
             if rolled:
                 self.engine.failed += 1
             self.event(self.step, "rolled_back" if rolled else "failed",
-                       exc.code if rolled else ROLLBACK_FAILED)  # fmt: skip
+                       code if rolled else ROLLBACK_FAILED)  # fmt: skip
             return False
         self.engine.finish(change, "confirmed")
         self.event("confirm", "ok")
@@ -515,9 +539,10 @@ class Runner:
     def done(self, change: Change) -> None:
         """The data of the run learns what the check saw, only once all of it passed."""
 
-    def wait_login(self, link: str, login: Optional[str]) -> None:
+    def wait_login(self, change: Change, link: str, login: Optional[str]) -> None:
         self.event("confirm", "running")
-        if not self.engine.ask_portal(link, login):
+        # With masking on, the screen hides the secret path: the 0600 snapshot has it.
+        if not self.engine.ask_portal(link, login, change["details"].get("linkPath", "")):
             raise StepFailed("portal_login_failed")
 
 
@@ -599,6 +624,8 @@ class PortalRemnawave(Runner):
         self.host.write_text(self.proxy["composeFile"], new_compose)
         if not self.host.run(self.compose("config", "-q"), timeout=60).ok:
             raise StepFailed("compose_invalid")
+        change["details"]["started"] = True  # from here on Caddy may run the new files
+        self.engine.save()
         if not self.host.run(self.compose("up", "-d", self.proxy["service"]),
                              timeout=COMPOSE_TIMEOUT).ok:  # fmt: skip
             raise StepFailed("compose_failed")
@@ -606,7 +633,7 @@ class PortalRemnawave(Runner):
         self.event("check", "running")
         self.check(address, route, sub_before.status)
         self.event("check", "ok")
-        self.wait_login(f"https://{self.domain}/{route}", login)
+        self.wait_login(change, f"https://{self.domain}/{route}", login)
 
     def backup(self, change: Change, caddy_text: str, compose_text: str) -> None:
         run_dir = self.store.path(self.engine.run["runId"]) / "panel-server"
@@ -697,6 +724,8 @@ def undo_portal(host: Any, change: Change,
         host.write_text(path, original, mode)
     if env_path:
         host.remove(env_path)
+    if not details.get("started"):
+        return None  # Caddy never restarted: it still runs the old files
     command = ["docker", "compose", "--project-name", details["project"],
                "--project-directory", details["composeDir"], "-f", paths["compose"], "up",
                "-d", details["service"]]  # fmt: skip
@@ -747,7 +776,8 @@ class PortalXui(Runner):
         self.info = dict(self.location.info or {})
         parts = urlsplit(self.location.api)
         self.scheme, self.old_path = parts.scheme, parts.path or "/"
-        self.address = self.session.snapshot.nodes[0].address  # §7.6: this server
+        # §7.6: 3x-ui with webDomain answers 403 to any other Host, so the link names it.
+        self.address = self.location.panel_domain or self.session.snapshot.nodes[0].address
 
     def params(self) -> dict:
         return {"port": self.item.params.get("port")}
@@ -801,7 +831,8 @@ class PortalXui(Runner):
             raise StepFailed("portal_check_failed")
         self.event("check", "ok")
         self.new_api = new_api
-        self.wait_login(link, None)
+        self.new_port = new_port
+        self.wait_login(change, link, None)
 
     def local_facts(self) -> dict:
         data = self.session.data["input"]
@@ -819,6 +850,10 @@ class PortalXui(Runner):
         found = discover_xui(self.host)
         if found is not None:
             self.session.location = found
+        old = self.info.get("port")
+        for socket in self.local_facts().get("listening") or []:
+            if socket.get("port") == old and socket.get("proto") == "tcp":
+                socket["port"] = self.new_port
 
 
 def undo_xui_hide(host: Any, change: Change) -> Optional[str]:

@@ -28,7 +28,7 @@ from kerberos.flow import EXIT_OK, EXIT_PARTIAL, EXIT_ROLLBACK_FAILED
 from kerberos.host import CommandResult, FakeHost
 from kerberos.panel.discover import XUI_BIN, XUI_DB
 
-LOGIN, PASSWORD = "admin", "portal-pass-123"
+LOGIN, PASSWORD = "portaladmin7", "portal-pass-123"
 # `a` twice clears the marks; the cursor stops at the last row, the portal's.
 ONLY_LAST_ROW = ["a", "a"] + ["down"] * 60
 CREDS = ["p"] + typed(LOGIN) + ["enter"] + typed(PASSWORD) + ["enter"] + typed(PASSWORD)
@@ -149,7 +149,7 @@ def test_the_portal_row_waits_for_its_login():
     app.run("fix")
     assert seen(term, t("fix.panel.portal.label")) and seen(term, t("plan.portal.none"))
     assert seen(term, t("plan.need_portal"))
-    assert not any(c[:2] == ("docker", "compose") for c in host.calls)
+    assert not any(c[:2] == ("docker", "compose") and "up" in c for c in host.calls)
 
 
 def test_bad_logins_and_passwords_are_refused_in_the_form():
@@ -359,3 +359,155 @@ def test_arm64_server_gets_no_portal_the_image_is_amd64_only():
     host = caddy_host()
     host.on(["uname", "-m"], CommandResult(0, "aarch64\n"))
     assert portal.detect_caddy(host, DOMAIN) == {"proxy": "arch"}
+
+
+# -- the review of K15 -------------------------------------------------------------------
+def test_ctrl_c_at_the_login_prompt_rolls_back_and_stops():
+    from kerberos.flow import EXIT_INTERRUPTED
+
+    app, _term, caddy = remnawave(["ctrl-c", "enter"])
+    assert app.run("fix") == EXIT_INTERRUPTED
+    _run, change = portal_change(app)
+    assert (change["state"], change["error"]) == ("rolled_back", "portal_login_failed")
+    assert untouched(app.env.host) and not caddy.portal
+
+
+def test_q_at_the_login_prompt_is_no_way_out():
+    app, _term, caddy = remnawave(["q", "esc", "enter"])  # q is ignored; Esc says no
+    assert app.run("fix") == EXIT_PARTIAL
+    _run, change = portal_change(app)
+    assert change["error"] == "portal_login_failed" and untouched(app.env.host)
+
+
+def test_an_unexpected_error_rolls_the_portal_back():
+    app, _term, caddy = remnawave(["enter"])
+    host = app.env.host
+    plain_write = host.write_text
+
+    def broken(path, text, mode=None):
+        if path == CADDYFILE and "authenticate with" in text:
+            raise OSError("disk full")
+        plain_write(path, text, mode)
+
+    host.write_text = broken
+    assert app.run("fix") == EXIT_PARTIAL
+    _run, change = portal_change(app)
+    assert (change["state"], change["error"]) == ("rolled_back", "internal_error")
+    assert untouched(host) and not caddy.portal
+
+
+def test_a_failed_config_check_does_not_restart_caddy():
+    app, _term, caddy = remnawave(["enter"], fail={"config"})
+    assert app.run("fix") == EXIT_PARTIAL
+    assert untouched(app.env.host) and caddy.ups == 0
+
+
+def test_the_report_names_no_portal_login():
+    app, _term, _caddy = remnawave(["enter", "enter"])
+    assert app.run("fix") == EXIT_OK
+    run = store_of(app).runs()[0]
+    report = (store_of(app).path(run["runId"]) / "report.md").read_text(encoding="utf-8")
+    assert LOGIN not in report and LOGIN not in json.dumps(run)
+
+
+def test_a_marks_no_portal_row_even_with_its_login():
+    host = build_host()
+    keys = TO_PLAN + ONLY_LAST_ROW + CREDS + ["a", "a", "esc", "q", "enter"]
+    app, term = make_app(keys, host=host, height=46)
+    FakeCaddy(host, app.env.prober)
+    app.run("fix")
+    plan = [f for f in term.frames if t("plan.title") in f]
+    row = [line for line in plan[-1].splitlines() if t("fix.panel.portal.label") in line]
+    assert row and "[✓]" in row[0], "`a` twice leaves the portal row as the person set it"
+
+
+def test_masked_prompt_says_where_the_full_link_is():
+    host = build_host()
+    keys = TO_PLAN + ONLY_LAST_ROW + CREDS + APPLY + ["enter", "enter"]
+    app, term = make_app(keys, host=host, height=46, mask=True)
+    FakeCaddy(host, app.env.prober)
+    assert app.run("fix") == EXIT_OK
+    assert seen(term, "Ссылка скрыта маскировкой")
+
+
+def test_two_blocks_for_the_panel_domain_are_left_alone():
+    two = CADDY_TEXT + "\nhttp://panel.example.com {\n\treverse_proxy remnawave:3000\n}\n"
+    assert portal.portal_caddyfile(two, DOMAIN, "/data/x.json") is None
+
+
+def test_the_token_bypass_keeps_login_and_status_behind_the_portal():
+    new = portal.portal_caddyfile(CADDY_TEXT, DOMAIN, "/data/x.json")
+    matcher = new[new.index("@kerberos_token {") : new.index("}", new.index("@kerberos_token {"))]
+    assert "not path /api/auth/*" in matcher and 'header Authorization "Bearer *"' in matcher
+
+
+def test_a_quoted_hash_is_no_comment():
+    noted = CADDY_TEXT.replace(
+        "\treverse_proxy * http://remnawave:3000",
+        '\theader X-Note "a#b"\n\treverse_proxy * http://remnawave:3000',
+    )
+    new = portal.portal_caddyfile(noted, DOMAIN, "/data/x.json")
+    assert new is not None and '\theader X-Note "a#b"\n' in new
+
+
+@pytest.mark.parametrize(
+    "extra", ["import common.caddy\n", "\ttls /etc/ssl/a.pem /etc/ssl/a.key\n"]
+)
+def test_files_the_validation_cannot_see_are_left_alone(extra):
+    text = CADDY_TEXT.replace(
+        "\treverse_proxy * http://remnawave-subscription-page:3010\n",
+        extra + "\treverse_proxy * http://remnawave-subscription-page:3010\n",
+    )
+    assert portal.portal_caddyfile(text, DOMAIN, "/data/x.json") is None
+
+
+def test_compose_v1_only_is_left_alone():
+    host = caddy_host()
+    host.on(["docker", "compose", "version"], CommandResult(1, "", "unknown command"))
+    assert portal.detect_caddy(host, DOMAIN)["proxy"] == "custom"
+
+
+def test_compact_env_file_list_gets_the_env_file_at_its_indent():
+    compact = COMPOSE_TEXT.replace(
+        "        restart: always\n", "        restart: always\n        env_file:\n        - a.env\n"
+    )
+    new = portal.compose_with_portal(compact, "caddy")
+    assert "        env_file:\n        - a.env\n        - kerberos-portal.env\n" in new
+
+
+def test_xui_link_names_the_panel_domain():
+    from kerberos.demo.fleet import build_host as demo_host
+
+    host = demo_host()
+    app, term = xui(["enter", "enter"], host=host)
+    host.databases[XUI_DB]["webDomain"] = "panel-xui.example.com"
+    app.env.xui_transport.domain = "panel-xui.example.com"
+    assert app.run("fix") == EXIT_OK
+    _run, change = portal_change(app, "xui.panel_hide")
+    assert seen(term, f"panel-xui.example.com:{change['details']['newPort']}/")
+
+
+def test_findings_after_a_3x_ui_move_see_no_stray_old_port():
+    app, _term = xui(["enter", "enter"])
+    assert app.run("fix") == EXIT_OK
+    run = store_of(app).runs()[0]
+    after = next(f for f in run["findingsAfter"] if f["checkId"] == "ports.public")
+    assert not any(str(p).startswith("2053") for p in after["evidence"].get("ports", []))
+
+
+def test_whole_rollback_on_3x_ui_after_a_panel_move_and_a_self_steal():
+    from kerberos.demo.xui import XUI_DOMAIN
+
+    keys = XUI_TO_PLAN + ["a", "a"] + ["down"] * 5 + ["d"] + list(XUI_DOMAIN) + ["enter"]
+    keys += ["down"] * 30 + ["space"] + APPLY + ["enter", "enter"]
+    app, _term = make_app(keys, panel_kind=None, height=44)
+    assert app.run("fix") == EXIT_OK
+    run, _change = portal_change(app, "xui.panel_hide")
+    assert any(c["fixId"] == "xui.reality" and c["state"] == "applied" for c in run["changes"])
+    login = typed("admin") + ["enter"] + typed("pw") + ["enter"]
+    app.env.terminal.feed("enter", "enter", "enter", *login, "x")
+    assert app.run("rollback") == EXIT_OK
+    reality = app.env.xui_transport.stream(1)["realitySettings"]
+    assert XUI_DOMAIN not in reality.get("serverNames", [])
+    settings = app.env.host.databases[XUI_DB]
+    assert (settings["webPort"], settings["webBasePath"]) == ("2053", "/")

@@ -83,10 +83,11 @@ TEXT: dict[str, str] = {
         "Enter: вошёл, оставить    Esc: не вышло, вернуть как было. Без ответа за три "
         "минуты всё вернётся само."
     ),
+    "apply.portal.masked": "Ссылка скрыта маскировкой; полностью она в файле {path}",
     "s9.portal": "Вход в панель теперь: {link}",
     "s9.portal.login": "Логин портала: {login}, пароль тот, что вы ввели",
     "s9.xui_panel": "Панель 3x-ui теперь: {link}",
-    "report.portal": "Вход в панель: {link} (логин портала {login})",
+    "report.portal": "Вход в панель: {link}",
     "report.xui_panel": "Панель 3x-ui: {link}",
     "done.title": "Готово",
     "done.rollback": "Откатить командой:",
