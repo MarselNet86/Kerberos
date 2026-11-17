@@ -46,6 +46,14 @@ def facts(answer: Any) -> dict:
     for item in value["listening"]:
         if not isinstance(item, dict) or not isinstance(item.get("port"), int):
             raise BadAnswer("facts: listening")
+    acme = value.setdefault("acme", [])  # agents before K16 do not send it
+    if not isinstance(acme, list) or not all(
+        isinstance(a, dict)
+        and isinstance(a.get("names"), list)
+        and all(isinstance(n, str) for n in a["names"])
+        for a in acme
+    ):
+        raise BadAnswer("facts: acme")
     return value
 
 

@@ -86,6 +86,11 @@ def render(run: Run, mask: Optional[Callable[[str], str]] = None) -> str:
                 kind = t(f"site.kind.{site['kind']}")
                 colors = {"background": site["background"], "accent": site["accent"]}
                 lines.append("  - " + t("report.site", title=site["title"], kind=kind, **colors))
+            renewals = change["details"].get("renewals")
+            if (change["fixId"] == "self_steal.site" and change["state"] == "applied"
+                    and renewals and not stuck):  # fmt: skip
+                moved = ", ".join(f"{r['name']} ({r['tool']})" for r in renewals)
+                lines.append("  - " + t("report.renewals", names=moved))
             if change["fixId"] == "ssh.port" and change["state"] == "confirmed" and not stuck:
                 node = next((n for n in run["nodes"]
                              if change["target"] == f"node:{n['uuid']}"), None)  # fmt: skip

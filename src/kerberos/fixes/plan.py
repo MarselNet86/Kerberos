@@ -305,6 +305,9 @@ def self_steal_blocker(data: CheckInput, node) -> Optional[str]:
     if any(s["port"] == 80 and s["proto"] == "tcp" and s.get("process") != "nginx"
            for s in listening):  # fmt: skip
         return "port80_busy"
+    # A renewal on :80 that KERBEROS cannot move to nginx would stop renewing (§10.4, K16).
+    if any(r.get("blocked") for r in (node.facts or {}).get("acme") or []):
+        return "acme_standalone"
     on443 = [s for s in listening if s["port"] == 443 and s["proto"] == "tcp"]
     xray = any(is_xray(s.get("process")) for s in on443) or xui_port(data, node, 443)
     if on443 and not xray:
