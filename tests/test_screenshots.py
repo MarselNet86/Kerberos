@@ -32,3 +32,14 @@ def test_readme_shows_the_screens_it_has():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     shown = set(re.findall(r"docs/screens/(s\d\.svg)", readme))
     assert shown == {p.name for p in (ROOT / "docs" / "screens").glob("*.svg")}
+
+
+def test_the_video_scenario_keeps_its_scores():
+    """§12.4: the demo goes from 38 to 77; a new check must not move it unnoticed."""
+    from kerberos.fixes.journal import RunStore
+
+    tool = load_tool()
+    app, _term = tool.app_for(tool.TO_PLAN + tool.APPLY, 40)
+    app.run("fix")
+    run = RunStore(app.env.state, app.env.clock).runs()[0]
+    assert (run["scoreBefore"], run["scoreAfter"]) == (38, 77)

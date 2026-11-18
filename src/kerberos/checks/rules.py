@@ -418,20 +418,27 @@ def kerberos_sites(facts: dict) -> list:
     return [s for s in (facts.get("nginx") or {}).get("sites", []) if s.get("file") == SITE_CONF]
 
 
+# The listener of a renewal in progress is not who holds :80 against it.
+RENEWERS = ("socat", "certbot")
+
+
 @check("acme.port80", "sni", "medium", None, "manual")
 def acme_port80(data: CheckInput) -> list[Finding]:
-    """A certificate renewed by its own listener on :80 while another program holds the
-    port: the renewal fails and the certificate expires (§10.4, K17). Only nodes with such
-    renewals get a finding."""
+    """A certificate renewed by its own listener on :80, with no hook that stops anything
+    first, while another program holds the port over IPv4: the renewal fails and the
+    certificate expires (§10.4, K17). A finding only where that is so."""
     result = []
     for item in with_facts(data):
-        renewals = item.facts.get("acme") or []
-        if not renewals:
-            continue
+        # agents before 0.10 do not say whether a hook frees the port: no data, no finding
+        stuck = [r for r in item.facts.get("acme") or [] if r.get("freesPort") is False]
         holders = sorted({str(s.get("process") or "?") for s in item.facts.get("listening", [])
-                          if s.get("port") == 80 and s.get("proto") == "tcp"})  # fmt: skip
-        names = [n for r in renewals for n in r.get("names", [])]
-        result.append(finding("acme.port80", node_target(item.node), not holders,
+                          if s.get("port") == 80 and s.get("proto") == "tcp"
+                          and ":" not in str(s.get("address", ""))  # IPv6 only: IPv4 is free
+                          and s.get("process") not in RENEWERS})  # fmt: skip
+        if not stuck or not holders:
+            continue
+        names = [n for r in stuck for n in r.get("names", [])]
+        result.append(finding("acme.port80", node_target(item.node), False,
                               {"names": names, "holders": holders}))  # fmt: skip
     return result
 
@@ -439,16 +446,17 @@ def acme_port80(data: CheckInput) -> list[Finding]:
 @check("acme.stop_hook", "sni", "medium", None, "manual")
 def acme_stop_hook(data: CheckInput) -> list[Finding]:
     """A pre-hook certbot runs before every renewal stops nginx, and the self-steal site
-    renews its certificate through nginx: that renewal never passes (§10.4, K17). Only
-    nodes with the site of KERBEROS get a finding."""
+    renews its certificate through nginx: that renewal never passes (§10.4, K17). A finding
+    only where both are so."""
     result = []
     for item in with_facts(data):
+        if not (item.facts.get("certbot") or {}).get("stopsNginx"):
+            continue  # agents before 0.10 do not say: no data, no finding
         sites = kerberos_sites(item.facts)
         if not sites:
             continue
         names = sorted({n for s in sites for n in s.get("serverNames", [])})
-        stops = bool((item.facts.get("certbot") or {}).get("stopsNginx"))
-        result.append(finding("acme.stop_hook", node_target(item.node), not stops,
+        result.append(finding("acme.stop_hook", node_target(item.node), False,
                               {"names": names}))  # fmt: skip
     return result
 

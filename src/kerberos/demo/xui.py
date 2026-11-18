@@ -94,7 +94,7 @@ def xui_node() -> FakeNode:
     # The installer of 3x-ui issues the panel a 6-day certificate on the IP through
     # acme.sh --standalone on :80: self-steal moves its renewal to nginx (§10.4, K16).
     facts["acme"] = [{"tool": "acme.sh", "name": XUI_IP, "names": [XUI_IP],
-                      "notAfter": "2026-11-22T12:00:00Z"}]  # fmt: skip
+                      "notAfter": "2026-11-22T12:00:00Z", "freesPort": False}]  # fmt: skip
     node.state["facts"] = facts
     node.state["sites"] = {}
     node.state["edges"] = []
