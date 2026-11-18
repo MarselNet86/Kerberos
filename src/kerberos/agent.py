@@ -220,9 +220,8 @@ def parse_ip_addr(text: str) -> tuple[list, list]:
 
 def split_host_port(value: str) -> tuple[str, int]:
     host, _, port = value.rpartition(":")
-    host = host.strip("[]")
-    if "%" in host:
-        host = host.split("%", 1)[0]
+    # «[::1]%lo:62789», «127.0.0.53%lo:53»: the interface goes first, then the brackets
+    host = host.split("%", 1)[0].strip("[]")
     try:
         return host, int(port)
     except ValueError:
@@ -267,6 +266,8 @@ def parse_ss_connections(text: str) -> list:
         if len(parts) >= 4:
             peer, _ = split_host_port(parts[3])
             local, port = split_host_port(parts[2])
+            # A dual-stack socket (Xray's «*:443») shows IPv4 clients as ::ffff:198.51.100.7.
+            peer, local = plain_ip(peer), plain_ip(local)
             current = {"peer": peer, "local": local, "port": port, "received": 0, "lastrcv": 0}
             connections.append(current)
     return connections
@@ -934,33 +935,31 @@ def collect_facts(system: System) -> dict:
     }
 
 
-def vpn_port(system: System) -> Optional[int]:
-    """The TCP port Xray answers on from outside: 443 when it holds it, else its first such
-    port; None when Xray listens only on loopback. The cut share means something for VPN
-    connections only: on a panel server 443 is a web server, on a CDN origin nginx holds it
-    and Xray sits on loopback (K18, found on a live server)."""
+def vpn_ports(system: System) -> list:
+    """TCP ports Xray answers on from outside, 443 first; empty when Xray listens only on
+    loopback. The cut share means something for VPN connections only: on a panel server 443
+    is a web server, on a CDN origin nginx holds it and Xray sits on loopback (K18, found on
+    a live server). All of them together: one quiet inbound must not read as 1 cut of 1."""
     ports = set()
     for item in parse_ss_listen(system.run(["ss", "-Hlntup"]).stdout):
         name = str(item.get("process") or "")
         if item["proto"] != "tcp" or not (name == "rw-core" or name.startswith("xray")):
             continue
-        address = str(item.get("address") or "").split("%", 1)[0]
         try:
-            loopback = ipaddress.ip_address(address).is_loopback
+            if ipaddress.ip_address(plain_ip(str(item.get("address") or ""))).is_loopback:
+                continue
         except ValueError:
-            loopback = False  # «*» and the like: every address
-        if not loopback:
-            ports.add(item["port"])
-    if not ports:
-        return None
-    return 443 if 443 in ports else min(ports)
+            continue  # an address the agent cannot read is not counted as public
+        ports.add(item["port"])
+    return sorted(ports, key=lambda p: (p != 443, p))
 
 
 def collect_watch(system: System, port: Optional[int] = None) -> dict:
-    port = vpn_port(system) if port is None else port
+    ports = vpn_ports(system) if port is None else [port]
     connections = []
-    if port:
-        out = system.run(["ss", "-Htin", "state", "established", f"( sport = :{port} )"])
+    if ports:
+        expr = " or ".join(f"sport = :{p}" for p in ports)
+        out = system.run(["ss", "-Htin", "state", "established", f"( {expr} )"])
         connections = parse_ss_connections(out.stdout)
     v4 = [c for c in connections if ":" not in c["peer"]]
     v6 = [c for c in connections if ":" in c["peer"]]
@@ -976,7 +975,8 @@ def collect_watch(system: System, port: Optional[int] = None) -> dict:
     return {
         "protocol": PROTOCOL,
         "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(system.now())),
-        "port": port,
+        "port": ports[0] if ports else None,
+        "ports": ports,
         "v4": watch_family(v4),
         "v6": watch_family(v6),
         "xray": xray,
@@ -3643,8 +3643,9 @@ LOADER.exec_module(AGENT)
 WATCH = AGENT.collect_watch(AGENT.System())
 V4, V6, XRAY = WATCH["v4"], WATCH["v6"], WATCH["xray"]
 NETS = ",".join("%s:%s" % (n["net"], n["count"]) for n in V4["cutNets"] + V6["cutNets"])
-LINE = "%s conn=%d ips=%d cut=%d nets=%s users5m=%s req5m=%s\\n" % (
+LINE = "%s port=%s conn=%d ips=%d cut=%d nets=%s users5m=%s req5m=%s\\n" % (
     WATCH["at"],
+    ",".join(str(p) for p in WATCH["ports"]) or "-",
     V4["connections"] + V6["connections"],
     V4["clientIps"] + V6["clientIps"],
     V4["cut"] + V6["cut"],
