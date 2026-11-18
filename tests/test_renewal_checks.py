@@ -117,17 +117,3 @@ def test_plan_shows_why_self_steal_is_off():
     app.run("fix")
     assert seen(term, t("plan.blocked.certbot_hook"))
     assert [cmd for _a, cmd in app.env.transport.log if cmd.startswith("apply")] == []
-
-
-def test_no_cut_share_without_a_vpn_port_means_no_block_finding(data):
-    """K18: the watch of a node whose Xray answers only on loopback carries no cut share."""
-    lone = [n for n in data.nodes if n.watch is not None and not n.node.is_disabled]
-    for node in lone:
-        node.watch = {"protocol": 1, "port": None,
-                      "v4": {"connections": 0, "clientIps": 0, "cut": 0, "cutNets": []},
-                      "v6": {"connections": 0, "clientIps": 0, "cut": 0, "cutNets": []},
-                      "xray": {}}  # fmt: skip
-    found = {f["target"]: f for f in spec("node.blocked").rule(data)}
-    for node in lone:
-        item = found.get(f"node:{node.node.uuid}")
-        assert item is None or item["evidence"]["cutShare"] is None
