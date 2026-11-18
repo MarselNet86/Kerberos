@@ -920,6 +920,8 @@ def collect_facts(system: System) -> dict:
                 "name": r["name"],
                 "names": r["names"],
                 "notAfter": cert_not_after(system.path(r["cert"])),
+                # A hook stops or kills something first: port 80 is looked after (K17).
+                "freesPort": r.get("freesPort", False),
                 **({"blocked": r["reason"]} if r["state"] == "blocked" else {}),
             }
             for r in renewals(system)
@@ -3112,10 +3114,38 @@ def acme_roots(values: dict, count: int) -> list:
     return [roots[min(i, len(roots) - 1)] for i in range(count)]
 
 
-def stops_nginx(hook: str) -> bool:
-    """A hook that stops nginx before a renewal: standalone then gets :80 by itself and
-    keeps working. A reload or a test of nginx frees nothing."""
-    return "nginx" in hook.lower() and bool(STOP_WORD.search(hook))
+HOOK_SPLIT = re.compile(r"\n|;|&&|\|\|")
+
+
+def hook_commands(hooks: list) -> list:
+    """The commands of hooks, one by one and without comments: «nginx» in a comment, or in
+    another command than the stop, frees nothing (K17)."""
+    commands = []
+    for hook in hooks:
+        for command in HOOK_SPLIT.split(hook or ""):
+            command = command.split("#", 1)[0].strip()
+            if command:
+                commands.append(command)
+    return commands
+
+
+def kills_port80(command: str) -> bool:
+    """`fuser -k 80/tcp`: kills whatever holds the port, nginx included."""
+    low = command.lower()
+    return "fuser" in low and "80/tcp" in low and re.search(r"\s-\w*k", low) is not None
+
+
+def stops_nginx(hooks: list) -> bool:
+    """A hook command that stops nginx before a renewal: standalone then gets :80 by itself
+    and keeps working. A reload or a test of nginx frees nothing."""
+    return any(("nginx" in c.lower() and STOP_WORD.search(c)) or kills_port80(c)
+               for c in hook_commands(hooks))  # fmt: skip
+
+
+def frees_port(hooks: list) -> bool:
+    """A hook command that stops or kills anything before a renewal: whoever set it up looks
+    after port 80 for that renewal (`acme.port80` leaves it alone)."""
+    return any(STOP_WORD.search(c) or kills_port80(c) for c in hook_commands(hooks))
 
 
 def conf_key(line: str) -> str:
@@ -3159,10 +3189,14 @@ def certbot_conf(text: str) -> tuple:
 
 
 def certbot_global(system: System) -> tuple:
-    """(the hooks certbot runs before every renewal, whether cli.ini sets the method)."""
+    """(the pre-hooks certbot runs before every renewal, whether cli.ini sets the method).
+    Like certbot, only executable files of renewal-hooks/pre count, backups ending in «~» not."""
     hooks = []
     folder = system.path(CERTBOT_PRE_HOOKS)
     for entry in sorted(os.listdir(folder)) if os.path.isdir(folder) else []:
+        full = os.path.join(folder, entry)
+        if entry.endswith("~") or not os.path.isfile(full) or not os.access(full, os.X_OK):
+            continue
         hooks.append(system.read(f"{CERTBOT_PRE_HOOKS}/{entry}") or "")
     keys = {}
     for line in (system.read(CERTBOT_CLI) or "").splitlines():
@@ -3171,7 +3205,7 @@ def certbot_global(system: System) -> tuple:
             key, _, value = stripped.partition("=")
             keys[key.strip().lower().replace("_", "-")] = value.strip()
     hooks.append(keys.get("pre-hook", ""))
-    return "\n".join(hooks), bool(CERTBOT_METHOD_KEYS & set(keys))
+    return hooks, bool(CERTBOT_METHOD_KEYS & set(keys))
 
 
 def our_webroot(path: Optional[str]) -> bool:
@@ -3237,8 +3271,9 @@ def renewals(system: System) -> list:
         standalone = [d for d, root in pairs if root == STANDALONE]
         kept = [d for d, root in pairs if our_webroot(root)]
         on80 = values.get("Le_HTTPPort", "").strip() in ("", "80")
-        if standalone and on80 and not stops_nginx(values.get("Le_PreHook", "")):
-            found.append(to_move({**item, "names": standalone}))
+        own = [values.get("Le_PreHook", "")]
+        if standalone and on80 and not stops_nginx(own):
+            found.append(to_move({**item, "names": standalone, "freesPort": frees_port(own)}))
         elif kept:
             found.append({**item, "names": kept, "state": "moved"})
     hooks, cli_method = certbot_global(system)
@@ -3256,11 +3291,9 @@ def renewals(system: System) -> list:
                 "names": names, "cert": top["cert"]}  # fmt: skip
         method = params.get("authenticator")
         on80 = params.get("http01_port", "").strip() in ("", "80")
-        if (
-            method == "standalone"
-            and on80
-            and not stops_nginx(f"{params.get('pre_hook', '')}\n{hooks}")
-        ):
+        effective = [params.get("pre_hook", ""), *hooks]  # its own hook and certbot's global
+        if method == "standalone" and on80 and not stops_nginx(effective):
+            item["freesPort"] = frees_port(effective)
             if cli_method:  # cli.ini picks the method of every renewal: a moved file would not
                 found.append({**item, "state": "blocked", "reason": "cli.ini"})
             else:

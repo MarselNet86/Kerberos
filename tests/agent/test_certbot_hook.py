@@ -45,6 +45,8 @@ HOOK = f"{agent.CERTBOT_PRE_HOOKS}/10-stop-nginx.sh"
         (HOOK, "#!/bin/sh\nnginx -s quit\n"),
         (agent.CERTBOT_CLI, "email = admin@example.com\npre-hook = systemctl stop nginx\n"),
         (agent.CERTBOT_CLI, "pre_hook = pkill nginx\n"),
+        (HOOK, "#!/bin/sh\nfuser -k 80/tcp\n"),  # kills whatever holds :80, nginx too
+        (HOOK, "#!/bin/sh\nset -e\nsystemctl stop nginx && sleep 1\n"),
     ],
 )
 def test_a_hook_that_stops_nginx_is_a_fact(node, path, text):
@@ -58,10 +60,26 @@ def test_a_hook_that_stops_nginx_is_a_fact(node, path, text):
         (HOOK, "#!/bin/sh\nsystemctl reload nginx\n"),
         (HOOK, "#!/bin/sh\nsystemctl stop x-ui\n"),
         (agent.CERTBOT_CLI, "rsa-key-size = 4096\n"),
+        (HOOK, "#!/bin/sh\n# nginx stays up\nsystemctl stop apache2\n"),  # a comment
+        (HOOK, "#!/bin/sh\nsystemctl reload nginx; systemctl stop haproxy\n"),
     ],
 )
 def test_other_hooks_are_not(node, path, text):
     write(node, path, text, 0o755)
+    assert agent.collect_facts(node)["certbot"]["stopsNginx"] is False
+
+
+def test_nginx_and_stop_in_two_hooks_are_not_one_stop(node):
+    write(node, HOOK, "#!/bin/sh\nsystemctl reload nginx\n", 0o755)
+    write(node, f"{agent.CERTBOT_PRE_HOOKS}/20-haproxy.sh", "#!/bin/sh\nsystemctl stop haproxy\n",
+          0o755)  # fmt: skip
+    assert agent.collect_facts(node)["certbot"]["stopsNginx"] is False
+
+
+@pytest.mark.parametrize("name, mode", [("stop-nginx.sh", 0o644), ("stop-nginx.sh~", 0o755)])
+def test_hooks_certbot_does_not_run_do_not_count(node, name, mode):
+    # certbot runs only executable files of renewal-hooks/pre and skips backups ending in «~»
+    write(node, f"{agent.CERTBOT_PRE_HOOKS}/{name}", "#!/bin/sh\nsystemctl stop nginx\n", mode)
     assert agent.collect_facts(node)["certbot"]["stopsNginx"] is False
 
 
