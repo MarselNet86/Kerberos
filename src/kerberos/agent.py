@@ -37,7 +37,7 @@ import time
 from typing import Any, Callable, Optional
 
 PROTOCOL = 1
-AGENT_VERSION = "0.10.0"
+AGENT_VERSION = "0.10.1"
 AGENT_PATH = "/usr/local/sbin/kerberos-agent"
 STATE_DIR = "/var/lib/kerberos"
 
@@ -934,9 +934,34 @@ def collect_facts(system: System) -> dict:
     }
 
 
-def collect_watch(system: System, port: int = 443) -> dict:
-    out = system.run(["ss", "-Htin", "state", "established", f"( sport = :{port} )"])
-    connections = parse_ss_connections(out.stdout)
+def vpn_port(system: System) -> Optional[int]:
+    """The TCP port Xray answers on from outside: 443 when it holds it, else its first such
+    port; None when Xray listens only on loopback. The cut share means something for VPN
+    connections only: on a panel server 443 is a web server, on a CDN origin nginx holds it
+    and Xray sits on loopback (K18, found on a live server)."""
+    ports = set()
+    for item in parse_ss_listen(system.run(["ss", "-Hlntup"]).stdout):
+        name = str(item.get("process") or "")
+        if item["proto"] != "tcp" or not (name == "rw-core" or name.startswith("xray")):
+            continue
+        address = str(item.get("address") or "").split("%", 1)[0]
+        try:
+            loopback = ipaddress.ip_address(address).is_loopback
+        except ValueError:
+            loopback = False  # «*» and the like: every address
+        if not loopback:
+            ports.add(item["port"])
+    if not ports:
+        return None
+    return 443 if 443 in ports else min(ports)
+
+
+def collect_watch(system: System, port: Optional[int] = None) -> dict:
+    port = vpn_port(system) if port is None else port
+    connections = []
+    if port:
+        out = system.run(["ss", "-Htin", "state", "established", f"( sport = :{port} )"])
+        connections = parse_ss_connections(out.stdout)
     v4 = [c for c in connections if ":" not in c["peer"]]
     v6 = [c for c in connections if ":" in c["peer"]]
     log = ""
