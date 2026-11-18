@@ -448,6 +448,24 @@ TEXT: dict[str, str] = {
     ),
     "check.site.same_template.title": "Одинаковые сайты-заглушки на нескольких нодах",
     "check.site.same_template.threat": "По одинаковой странице сканер связывает ноды между собой",
+    "check.acme.port80.title": "Сертификат продлевается через порт 80, а порт занят",
+    "check.acme.port80.threat": (
+        "Продление не пройдёт, сертификат истечёт, и то, что на нём работает, "
+        "перестанет открываться"
+    ),
+    "check.acme.port80.how": (
+        "переведите продление на webroot программы, которая держит порт 80, "
+        "или остановите её хуком перед продлением; «Свой домен» KERBEROS переводит "
+        "такие продления на nginx сам"
+    ),
+    "check.acme.stop_hook.title": "certbot останавливает nginx перед каждым продлением",
+    "check.acme.stop_hook.threat": (
+        "Сертификат «Своего домена» продлевается через nginx и не продлится: истечёт через 90 дней"
+    ),
+    "check.acme.stop_hook.how": (
+        "перенесите остановку nginx из /etc/letsencrypt/renewal-hooks/pre или cli.ini в pre_hook "
+        "и post_hook только тех сертификатов, которым она нужна"
+    ),
     "check.ssh.password.title": "Вход на сервер по паролю",
     "check.ssh.password.threat": (
         "Пароль перебирают тысячи раз в сутки; удачный подбор отдаёт сервер целиком"
@@ -739,6 +757,7 @@ TEXT: dict[str, str] = {
     "plan.blocked.shared_profile": "профиль общий с другими нодами: нужен свой профиль",
     "plan.blocked.port80_busy": "порт 80 занят не nginx",
     "plan.blocked.acme_standalone": "продление сертификата через порт 80 не перевести на nginx",
+    "plan.blocked.certbot_hook": "общий хук certbot останавливает nginx перед продлением",
     "plan.blocked.port443": "порт 443 держит не Xray",
     "plan.finalize.manual": "Старые имена уберёт kerberos finalize через сутки (f: автоматически)",
     "plan.finalize.auto": "Старые имена уберутся автоматически через сутки (f: вручную)",
@@ -757,6 +776,7 @@ TEXT: dict[str, str] = {
     "error.certbot_failed": "сертификат не выпустился",
     "error.acme_check_failed": "nginx не отдал пробный файл для продления сертификатов",
     "error.acme_standalone": "сертификат продлевается через порт 80, и его не перевести на nginx",
+    "error.certbot_hook": "общий хук certbot останавливает nginx, сертификат домена не продлится",
     "error.nginx_test_failed": "nginx -t не принял конфиг",
     "error.check_failed": "проверка снаружи не увидела свой домен",
     "error.node_offline": "нода не подключилась к панели после смены профиля",

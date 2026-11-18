@@ -412,6 +412,47 @@ def xhttp_path(inbound: dict, host: Host) -> str:
     return path if path.startswith("/") else "/" + path
 
 
+def kerberos_sites(facts: dict) -> list:
+    from kerberos.agent import SITE_CONF
+
+    return [s for s in (facts.get("nginx") or {}).get("sites", []) if s.get("file") == SITE_CONF]
+
+
+@check("acme.port80", "sni", "medium", None, "manual")
+def acme_port80(data: CheckInput) -> list[Finding]:
+    """A certificate renewed by its own listener on :80 while another program holds the
+    port: the renewal fails and the certificate expires (§10.4, K17). Only nodes with such
+    renewals get a finding."""
+    result = []
+    for item in with_facts(data):
+        renewals = item.facts.get("acme") or []
+        if not renewals:
+            continue
+        holders = sorted({str(s.get("process") or "?") for s in item.facts.get("listening", [])
+                          if s.get("port") == 80 and s.get("proto") == "tcp"})  # fmt: skip
+        names = [n for r in renewals for n in r.get("names", [])]
+        result.append(finding("acme.port80", node_target(item.node), not holders,
+                              {"names": names, "holders": holders}))  # fmt: skip
+    return result
+
+
+@check("acme.stop_hook", "sni", "medium", None, "manual")
+def acme_stop_hook(data: CheckInput) -> list[Finding]:
+    """A pre-hook certbot runs before every renewal stops nginx, and the self-steal site
+    renews its certificate through nginx: that renewal never passes (§10.4, K17). Only
+    nodes with the site of KERBEROS get a finding."""
+    result = []
+    for item in with_facts(data):
+        sites = kerberos_sites(item.facts)
+        if not sites:
+            continue
+        names = sorted({n for s in sites for n in s.get("serverNames", [])})
+        stops = bool((item.facts.get("certbot") or {}).get("stopsNginx"))
+        result.append(finding("acme.stop_hook", node_target(item.node), not stops,
+                              {"names": names}))  # fmt: skip
+    return result
+
+
 @check("cdn.origin_direct", "scanning", "high", "cdn.edge_only", "fix", panels=REMNAWAVE)
 def cdn_origin_direct(data: CheckInput) -> list[Finding]:
     result = []
