@@ -2,7 +2,8 @@
   "acme": [],
   "certbot": {
     "certs": [],
-    "installed": false
+    "installed": false,
+    "stopsNginx": false
   },
   "fail2ban": {
     "installed": false,

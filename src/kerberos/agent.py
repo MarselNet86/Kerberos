@@ -37,7 +37,7 @@ import time
 from typing import Any, Callable, Optional
 
 PROTOCOL = 1
-AGENT_VERSION = "0.9.0"
+AGENT_VERSION = "0.10.0"
 AGENT_PATH = "/usr/local/sbin/kerberos-agent"
 STATE_DIR = "/var/lib/kerberos"
 
@@ -45,7 +45,8 @@ ERROR_CODES = frozenset(
     """bad_params unknown_command sha_mismatch no_admin_key sshd_test_failed ssh_port
     port_busy bridge_network docker_published mptcp_absent port80_busy certbot_failed
     nginx_test_failed realip_enabled apt_failed change_conflict no_backup backup_damaged
-    not_implemented command_failed panel_not_peer acme_check_failed acme_standalone""".split()
+    not_implemented command_failed panel_not_peer acme_check_failed acme_standalone
+    certbot_hook""".split()
 )
 
 FIX_ID = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*$")
@@ -906,7 +907,12 @@ def collect_facts(system: System) -> dict:
             "realip": nginx["realip"],
             "sites": nginx["sites"],
         },
-        "certbot": {"installed": system.exists("/usr/bin/certbot"), "certs": certs},
+        "certbot": {
+            "installed": system.exists("/usr/bin/certbot"),
+            "certs": certs,
+            # A pre-hook of every renewal stops nginx: renewals through nginx fail (§10.4, K17).
+            "stopsNginx": stops_nginx(certbot_global(system)[0]),
+        },
         # Renewals that would stop working once nginx holds :80 (self_steal.site, §10.4).
         "acme": [
             {
@@ -3415,6 +3421,9 @@ def fix_site(system: System, params: dict) -> Plan:
     # host networking may hold :80 under the same name.
     if any(s["process"] != "nginx" or not nginx_active for s in on80):
         raise AgentError("port80_busy", ", ".join(s["process"] or "?" for s in on80))
+    hooks, _cli_method = certbot_global(system)
+    if stops_nginx(hooks):  # the domain's own renewal goes through nginx: it would never pass
+        raise AgentError("certbot_hook", "a certbot pre-hook of every renewal stops nginx")
     found = renewals(system)
     blocked = [r for r in found if r["state"] == "blocked"]
     if blocked:  # self-steal would leave it without a way to renew
