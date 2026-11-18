@@ -28,6 +28,9 @@ SECTION_10_2 = {
     "node.blocked", "watch.missing",
 }  # fmt: skip
 XUI_ONLY = {"xui.panel_exposed", "xui.panel_tls", "xui.panel_2fa"}  # §7.6, test_xui_model.py
+# K17: findings only on nodes with renewals on :80 or the site of KERBEROS; the demo fleet has
+# neither, so its score (38 → 77, §12.4) stays. Covered in test_renewal_checks.py.
+RENEWALS = {"acme.port80", "acme.stop_hook"}
 
 
 @pytest.fixture(scope="module")
@@ -41,7 +44,7 @@ def results(data, check_id):
 
 def test_registry_is_section_10_2():
     run_checks(demo_input()[1])  # registers the rules
-    assert {item.check_id for item in REGISTRY} == SECTION_10_2 | XUI_ONLY
+    assert {item.check_id for item in REGISTRY} == SECTION_10_2 | XUI_ONLY | RENEWALS
 
 
 @pytest.mark.parametrize("check_id", sorted(SECTION_10_2))

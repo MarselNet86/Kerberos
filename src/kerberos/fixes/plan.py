@@ -305,6 +305,9 @@ def self_steal_blocker(data: CheckInput, node) -> Optional[str]:
     if any(s["port"] == 80 and s["proto"] == "tcp" and s.get("process") != "nginx"
            for s in listening):  # fmt: skip
         return "port80_busy"
+    # The domain's certificate renews through nginx, which this hook stops (§10.4, K17).
+    if ((node.facts or {}).get("certbot") or {}).get("stopsNginx"):
+        return "certbot_hook"
     # A renewal on :80 that KERBEROS cannot move to nginx would stop renewing (§10.4, K16).
     if any(r.get("blocked") for r in (node.facts or {}).get("acme") or []):
         return "acme_standalone"

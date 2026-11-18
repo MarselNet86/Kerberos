@@ -71,7 +71,7 @@ def base_facts(address: str) -> dict:
             "letsencryptMounted": False,
         },  # fmt: skip
         "nginx": {"installed": False, "realip": False, "sites": []},
-        "certbot": {"installed": False, "certs": []},
+        "certbot": {"installed": False, "certs": [], "stopsNginx": False},
         "acme": [],
         "watch": {"installed": False},
     }

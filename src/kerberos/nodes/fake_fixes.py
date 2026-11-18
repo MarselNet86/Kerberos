@@ -200,6 +200,8 @@ def apply_site(node: FakeNode, params: dict, change_id: str) -> tuple[dict, Call
         raise NodeAgentError("port80_busy", "port 80")
     if node.state.get("certbot_fails"):
         raise NodeAgentError("certbot_failed", "challenge failed")
+    if (facts.get("certbot") or {}).get("stopsNginx"):
+        raise NodeAgentError("certbot_hook", "a certbot pre-hook of every renewal stops nginx")
     # Renewals that open :80 themselves move to the webroot of nginx (§10.4, K16).
     moved = copy.deepcopy(facts.get("acme") or [])
     blocked = [r for r in moved if r.get("blocked")]
@@ -220,6 +222,7 @@ def apply_site(node: FakeNode, params: dict, change_id: str) -> tuple[dict, Call
                           "listen": ["127.0.0.1:8445 ssl http2"]}]}  # fmt: skip
     certs = [c for c in facts["certbot"].get("certs", []) if c["domain"] != domain]
     facts["certbot"] = {
+        **facts["certbot"],
         "installed": True,
         "certs": certs + [{"domain": domain, "notAfter": "2027-02-14T00:00:00Z"}],
     }

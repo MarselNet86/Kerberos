@@ -138,10 +138,11 @@ def test_facts_name_the_renewals_that_need_port_80(node):
     with_certbot(node)
     not_after = agent.cert_not_after(str(CERTS / "ip.pem"))
     assert agent.collect_facts(node)["acme"] == [
-        {"tool": "acme.sh", "name": IP, "names": [IP], "notAfter": not_after},
+        {"tool": "acme.sh", "name": IP, "names": [IP], "notAfter": not_after,
+         "freesPort": False},
         {"tool": "certbot", "name": "old.example.com",
          "names": ["old.example.com", "www.old.example.com"],
-         "notAfter": agent.cert_not_after(str(CERTS / "old-example.pem"))},
+         "notAfter": agent.cert_not_after(str(CERTS / "old-example.pem")), "freesPort": False},
     ]  # fmt: skip
 
 
@@ -297,13 +298,15 @@ def test_a_move_in_the_record_but_not_in_the_file_is_not_left(node):
 GLOBAL_STOP = "/etc/letsencrypt/renewal-hooks/pre/stop-nginx.sh"
 
 
-def test_a_global_certbot_hook_that_stops_nginx_keeps_its_renewal(node):
+def test_a_global_certbot_hook_that_stops_nginx_keeps_its_renewal(node, recorder):
     with_certbot(node)
     write(node, GLOBAL_STOP, "#!/bin/sh\nsystemctl stop nginx\n", 0o755)
-    assert agent.collect_facts(node)["acme"] == []
+    assert agent.collect_facts(node)["acme"] == []  # it frees :80 itself, as before
+    # ...but the domain's own certificate would renew through the nginx it stops (K17)
     _change, code, answer = apply(node)
-    assert code == 0, answer
-    assert read(node, CERTBOT_CONF) == certbot_text()  # it frees :80 itself, as before
+    assert answer["error"]["code"] == "certbot_hook"
+    assert read(node, CERTBOT_CONF) == certbot_text()
+    assert not [c for c in recorder.calls if c[0] in ("nginx", "certbot", "apt-get")]
 
 
 @pytest.mark.parametrize("hook", ["systemctl reload nginx", "nginx -t && echo ok"])
@@ -374,3 +377,14 @@ def test_the_probe_is_part_of_the_change(node):
     entry = next(e for e in record["files"] if e["path"] == agent.PROBE)
     assert entry["existed"] is False  # an interrupted apply or its rollback removes it
     assert not os.path.exists(node.path(agent.PROBE))
+
+
+def test_a_hook_that_stops_another_holder_frees_the_port_yet_still_moves(node):
+    # It stops caddy, not nginx: behind self-steal's nginx it would fail, so it moves (K16);
+    # where caddy holds :80 today it works, so acme.port80 leaves it alone (K17).
+    with_acme(node, pre_hook="systemctl stop caddy")
+    [fact] = agent.collect_facts(node)["acme"]
+    assert fact["freesPort"] is True
+    _change, code, answer = apply(node)
+    assert code == 0, answer
+    assert agent.acme_conf(read(node, ACME_CONF))["Le_Webroot"] == agent.ACME_ROOT
