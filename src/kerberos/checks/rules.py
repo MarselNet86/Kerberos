@@ -813,12 +813,16 @@ def reserve_same_asn(data: CheckInput) -> list[Finding]:
     return result
 
 
+# Below this many connections the share of cut ones says nothing: 1 of 1 is not 100 % (K18).
+MIN_WATCH_CONNECTIONS = 20
+
+
 def cut_share(watch: Optional[dict]) -> Optional[float]:
     if not watch:
         return None
     total = sum((watch.get(f) or {}).get("connections", 0) for f in ("v4", "v6"))
     cut = sum((watch.get(f) or {}).get("cut", 0) for f in ("v4", "v6"))
-    return cut / total if total else None
+    return cut / total if total >= MIN_WATCH_CONNECTIONS else None
 
 
 @check("node.blocked", "reserves", "high", None, "manual")

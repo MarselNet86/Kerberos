@@ -1,5 +1,8 @@
 {
   "port": 443,
+  "ports": [
+    443
+  ],
   "protocol": 1,
   "v4": {
     "clientIps": 3,
