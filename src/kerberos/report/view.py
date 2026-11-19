@@ -49,7 +49,10 @@ def action(finding: Finding) -> tuple[str, str]:
     if item.kind == "fix" and finding["fixId"]:
         return t("action.fix"), "ok"
     if item.kind == "fix":
-        return t("action.partial"), "risk.medium"
+        # The fix does not apply here (no Caddy of §10.10 for panel.public, padding half set):
+        # what to do by hand, in the words of that check (K19).
+        manual = TEXT.get(f"check.{finding['checkId']}.manual") or how
+        return t("action.manual", how=manual), "risk.medium"
     if item.kind == "explain":
         return t("action.explain", how=how), "muted"
     if item.kind == "plan":
