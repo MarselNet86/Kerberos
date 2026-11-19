@@ -19,201 +19,201 @@
         font-weight: 700;
     }
 
-    .terminal-1329668912-matrix {
+    .terminal-3460632106-matrix {
         font-family: Fira Code, monospace;
         font-size: 20px;
         line-height: 24.4px;
         font-variant-east-asian: full-width;
     }
 
-    .terminal-1329668912-title {
+    .terminal-3460632106-title {
         font-size: 18px;
         font-weight: bold;
         font-family: arial;
     }
 
-    .terminal-1329668912-r1 { fill: #cc555a;font-weight: bold }
-.terminal-1329668912-r2 { fill: #c5c8c6 }
-.terminal-1329668912-r3 { fill: #c5c8c6;font-weight: bold }
-.terminal-1329668912-r4 { fill: #808080 }
-.terminal-1329668912-r5 { fill: #d0b344;font-weight: bold }
-.terminal-1329668912-r6 { fill: #98a84b;font-weight: bold }
-.terminal-1329668912-r7 { fill: #808080;font-weight: bold }
+    .terminal-3460632106-r1 { fill: #cc555a;font-weight: bold }
+.terminal-3460632106-r2 { fill: #c5c8c6 }
+.terminal-3460632106-r3 { fill: #c5c8c6;font-weight: bold }
+.terminal-3460632106-r4 { fill: #808080 }
+.terminal-3460632106-r5 { fill: #d0b344;font-weight: bold }
+.terminal-3460632106-r6 { fill: #98a84b;font-weight: bold }
+.terminal-3460632106-r7 { fill: #808080;font-weight: bold }
     </style>
 
     <defs>
-    <clipPath id="terminal-1329668912-clip-terminal">
+    <clipPath id="terminal-3460632106-clip-terminal">
       <rect x="0" y="0" width="1219.0" height="975.0" />
     </clipPath>
-    <clipPath id="terminal-1329668912-line-0">
+    <clipPath id="terminal-3460632106-line-0">
     <rect x="0" y="1.5" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-1">
+<clipPath id="terminal-3460632106-line-1">
     <rect x="0" y="25.9" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-2">
+<clipPath id="terminal-3460632106-line-2">
     <rect x="0" y="50.3" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-3">
+<clipPath id="terminal-3460632106-line-3">
     <rect x="0" y="74.7" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-4">
+<clipPath id="terminal-3460632106-line-4">
     <rect x="0" y="99.1" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-5">
+<clipPath id="terminal-3460632106-line-5">
     <rect x="0" y="123.5" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-6">
+<clipPath id="terminal-3460632106-line-6">
     <rect x="0" y="147.9" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-7">
+<clipPath id="terminal-3460632106-line-7">
     <rect x="0" y="172.3" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-8">
+<clipPath id="terminal-3460632106-line-8">
     <rect x="0" y="196.7" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-9">
+<clipPath id="terminal-3460632106-line-9">
     <rect x="0" y="221.1" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-10">
+<clipPath id="terminal-3460632106-line-10">
     <rect x="0" y="245.5" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-11">
+<clipPath id="terminal-3460632106-line-11">
     <rect x="0" y="269.9" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-12">
+<clipPath id="terminal-3460632106-line-12">
     <rect x="0" y="294.3" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-13">
+<clipPath id="terminal-3460632106-line-13">
     <rect x="0" y="318.7" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-14">
+<clipPath id="terminal-3460632106-line-14">
     <rect x="0" y="343.1" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-15">
+<clipPath id="terminal-3460632106-line-15">
     <rect x="0" y="367.5" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-16">
+<clipPath id="terminal-3460632106-line-16">
     <rect x="0" y="391.9" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-17">
+<clipPath id="terminal-3460632106-line-17">
     <rect x="0" y="416.3" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-18">
+<clipPath id="terminal-3460632106-line-18">
     <rect x="0" y="440.7" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-19">
+<clipPath id="terminal-3460632106-line-19">
     <rect x="0" y="465.1" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-20">
+<clipPath id="terminal-3460632106-line-20">
     <rect x="0" y="489.5" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-21">
+<clipPath id="terminal-3460632106-line-21">
     <rect x="0" y="513.9" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-22">
+<clipPath id="terminal-3460632106-line-22">
     <rect x="0" y="538.3" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-23">
+<clipPath id="terminal-3460632106-line-23">
     <rect x="0" y="562.7" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-24">
+<clipPath id="terminal-3460632106-line-24">
     <rect x="0" y="587.1" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-25">
+<clipPath id="terminal-3460632106-line-25">
     <rect x="0" y="611.5" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-26">
+<clipPath id="terminal-3460632106-line-26">
     <rect x="0" y="635.9" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-27">
+<clipPath id="terminal-3460632106-line-27">
     <rect x="0" y="660.3" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-28">
+<clipPath id="terminal-3460632106-line-28">
     <rect x="0" y="684.7" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-29">
+<clipPath id="terminal-3460632106-line-29">
     <rect x="0" y="709.1" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-30">
+<clipPath id="terminal-3460632106-line-30">
     <rect x="0" y="733.5" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-31">
+<clipPath id="terminal-3460632106-line-31">
     <rect x="0" y="757.9" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-32">
+<clipPath id="terminal-3460632106-line-32">
     <rect x="0" y="782.3" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-33">
+<clipPath id="terminal-3460632106-line-33">
     <rect x="0" y="806.7" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-34">
+<clipPath id="terminal-3460632106-line-34">
     <rect x="0" y="831.1" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-35">
+<clipPath id="terminal-3460632106-line-35">
     <rect x="0" y="855.5" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-36">
+<clipPath id="terminal-3460632106-line-36">
     <rect x="0" y="879.9" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-37">
+<clipPath id="terminal-3460632106-line-37">
     <rect x="0" y="904.3" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-1329668912-line-38">
+<clipPath id="terminal-3460632106-line-38">
     <rect x="0" y="928.7" width="1220" height="24.65"/>
             </clipPath>
     </defs>
 
-    <rect fill="#292929" stroke="rgba(255,255,255,0.35)" stroke-width="1" x="1" y="1" width="1236" height="1024" rx="8"/><text class="terminal-1329668912-title" fill="#c5c8c6" text-anchor="middle" x="618" y="27">kerberos</text>
+    <rect fill="#292929" stroke="rgba(255,255,255,0.35)" stroke-width="1" x="1" y="1" width="1236" height="1024" rx="8"/><text class="terminal-3460632106-title" fill="#c5c8c6" text-anchor="middle" x="618" y="27">kerberos</text>
             <g transform="translate(26,22)">
             <circle cx="0" cy="0" r="7" fill="#ff5f57"/>
             <circle cx="22" cy="0" r="7" fill="#febc2e"/>
             <circle cx="44" cy="0" r="7" fill="#28c840"/>
             </g>
         
-    <g transform="translate(9, 41)" clip-path="url(#terminal-1329668912-clip-terminal)">
+    <g transform="translate(9, 41)" clip-path="url(#terminal-3460632106-clip-terminal)">
     
-    <g class="terminal-1329668912-matrix">
-    <text class="terminal-1329668912-r1" x="0" y="20" textLength="146.4" clip-path="url(#terminal-1329668912-line-0)">///&#160;kerberos</text><text class="terminal-1329668912-r3" x="170.8" y="20" textLength="73.2" clip-path="url(#terminal-1329668912-line-0)">Готово</text><text class="terminal-1329668912-r4" x="1012.6" y="20" textLength="207.4" clip-path="url(#terminal-1329668912-line-0)">демо&#160;·&#160;маскировка</text><text class="terminal-1329668912-r2" x="1220" y="20" textLength="12.2" clip-path="url(#terminal-1329668912-line-0)">
-</text><text class="terminal-1329668912-r4" x="0" y="44.4" textLength="1220" clip-path="url(#terminal-1329668912-line-1)">────────────────────────────────────────────────────────────────────────────────────────────────────</text><text class="terminal-1329668912-r2" x="1220" y="44.4" textLength="12.2" clip-path="url(#terminal-1329668912-line-1)">
-</text><text class="terminal-1329668912-r5" x="12.2" y="68.8" textLength="353.8" clip-path="url(#terminal-1329668912-line-2)">╭───────────────────────────╮</text><text class="terminal-1329668912-r6" x="390.4" y="68.8" textLength="793" clip-path="url(#terminal-1329668912-line-2)">Применено:&#160;49&#160;из&#160;49.&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="terminal-1329668912-r2" x="1220" y="68.8" textLength="12.2" clip-path="url(#terminal-1329668912-line-2)">
-</text><text class="terminal-1329668912-r5" x="12.2" y="93.2" textLength="12.2" clip-path="url(#terminal-1329668912-line-3)">│</text><text class="terminal-1329668912-r5" x="36.6" y="93.2" textLength="305" clip-path="url(#terminal-1329668912-line-3)">▀▀█&#160;▀▀█&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="terminal-1329668912-r5" x="353.8" y="93.2" textLength="12.2" clip-path="url(#terminal-1329668912-line-3)">│</text><text class="terminal-1329668912-r3" x="390.4" y="93.2" textLength="793" clip-path="url(#terminal-1329668912-line-3)">Осталось:&#160;21.&#160;Можно&#160;исправить&#160;следующим&#160;запуском:&#160;5.&#160;Вручную:&#160;16.</text><text class="terminal-1329668912-r2" x="1220" y="93.2" textLength="12.2" clip-path="url(#terminal-1329668912-line-3)">
-</text><text class="terminal-1329668912-r5" x="12.2" y="117.6" textLength="12.2" clip-path="url(#terminal-1329668912-line-4)">│</text><text class="terminal-1329668912-r5" x="36.6" y="117.6" textLength="305" clip-path="url(#terminal-1329668912-line-4)">&#160;&#160;█&#160;&#160;&#160;█&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="terminal-1329668912-r5" x="353.8" y="117.6" textLength="12.2" clip-path="url(#terminal-1329668912-line-4)">│</text><text class="terminal-1329668912-r4" x="390.4" y="117.6" textLength="793" clip-path="url(#terminal-1329668912-line-4)">Без&#160;доступа,&#160;проверены&#160;только&#160;со&#160;стороны&#160;панели:&#160;kz-1&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="terminal-1329668912-r2" x="1220" y="117.6" textLength="12.2" clip-path="url(#terminal-1329668912-line-4)">
-</text><text class="terminal-1329668912-r5" x="12.2" y="142" textLength="12.2" clip-path="url(#terminal-1329668912-line-5)">│</text><text class="terminal-1329668912-r5" x="36.6" y="142" textLength="305" clip-path="url(#terminal-1329668912-line-5)">&#160;&#160;▀&#160;&#160;&#160;▀&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="terminal-1329668912-r5" x="353.8" y="142" textLength="12.2" clip-path="url(#terminal-1329668912-line-5)">│</text><text class="terminal-1329668912-r2" x="1220" y="142" textLength="12.2" clip-path="url(#terminal-1329668912-line-5)">
-</text><text class="terminal-1329668912-r5" x="12.2" y="166.4" textLength="12.2" clip-path="url(#terminal-1329668912-line-6)">│</text><text class="terminal-1329668912-r3" x="36.6" y="166.4" textLength="305" clip-path="url(#terminal-1329668912-line-6)">Защищённость&#160;77&#160;из&#160;100&#160;&#160;&#160;</text><text class="terminal-1329668912-r5" x="353.8" y="166.4" textLength="12.2" clip-path="url(#terminal-1329668912-line-6)">│</text><text class="terminal-1329668912-r2" x="1220" y="166.4" textLength="12.2" clip-path="url(#terminal-1329668912-line-6)">
-</text><text class="terminal-1329668912-r5" x="12.2" y="190.8" textLength="12.2" clip-path="url(#terminal-1329668912-line-7)">│</text><text class="terminal-1329668912-r5" x="36.6" y="190.8" textLength="183" clip-path="url(#terminal-1329668912-line-7)">███████████████</text><text class="terminal-1329668912-r7" x="219.6" y="190.8" textLength="61" clip-path="url(#terminal-1329668912-line-7)">░░░░░</text><text class="terminal-1329668912-r5" x="353.8" y="190.8" textLength="12.2" clip-path="url(#terminal-1329668912-line-7)">│</text><text class="terminal-1329668912-r2" x="1220" y="190.8" textLength="12.2" clip-path="url(#terminal-1329668912-line-7)">
-</text><text class="terminal-1329668912-r5" x="12.2" y="215.2" textLength="12.2" clip-path="url(#terminal-1329668912-line-8)">│</text><text class="terminal-1329668912-r5" x="36.6" y="215.2" textLength="305" clip-path="url(#terminal-1329668912-line-8)">Защита&#160;есть,&#160;но&#160;не&#160;полная</text><text class="terminal-1329668912-r5" x="353.8" y="215.2" textLength="12.2" clip-path="url(#terminal-1329668912-line-8)">│</text><text class="terminal-1329668912-r2" x="1220" y="215.2" textLength="12.2" clip-path="url(#terminal-1329668912-line-8)">
-</text><text class="terminal-1329668912-r5" x="12.2" y="239.6" textLength="12.2" clip-path="url(#terminal-1329668912-line-9)">│</text><text class="terminal-1329668912-r2" x="36.6" y="239.6" textLength="305" clip-path="url(#terminal-1329668912-line-9)">было&#160;38,&#160;стало&#160;77&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="terminal-1329668912-r5" x="353.8" y="239.6" textLength="12.2" clip-path="url(#terminal-1329668912-line-9)">│</text><text class="terminal-1329668912-r2" x="1220" y="239.6" textLength="12.2" clip-path="url(#terminal-1329668912-line-9)">
-</text><text class="terminal-1329668912-r5" x="12.2" y="264" textLength="353.8" clip-path="url(#terminal-1329668912-line-10)">╰───────────────────────────╯</text><text class="terminal-1329668912-r2" x="1220" y="264" textLength="12.2" clip-path="url(#terminal-1329668912-line-10)">
-</text><text class="terminal-1329668912-r4" x="12.2" y="288.4" textLength="915" clip-path="url(#terminal-1329668912-line-11)">Отчёт&#160;сохранён:&#160;/tmp/kerberos-dew9ywu0/runs/20261116T120000Z-de83/report.md</text><text class="terminal-1329668912-r2" x="1220" y="288.4" textLength="12.2" clip-path="url(#terminal-1329668912-line-11)">
-</text><text class="terminal-1329668912-r1" x="12.2" y="312.8" textLength="622.2" clip-path="url(#terminal-1329668912-line-12)">┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓</text><text class="terminal-1329668912-r2" x="1220" y="312.8" textLength="12.2" clip-path="url(#terminal-1329668912-line-12)">
-</text><text class="terminal-1329668912-r1" x="12.2" y="337.2" textLength="12.2" clip-path="url(#terminal-1329668912-line-13)">┃</text><text class="terminal-1329668912-r1" x="36.6" y="337.2" textLength="353.8" clip-path="url(#terminal-1329668912-line-13)">Новый&#160;порт&#160;SSH&#160;на&#160;nl-1:&#160;23446</text><text class="terminal-1329668912-r1" x="622.2" y="337.2" textLength="12.2" clip-path="url(#terminal-1329668912-line-13)">┃</text><text class="terminal-1329668912-r2" x="1220" y="337.2" textLength="12.2" clip-path="url(#terminal-1329668912-line-13)">
-</text><text class="terminal-1329668912-r1" x="12.2" y="361.6" textLength="12.2" clip-path="url(#terminal-1329668912-line-14)">┃</text><text class="terminal-1329668912-r3" x="36.6" y="361.6" textLength="561.2" clip-path="url(#terminal-1329668912-line-14)">Входить&#160;теперь:&#160;ssh&#160;-p&#160;23446&#160;root@203.0.113.10</text><text class="terminal-1329668912-r1" x="622.2" y="361.6" textLength="12.2" clip-path="url(#terminal-1329668912-line-14)">┃</text><text class="terminal-1329668912-r2" x="1220" y="361.6" textLength="12.2" clip-path="url(#terminal-1329668912-line-14)">
-</text><text class="terminal-1329668912-r1" x="12.2" y="386" textLength="12.2" clip-path="url(#terminal-1329668912-line-15)">┃</text><text class="terminal-1329668912-r1" x="36.6" y="386" textLength="353.8" clip-path="url(#terminal-1329668912-line-15)">Новый&#160;порт&#160;SSH&#160;на&#160;nl-2:&#160;23505</text><text class="terminal-1329668912-r1" x="622.2" y="386" textLength="12.2" clip-path="url(#terminal-1329668912-line-15)">┃</text><text class="terminal-1329668912-r2" x="1220" y="386" textLength="12.2" clip-path="url(#terminal-1329668912-line-15)">
-</text><text class="terminal-1329668912-r1" x="12.2" y="410.4" textLength="12.2" clip-path="url(#terminal-1329668912-line-16)">┃</text><text class="terminal-1329668912-r3" x="36.6" y="410.4" textLength="561.2" clip-path="url(#terminal-1329668912-line-16)">Входить&#160;теперь:&#160;ssh&#160;-p&#160;23505&#160;root@203.0.113.11</text><text class="terminal-1329668912-r1" x="622.2" y="410.4" textLength="12.2" clip-path="url(#terminal-1329668912-line-16)">┃</text><text class="terminal-1329668912-r2" x="1220" y="410.4" textLength="12.2" clip-path="url(#terminal-1329668912-line-16)">
-</text><text class="terminal-1329668912-r1" x="12.2" y="434.8" textLength="12.2" clip-path="url(#terminal-1329668912-line-17)">┃</text><text class="terminal-1329668912-r1" x="36.6" y="434.8" textLength="353.8" clip-path="url(#terminal-1329668912-line-17)">Новый&#160;порт&#160;SSH&#160;на&#160;de-1:&#160;30411</text><text class="terminal-1329668912-r1" x="622.2" y="434.8" textLength="12.2" clip-path="url(#terminal-1329668912-line-17)">┃</text><text class="terminal-1329668912-r2" x="1220" y="434.8" textLength="12.2" clip-path="url(#terminal-1329668912-line-17)">
-</text><text class="terminal-1329668912-r1" x="12.2" y="459.2" textLength="12.2" clip-path="url(#terminal-1329668912-line-18)">┃</text><text class="terminal-1329668912-r3" x="36.6" y="459.2" textLength="573.4" clip-path="url(#terminal-1329668912-line-18)">Входить&#160;теперь:&#160;ssh&#160;-p&#160;30411&#160;root@198.51.100.20</text><text class="terminal-1329668912-r1" x="622.2" y="459.2" textLength="12.2" clip-path="url(#terminal-1329668912-line-18)">┃</text><text class="terminal-1329668912-r2" x="1220" y="459.2" textLength="12.2" clip-path="url(#terminal-1329668912-line-18)">
-</text><text class="terminal-1329668912-r1" x="12.2" y="483.6" textLength="12.2" clip-path="url(#terminal-1329668912-line-19)">┃</text><text class="terminal-1329668912-r1" x="36.6" y="483.6" textLength="353.8" clip-path="url(#terminal-1329668912-line-19)">Новый&#160;порт&#160;SSH&#160;на&#160;fi-1:&#160;26627</text><text class="terminal-1329668912-r1" x="622.2" y="483.6" textLength="12.2" clip-path="url(#terminal-1329668912-line-19)">┃</text><text class="terminal-1329668912-r2" x="1220" y="483.6" textLength="12.2" clip-path="url(#terminal-1329668912-line-19)">
-</text><text class="terminal-1329668912-r1" x="12.2" y="508" textLength="12.2" clip-path="url(#terminal-1329668912-line-20)">┃</text><text class="terminal-1329668912-r3" x="36.6" y="508" textLength="573.4" clip-path="url(#terminal-1329668912-line-20)">Входить&#160;теперь:&#160;ssh&#160;-p&#160;26627&#160;root@198.51.100.77</text><text class="terminal-1329668912-r1" x="622.2" y="508" textLength="12.2" clip-path="url(#terminal-1329668912-line-20)">┃</text><text class="terminal-1329668912-r2" x="1220" y="508" textLength="12.2" clip-path="url(#terminal-1329668912-line-20)">
-</text><text class="terminal-1329668912-r1" x="12.2" y="532.4" textLength="622.2" clip-path="url(#terminal-1329668912-line-21)">┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛</text><text class="terminal-1329668912-r2" x="1220" y="532.4" textLength="12.2" clip-path="url(#terminal-1329668912-line-21)">
-</text><text class="terminal-1329668912-r2" x="1220" y="556.8" textLength="12.2" clip-path="url(#terminal-1329668912-line-22)">
-</text><text class="terminal-1329668912-r6" x="12.2" y="581.2" textLength="488" clip-path="url(#terminal-1329668912-line-23)">✓&#160;nl-1:&#160;Добавить&#160;ваш&#160;ключ&#160;администратора</text><text class="terminal-1329668912-r2" x="1220" y="581.2" textLength="12.2" clip-path="url(#terminal-1329668912-line-23)">
-</text><text class="terminal-1329668912-r6" x="12.2" y="605.6" textLength="549" clip-path="url(#terminal-1329668912-line-24)">✓&#160;nl-1:&#160;Выключить&#160;MPTCP,&#160;отбрасывать&#160;IP-опции</text><text class="terminal-1329668912-r2" x="1220" y="605.6" textLength="12.2" clip-path="url(#terminal-1329668912-line-24)">
-</text><text class="terminal-1329668912-r6" x="12.2" y="630" textLength="524.6" clip-path="url(#terminal-1329668912-line-25)">✓&#160;nl-1:&#160;Защитить&#160;SSH&#160;от&#160;перебора&#160;(fail2ban)</text><text class="terminal-1329668912-r2" x="1220" y="630" textLength="12.2" clip-path="url(#terminal-1329668912-line-25)">
-</text><text class="terminal-1329668912-r6" x="12.2" y="654.4" textLength="463.6" clip-path="url(#terminal-1329668912-line-26)">✓&#160;nl-1:&#160;Открыть&#160;API&#160;ноды&#160;только&#160;панели</text><text class="terminal-1329668912-r2" x="1220" y="654.4" textLength="12.2" clip-path="url(#terminal-1329668912-line-26)">
-</text><text class="terminal-1329668912-r6" x="12.2" y="678.8" textLength="463.6" clip-path="url(#terminal-1329668912-line-27)">✓&#160;nl-1:&#160;Закрыть&#160;лишние&#160;порты:&#160;8080/tcp</text><text class="terminal-1329668912-r2" x="1220" y="678.8" textLength="12.2" clip-path="url(#terminal-1329668912-line-27)">
-</text><text class="terminal-1329668912-r6" x="12.2" y="703.2" textLength="329.4" clip-path="url(#terminal-1329668912-line-28)">✓&#160;nl-1:&#160;Новые&#160;ключи&#160;сервера</text><text class="terminal-1329668912-r2" x="1220" y="703.2" textLength="12.2" clip-path="url(#terminal-1329668912-line-28)">
-</text><text class="terminal-1329668912-r4" x="12.2" y="727.6" textLength="1134.6" clip-path="url(#terminal-1329668912-line-29)">&#160;&#160;Новый&#160;ключ&#160;сервера:&#160;SHA256:lOadNAIxyl0Nq9aKTgGUKwNHwMHZ2Gk6Zb6ngEuJGTo.&#160;Кто&#160;входил&#160;на&#160;него&#160;</text><text class="terminal-1329668912-r2" x="1220" y="727.6" textLength="12.2" clip-path="url(#terminal-1329668912-line-29)">
-</text><text class="terminal-1329668912-r4" x="61" y="752" textLength="414.8" clip-path="url(#terminal-1329668912-line-30)">раньше:&#160;ssh-keygen&#160;-R&#160;203.0.113.10</text><text class="terminal-1329668912-r2" x="1220" y="752" textLength="12.2" clip-path="url(#terminal-1329668912-line-30)">
-</text><text class="terminal-1329668912-r6" x="12.2" y="776.4" textLength="341.6" clip-path="url(#terminal-1329668912-line-31)">✓&#160;nl-1:&#160;Вход&#160;только&#160;по&#160;ключу</text><text class="terminal-1329668912-r2" x="1220" y="776.4" textLength="12.2" clip-path="url(#terminal-1329668912-line-31)">
-</text><text class="terminal-1329668912-r4" x="12.2" y="800.8" textLength="195.2" clip-path="url(#terminal-1329668912-line-32)">строки&#160;1–9&#160;из&#160;61</text><text class="terminal-1329668912-r2" x="1220" y="800.8" textLength="12.2" clip-path="url(#terminal-1329668912-line-32)">
-</text><text class="terminal-1329668912-r2" x="1220" y="825.2" textLength="12.2" clip-path="url(#terminal-1329668912-line-33)">
-</text><text class="terminal-1329668912-r3" x="12.2" y="849.6" textLength="512.4" clip-path="url(#terminal-1329668912-line-34)">Через&#160;сутки&#160;уберите&#160;старые&#160;имена&#160;командой:</text><text class="terminal-1329668912-r2" x="1220" y="849.6" textLength="12.2" clip-path="url(#terminal-1329668912-line-34)">
-</text><text class="terminal-1329668912-r2" x="12.2" y="874" textLength="707.6" clip-path="url(#terminal-1329668912-line-35)">sudo&#160;/opt/kerberos/kerberos&#160;finalize&#160;20261116T120000Z-de83</text><text class="terminal-1329668912-r2" x="1220" y="874" textLength="12.2" clip-path="url(#terminal-1329668912-line-35)">
-</text><text class="terminal-1329668912-r3" x="12.2" y="898.4" textLength="219.6" clip-path="url(#terminal-1329668912-line-36)">Откатить&#160;командой:</text><text class="terminal-1329668912-r2" x="1220" y="898.4" textLength="12.2" clip-path="url(#terminal-1329668912-line-36)">
-</text><text class="terminal-1329668912-r2" x="12.2" y="922.8" textLength="707.6" clip-path="url(#terminal-1329668912-line-37)">sudo&#160;/opt/kerberos/kerberos&#160;rollback&#160;20261116T120000Z-de83</text><text class="terminal-1329668912-r2" x="1220" y="922.8" textLength="12.2" clip-path="url(#terminal-1329668912-line-37)">
-</text><text class="terminal-1329668912-r4" x="0" y="947.2" textLength="1220" clip-path="url(#terminal-1329668912-line-38)">────────────────────────────────────────────────────────────────────────────────────────────────────</text><text class="terminal-1329668912-r2" x="1220" y="947.2" textLength="12.2" clip-path="url(#terminal-1329668912-line-38)">
-</text><text class="terminal-1329668912-r3" x="0" y="971.6" textLength="85.4" clip-path="url(#terminal-1329668912-line-39)">↑↓&#160;PgDn</text><text class="terminal-1329668912-r4" x="85.4" y="971.6" textLength="122" clip-path="url(#terminal-1329668912-line-39)">&#160;прокрутка</text><text class="terminal-1329668912-r3" x="231.8" y="971.6" textLength="12.2" clip-path="url(#terminal-1329668912-line-39)">s</text><text class="terminal-1329668912-r4" x="244" y="971.6" textLength="170.8" clip-path="url(#terminal-1329668912-line-39)">&#160;отчёт&#160;целиком</text><text class="terminal-1329668912-r3" x="439.2" y="971.6" textLength="61" clip-path="url(#terminal-1329668912-line-39)">Enter</text><text class="terminal-1329668912-r4" x="500.2" y="971.6" textLength="85.4" clip-path="url(#terminal-1329668912-line-39)">&#160;в&#160;меню</text><text class="terminal-1329668912-r3" x="610" y="971.6" textLength="12.2" clip-path="url(#terminal-1329668912-line-39)">?</text><text class="terminal-1329668912-r4" x="622.2" y="971.6" textLength="85.4" clip-path="url(#terminal-1329668912-line-39)">&#160;помощь</text>
+    <g class="terminal-3460632106-matrix">
+    <text class="terminal-3460632106-r1" x="0" y="20" textLength="146.4" clip-path="url(#terminal-3460632106-line-0)">///&#160;kerberos</text><text class="terminal-3460632106-r3" x="170.8" y="20" textLength="73.2" clip-path="url(#terminal-3460632106-line-0)">Готово</text><text class="terminal-3460632106-r4" x="1012.6" y="20" textLength="207.4" clip-path="url(#terminal-3460632106-line-0)">демо&#160;·&#160;маскировка</text><text class="terminal-3460632106-r2" x="1220" y="20" textLength="12.2" clip-path="url(#terminal-3460632106-line-0)">
+</text><text class="terminal-3460632106-r4" x="0" y="44.4" textLength="1220" clip-path="url(#terminal-3460632106-line-1)">────────────────────────────────────────────────────────────────────────────────────────────────────</text><text class="terminal-3460632106-r2" x="1220" y="44.4" textLength="12.2" clip-path="url(#terminal-3460632106-line-1)">
+</text><text class="terminal-3460632106-r5" x="12.2" y="68.8" textLength="353.8" clip-path="url(#terminal-3460632106-line-2)">╭───────────────────────────╮</text><text class="terminal-3460632106-r6" x="390.4" y="68.8" textLength="817.4" clip-path="url(#terminal-3460632106-line-2)">Применено:&#160;49&#160;из&#160;49.&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="terminal-3460632106-r2" x="1220" y="68.8" textLength="12.2" clip-path="url(#terminal-3460632106-line-2)">
+</text><text class="terminal-3460632106-r5" x="12.2" y="93.2" textLength="12.2" clip-path="url(#terminal-3460632106-line-3)">│</text><text class="terminal-3460632106-r5" x="36.6" y="93.2" textLength="305" clip-path="url(#terminal-3460632106-line-3)">▀▀█&#160;▀▀█&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="terminal-3460632106-r5" x="353.8" y="93.2" textLength="12.2" clip-path="url(#terminal-3460632106-line-3)">│</text><text class="terminal-3460632106-r3" x="390.4" y="93.2" textLength="817.4" clip-path="url(#terminal-3460632106-line-3)">Осталось:&#160;21.&#160;Можно&#160;исправить&#160;следующим&#160;запуском:&#160;5.&#160;Вручную:&#160;16.&#160;&#160;</text><text class="terminal-3460632106-r2" x="1220" y="93.2" textLength="12.2" clip-path="url(#terminal-3460632106-line-3)">
+</text><text class="terminal-3460632106-r5" x="12.2" y="117.6" textLength="12.2" clip-path="url(#terminal-3460632106-line-4)">│</text><text class="terminal-3460632106-r5" x="36.6" y="117.6" textLength="305" clip-path="url(#terminal-3460632106-line-4)">&#160;&#160;█&#160;&#160;&#160;█&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="terminal-3460632106-r5" x="353.8" y="117.6" textLength="12.2" clip-path="url(#terminal-3460632106-line-4)">│</text><text class="terminal-3460632106-r4" x="390.4" y="117.6" textLength="817.4" clip-path="url(#terminal-3460632106-line-4)">Без&#160;доступа,&#160;проверены&#160;только&#160;со&#160;стороны&#160;панели:&#160;kz-1&#160;(не&#160;отвечает&#160;</text><text class="terminal-3460632106-r2" x="1220" y="117.6" textLength="12.2" clip-path="url(#terminal-3460632106-line-4)">
+</text><text class="terminal-3460632106-r5" x="12.2" y="142" textLength="12.2" clip-path="url(#terminal-3460632106-line-5)">│</text><text class="terminal-3460632106-r5" x="36.6" y="142" textLength="305" clip-path="url(#terminal-3460632106-line-5)">&#160;&#160;▀&#160;&#160;&#160;▀&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="terminal-3460632106-r5" x="353.8" y="142" textLength="12.2" clip-path="url(#terminal-3460632106-line-5)">│</text><text class="terminal-3460632106-r4" x="390.4" y="142" textLength="817.4" clip-path="url(#terminal-3460632106-line-5)">по&#160;SSH)&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="terminal-3460632106-r2" x="1220" y="142" textLength="12.2" clip-path="url(#terminal-3460632106-line-5)">
+</text><text class="terminal-3460632106-r5" x="12.2" y="166.4" textLength="12.2" clip-path="url(#terminal-3460632106-line-6)">│</text><text class="terminal-3460632106-r3" x="36.6" y="166.4" textLength="305" clip-path="url(#terminal-3460632106-line-6)">Защищённость&#160;77&#160;из&#160;100&#160;&#160;&#160;</text><text class="terminal-3460632106-r5" x="353.8" y="166.4" textLength="12.2" clip-path="url(#terminal-3460632106-line-6)">│</text><text class="terminal-3460632106-r2" x="1220" y="166.4" textLength="12.2" clip-path="url(#terminal-3460632106-line-6)">
+</text><text class="terminal-3460632106-r5" x="12.2" y="190.8" textLength="12.2" clip-path="url(#terminal-3460632106-line-7)">│</text><text class="terminal-3460632106-r5" x="36.6" y="190.8" textLength="183" clip-path="url(#terminal-3460632106-line-7)">███████████████</text><text class="terminal-3460632106-r7" x="219.6" y="190.8" textLength="61" clip-path="url(#terminal-3460632106-line-7)">░░░░░</text><text class="terminal-3460632106-r5" x="353.8" y="190.8" textLength="12.2" clip-path="url(#terminal-3460632106-line-7)">│</text><text class="terminal-3460632106-r2" x="1220" y="190.8" textLength="12.2" clip-path="url(#terminal-3460632106-line-7)">
+</text><text class="terminal-3460632106-r5" x="12.2" y="215.2" textLength="12.2" clip-path="url(#terminal-3460632106-line-8)">│</text><text class="terminal-3460632106-r5" x="36.6" y="215.2" textLength="305" clip-path="url(#terminal-3460632106-line-8)">Защита&#160;есть,&#160;но&#160;не&#160;полная</text><text class="terminal-3460632106-r5" x="353.8" y="215.2" textLength="12.2" clip-path="url(#terminal-3460632106-line-8)">│</text><text class="terminal-3460632106-r2" x="1220" y="215.2" textLength="12.2" clip-path="url(#terminal-3460632106-line-8)">
+</text><text class="terminal-3460632106-r5" x="12.2" y="239.6" textLength="12.2" clip-path="url(#terminal-3460632106-line-9)">│</text><text class="terminal-3460632106-r2" x="36.6" y="239.6" textLength="305" clip-path="url(#terminal-3460632106-line-9)">было&#160;38,&#160;стало&#160;77&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="terminal-3460632106-r5" x="353.8" y="239.6" textLength="12.2" clip-path="url(#terminal-3460632106-line-9)">│</text><text class="terminal-3460632106-r2" x="1220" y="239.6" textLength="12.2" clip-path="url(#terminal-3460632106-line-9)">
+</text><text class="terminal-3460632106-r5" x="12.2" y="264" textLength="353.8" clip-path="url(#terminal-3460632106-line-10)">╰───────────────────────────╯</text><text class="terminal-3460632106-r2" x="1220" y="264" textLength="12.2" clip-path="url(#terminal-3460632106-line-10)">
+</text><text class="terminal-3460632106-r4" x="12.2" y="288.4" textLength="915" clip-path="url(#terminal-3460632106-line-11)">Отчёт&#160;сохранён:&#160;/tmp/kerberos-p7sripe6/runs/20261116T120000Z-365f/report.md</text><text class="terminal-3460632106-r2" x="1220" y="288.4" textLength="12.2" clip-path="url(#terminal-3460632106-line-11)">
+</text><text class="terminal-3460632106-r1" x="12.2" y="312.8" textLength="622.2" clip-path="url(#terminal-3460632106-line-12)">┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓</text><text class="terminal-3460632106-r2" x="1220" y="312.8" textLength="12.2" clip-path="url(#terminal-3460632106-line-12)">
+</text><text class="terminal-3460632106-r1" x="12.2" y="337.2" textLength="12.2" clip-path="url(#terminal-3460632106-line-13)">┃</text><text class="terminal-3460632106-r1" x="36.6" y="337.2" textLength="353.8" clip-path="url(#terminal-3460632106-line-13)">Новый&#160;порт&#160;SSH&#160;на&#160;nl-1:&#160;23446</text><text class="terminal-3460632106-r1" x="622.2" y="337.2" textLength="12.2" clip-path="url(#terminal-3460632106-line-13)">┃</text><text class="terminal-3460632106-r2" x="1220" y="337.2" textLength="12.2" clip-path="url(#terminal-3460632106-line-13)">
+</text><text class="terminal-3460632106-r1" x="12.2" y="361.6" textLength="12.2" clip-path="url(#terminal-3460632106-line-14)">┃</text><text class="terminal-3460632106-r3" x="36.6" y="361.6" textLength="561.2" clip-path="url(#terminal-3460632106-line-14)">Входить&#160;теперь:&#160;ssh&#160;-p&#160;23446&#160;root@203.0.113.10</text><text class="terminal-3460632106-r1" x="622.2" y="361.6" textLength="12.2" clip-path="url(#terminal-3460632106-line-14)">┃</text><text class="terminal-3460632106-r2" x="1220" y="361.6" textLength="12.2" clip-path="url(#terminal-3460632106-line-14)">
+</text><text class="terminal-3460632106-r1" x="12.2" y="386" textLength="12.2" clip-path="url(#terminal-3460632106-line-15)">┃</text><text class="terminal-3460632106-r1" x="36.6" y="386" textLength="353.8" clip-path="url(#terminal-3460632106-line-15)">Новый&#160;порт&#160;SSH&#160;на&#160;nl-2:&#160;23505</text><text class="terminal-3460632106-r1" x="622.2" y="386" textLength="12.2" clip-path="url(#terminal-3460632106-line-15)">┃</text><text class="terminal-3460632106-r2" x="1220" y="386" textLength="12.2" clip-path="url(#terminal-3460632106-line-15)">
+</text><text class="terminal-3460632106-r1" x="12.2" y="410.4" textLength="12.2" clip-path="url(#terminal-3460632106-line-16)">┃</text><text class="terminal-3460632106-r3" x="36.6" y="410.4" textLength="561.2" clip-path="url(#terminal-3460632106-line-16)">Входить&#160;теперь:&#160;ssh&#160;-p&#160;23505&#160;root@203.0.113.11</text><text class="terminal-3460632106-r1" x="622.2" y="410.4" textLength="12.2" clip-path="url(#terminal-3460632106-line-16)">┃</text><text class="terminal-3460632106-r2" x="1220" y="410.4" textLength="12.2" clip-path="url(#terminal-3460632106-line-16)">
+</text><text class="terminal-3460632106-r1" x="12.2" y="434.8" textLength="12.2" clip-path="url(#terminal-3460632106-line-17)">┃</text><text class="terminal-3460632106-r1" x="36.6" y="434.8" textLength="353.8" clip-path="url(#terminal-3460632106-line-17)">Новый&#160;порт&#160;SSH&#160;на&#160;de-1:&#160;30411</text><text class="terminal-3460632106-r1" x="622.2" y="434.8" textLength="12.2" clip-path="url(#terminal-3460632106-line-17)">┃</text><text class="terminal-3460632106-r2" x="1220" y="434.8" textLength="12.2" clip-path="url(#terminal-3460632106-line-17)">
+</text><text class="terminal-3460632106-r1" x="12.2" y="459.2" textLength="12.2" clip-path="url(#terminal-3460632106-line-18)">┃</text><text class="terminal-3460632106-r3" x="36.6" y="459.2" textLength="573.4" clip-path="url(#terminal-3460632106-line-18)">Входить&#160;теперь:&#160;ssh&#160;-p&#160;30411&#160;root@198.51.100.20</text><text class="terminal-3460632106-r1" x="622.2" y="459.2" textLength="12.2" clip-path="url(#terminal-3460632106-line-18)">┃</text><text class="terminal-3460632106-r2" x="1220" y="459.2" textLength="12.2" clip-path="url(#terminal-3460632106-line-18)">
+</text><text class="terminal-3460632106-r1" x="12.2" y="483.6" textLength="12.2" clip-path="url(#terminal-3460632106-line-19)">┃</text><text class="terminal-3460632106-r1" x="36.6" y="483.6" textLength="353.8" clip-path="url(#terminal-3460632106-line-19)">Новый&#160;порт&#160;SSH&#160;на&#160;fi-1:&#160;26627</text><text class="terminal-3460632106-r1" x="622.2" y="483.6" textLength="12.2" clip-path="url(#terminal-3460632106-line-19)">┃</text><text class="terminal-3460632106-r2" x="1220" y="483.6" textLength="12.2" clip-path="url(#terminal-3460632106-line-19)">
+</text><text class="terminal-3460632106-r1" x="12.2" y="508" textLength="12.2" clip-path="url(#terminal-3460632106-line-20)">┃</text><text class="terminal-3460632106-r3" x="36.6" y="508" textLength="573.4" clip-path="url(#terminal-3460632106-line-20)">Входить&#160;теперь:&#160;ssh&#160;-p&#160;26627&#160;root@198.51.100.77</text><text class="terminal-3460632106-r1" x="622.2" y="508" textLength="12.2" clip-path="url(#terminal-3460632106-line-20)">┃</text><text class="terminal-3460632106-r2" x="1220" y="508" textLength="12.2" clip-path="url(#terminal-3460632106-line-20)">
+</text><text class="terminal-3460632106-r1" x="12.2" y="532.4" textLength="622.2" clip-path="url(#terminal-3460632106-line-21)">┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛</text><text class="terminal-3460632106-r2" x="1220" y="532.4" textLength="12.2" clip-path="url(#terminal-3460632106-line-21)">
+</text><text class="terminal-3460632106-r2" x="1220" y="556.8" textLength="12.2" clip-path="url(#terminal-3460632106-line-22)">
+</text><text class="terminal-3460632106-r6" x="12.2" y="581.2" textLength="488" clip-path="url(#terminal-3460632106-line-23)">✓&#160;nl-1:&#160;Добавить&#160;ваш&#160;ключ&#160;администратора</text><text class="terminal-3460632106-r2" x="1220" y="581.2" textLength="12.2" clip-path="url(#terminal-3460632106-line-23)">
+</text><text class="terminal-3460632106-r6" x="12.2" y="605.6" textLength="549" clip-path="url(#terminal-3460632106-line-24)">✓&#160;nl-1:&#160;Выключить&#160;MPTCP,&#160;отбрасывать&#160;IP-опции</text><text class="terminal-3460632106-r2" x="1220" y="605.6" textLength="12.2" clip-path="url(#terminal-3460632106-line-24)">
+</text><text class="terminal-3460632106-r6" x="12.2" y="630" textLength="524.6" clip-path="url(#terminal-3460632106-line-25)">✓&#160;nl-1:&#160;Защитить&#160;SSH&#160;от&#160;перебора&#160;(fail2ban)</text><text class="terminal-3460632106-r2" x="1220" y="630" textLength="12.2" clip-path="url(#terminal-3460632106-line-25)">
+</text><text class="terminal-3460632106-r6" x="12.2" y="654.4" textLength="463.6" clip-path="url(#terminal-3460632106-line-26)">✓&#160;nl-1:&#160;Открыть&#160;API&#160;ноды&#160;только&#160;панели</text><text class="terminal-3460632106-r2" x="1220" y="654.4" textLength="12.2" clip-path="url(#terminal-3460632106-line-26)">
+</text><text class="terminal-3460632106-r6" x="12.2" y="678.8" textLength="463.6" clip-path="url(#terminal-3460632106-line-27)">✓&#160;nl-1:&#160;Закрыть&#160;лишние&#160;порты:&#160;8080/tcp</text><text class="terminal-3460632106-r2" x="1220" y="678.8" textLength="12.2" clip-path="url(#terminal-3460632106-line-27)">
+</text><text class="terminal-3460632106-r6" x="12.2" y="703.2" textLength="329.4" clip-path="url(#terminal-3460632106-line-28)">✓&#160;nl-1:&#160;Новые&#160;ключи&#160;сервера</text><text class="terminal-3460632106-r2" x="1220" y="703.2" textLength="12.2" clip-path="url(#terminal-3460632106-line-28)">
+</text><text class="terminal-3460632106-r4" x="12.2" y="727.6" textLength="1134.6" clip-path="url(#terminal-3460632106-line-29)">&#160;&#160;Новый&#160;ключ&#160;сервера:&#160;SHA256:XqNaWcMhsXWRfuhlryTP1GDGzLmGIpY/fJmg82+lLRY.&#160;Кто&#160;входил&#160;на&#160;него&#160;</text><text class="terminal-3460632106-r2" x="1220" y="727.6" textLength="12.2" clip-path="url(#terminal-3460632106-line-29)">
+</text><text class="terminal-3460632106-r4" x="61" y="752" textLength="414.8" clip-path="url(#terminal-3460632106-line-30)">раньше:&#160;ssh-keygen&#160;-R&#160;203.0.113.10</text><text class="terminal-3460632106-r2" x="1220" y="752" textLength="12.2" clip-path="url(#terminal-3460632106-line-30)">
+</text><text class="terminal-3460632106-r6" x="12.2" y="776.4" textLength="341.6" clip-path="url(#terminal-3460632106-line-31)">✓&#160;nl-1:&#160;Вход&#160;только&#160;по&#160;ключу</text><text class="terminal-3460632106-r2" x="1220" y="776.4" textLength="12.2" clip-path="url(#terminal-3460632106-line-31)">
+</text><text class="terminal-3460632106-r4" x="12.2" y="800.8" textLength="195.2" clip-path="url(#terminal-3460632106-line-32)">строки&#160;1–9&#160;из&#160;61</text><text class="terminal-3460632106-r2" x="1220" y="800.8" textLength="12.2" clip-path="url(#terminal-3460632106-line-32)">
+</text><text class="terminal-3460632106-r2" x="1220" y="825.2" textLength="12.2" clip-path="url(#terminal-3460632106-line-33)">
+</text><text class="terminal-3460632106-r3" x="12.2" y="849.6" textLength="512.4" clip-path="url(#terminal-3460632106-line-34)">Через&#160;сутки&#160;уберите&#160;старые&#160;имена&#160;командой:</text><text class="terminal-3460632106-r2" x="1220" y="849.6" textLength="12.2" clip-path="url(#terminal-3460632106-line-34)">
+</text><text class="terminal-3460632106-r2" x="12.2" y="874" textLength="707.6" clip-path="url(#terminal-3460632106-line-35)">sudo&#160;/opt/kerberos/kerberos&#160;finalize&#160;20261116T120000Z-365f</text><text class="terminal-3460632106-r2" x="1220" y="874" textLength="12.2" clip-path="url(#terminal-3460632106-line-35)">
+</text><text class="terminal-3460632106-r3" x="12.2" y="898.4" textLength="219.6" clip-path="url(#terminal-3460632106-line-36)">Откатить&#160;командой:</text><text class="terminal-3460632106-r2" x="1220" y="898.4" textLength="12.2" clip-path="url(#terminal-3460632106-line-36)">
+</text><text class="terminal-3460632106-r2" x="12.2" y="922.8" textLength="707.6" clip-path="url(#terminal-3460632106-line-37)">sudo&#160;/opt/kerberos/kerberos&#160;rollback&#160;20261116T120000Z-365f</text><text class="terminal-3460632106-r2" x="1220" y="922.8" textLength="12.2" clip-path="url(#terminal-3460632106-line-37)">
+</text><text class="terminal-3460632106-r4" x="0" y="947.2" textLength="1220" clip-path="url(#terminal-3460632106-line-38)">────────────────────────────────────────────────────────────────────────────────────────────────────</text><text class="terminal-3460632106-r2" x="1220" y="947.2" textLength="12.2" clip-path="url(#terminal-3460632106-line-38)">
+</text><text class="terminal-3460632106-r3" x="0" y="971.6" textLength="85.4" clip-path="url(#terminal-3460632106-line-39)">↑↓&#160;PgDn</text><text class="terminal-3460632106-r4" x="85.4" y="971.6" textLength="122" clip-path="url(#terminal-3460632106-line-39)">&#160;прокрутка</text><text class="terminal-3460632106-r3" x="231.8" y="971.6" textLength="12.2" clip-path="url(#terminal-3460632106-line-39)">s</text><text class="terminal-3460632106-r4" x="244" y="971.6" textLength="170.8" clip-path="url(#terminal-3460632106-line-39)">&#160;отчёт&#160;целиком</text><text class="terminal-3460632106-r3" x="439.2" y="971.6" textLength="61" clip-path="url(#terminal-3460632106-line-39)">Enter</text><text class="terminal-3460632106-r4" x="500.2" y="971.6" textLength="85.4" clip-path="url(#terminal-3460632106-line-39)">&#160;в&#160;меню</text><text class="terminal-3460632106-r3" x="610" y="971.6" textLength="12.2" clip-path="url(#terminal-3460632106-line-39)">?</text><text class="terminal-3460632106-r4" x="622.2" y="971.6" textLength="85.4" clip-path="url(#terminal-3460632106-line-39)">&#160;помощь</text>
     </g>
     </g>
 </svg>

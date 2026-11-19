@@ -33,19 +33,32 @@ if TYPE_CHECKING:
 def node_entries(session: Session) -> list[dict]:
     records = session.data.get("records", {})
     access = session.data.get("access", {})
+    reasons = session.data.get("access_reason", {})
     entries = []
     for node in session.snapshot.nodes:
         if node.uuid not in session.selected:
             continue
         record = records.get(node.uuid)
-        entries.append({
+        entry = {
             "uuid": node.uuid,
             "name": node.name,
             "address": node.address,
             "sshPort": record.ssh_port if record else 22,
             "access": access.get(node.uuid, "none"),
-        })  # fmt: skip
+        }
+        if entry["access"] != "ok" and reasons.get(node.uuid):
+            entry["accessReason"] = reasons[node.uuid]
+        entries.append(entry)
     return entries
+
+
+def without_access(run: Run) -> list[str]:
+    """Nodes without access, grouped by why (§6): «nl-1, nl-2 (пускает только по ключу)»."""
+    groups: dict[str, list[str]] = {}
+    for node in run["nodes"]:
+        if node["access"] != "ok":
+            groups.setdefault(node.get("accessReason") or "", []).append(node["name"])
+    return [", ".join(names) + (f" ({why})" if why else "") for why, names in groups.items()]
 
 
 def ask_whois(app: App, session: Session) -> Optional[bool]:
@@ -141,6 +154,10 @@ def save_check_run(app: App, session: Session) -> Run:
         run["finishedAt"] = iso(app.env.clock)
     store.save(run)
     store.log(run, f"{session.mode}: {len(run['findings'])} findings, score {run['scoreBefore']}")
+    for node in run["nodes"]:
+        if node["access"] != "ok":
+            why = f" ({node['accessReason']})" if node.get("accessReason") else ""
+            store.log(run, f"access {node['name']}: {node['access']}{why}")
     write_report(app, run)
     return run
 
@@ -200,7 +217,7 @@ def report_header(app: App, findings: list, value: int, before: Optional[int],
     so the path is never cut (§12.1)."""
     lines: list[RenderableType] = list(summary if summary is not None else check_summary(findings))
     if without:
-        lines.append(Text(t("s6.no_access", nodes=app.mask(", ".join(without))), style="muted"))
+        lines.append(Text(t("s6.no_access", nodes=app.mask("; ".join(without))), style="muted"))
     saved = Text(t("report.saved", path=app.mask(path)), style="muted")
     if compact:
         return Group(ScoreBadge(value, before, compact=True), *lines, saved)
@@ -236,7 +253,7 @@ def step_report(app: App, session: Session) -> Any:
     items = finding_items(findings, names, app.mask)
     listing = FindingList(items)
     path = str(RunStore(app.env.state, app.env.clock).path(run["runId"]) / "report.md")
-    without = [n["name"] for n in run["nodes"] if n["access"] != "ok"]
+    without = without_access(run)
     checking = session.mode == "check"
 
     def body(_w: int, height: int) -> RenderableType:

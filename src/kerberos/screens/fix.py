@@ -32,6 +32,7 @@ from kerberos.screens.check import (
     report_header,
     show_full_report,
     show_pager,
+    without_access,
     write_report,
 )
 from kerberos.ui.keys import hotkey
@@ -969,7 +970,7 @@ def step_done(app: App, session: Session) -> Any:
     run = session.data["run"]
     engine: Engine = session.data.get("engine")
     path = str(RunStore(app.env.state, app.env.clock).path(run["runId"]) / "report.md")
-    without = [n["name"] for n in run["nodes"] if n["access"] != "ok"]
+    without = without_access(run)
     after = session.data.get("findings_after", session.data["findings"])
     cancelled = engine is not None and engine.cancelled
     title = t("apply.interrupted.title") if cancelled else t("done.title")
