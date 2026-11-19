@@ -347,6 +347,19 @@ def node_api_public(data: CheckInput) -> list[Finding]:
     return result
 
 
+# Client sockets, not services: a DHCP client waits for the lease answers on 68/udp (546/udp
+# for DHCPv6) and systemd-timesyncd keeps an unconnected UDP socket for NTP replies. A drop
+# rule there gains nothing and cuts the renewal of the node's address (K19).
+UDP_CLIENT_PORTS = {68, 546}
+UDP_CLIENT_PROCESSES = {"systemd-timesyn"}  # ss shows the first 15 characters of the name
+
+
+def client_socket(sock: dict) -> bool:
+    return sock.get("proto") == "udp" and (
+        sock.get("port") in UDP_CLIENT_PORTS or sock.get("process") in UDP_CLIENT_PROCESSES
+    )
+
+
 def public_ports(item: NodeData, data: CheckInput) -> list[str]:
     facts = item.facts or {}
     allowed = {(443, "tcp"), (443, "udp"), (80, "tcp")}
@@ -363,7 +376,8 @@ def public_ports(item: NodeData, data: CheckInput) -> list[str]:
     for sock in facts.get("listening", []):
         key = (sock.get("port"), sock.get("proto"))
         if (sock.get("address") in public_addresses and key not in allowed
-                and not sock.get("firewalled") and not sock.get("docker")):  # fmt: skip
+                and not sock.get("firewalled") and not sock.get("docker")
+                and not client_socket(sock)):  # fmt: skip
             label = f"{sock['port']}/{sock['proto']}"
             if label not in ports:
                 ports.append(label)
