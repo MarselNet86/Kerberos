@@ -222,8 +222,8 @@ TEXT: dict[str, str] = {
     "panel.domain": "Домен панели: {domain}",
     "panel.token_hint": (
         "Remnawave пускает программы только по API-токену. Создайте его в панели: "
-        "Настройки Remnawave → Токены API → Создать токен API. Панель покажет токен "
-        "один раз: скопируйте его сюда."
+        "Настройки Remnawave → API токены → «+» (Создать API токен). Панель покажет "
+        "токен один раз: скопируйте его сюда."
     ),
     "panel.token_rights.check": (
         "Права: «Полный доступ» или только чтение. Этот список прав можно вставить "
@@ -413,7 +413,6 @@ TEXT: dict[str, str] = {
     "action.explain": "Объяснение: {how}",
     "action.plan": "В плане исправления: {how}",
     "action.passed": "Пройдено",
-    "action.partial": "Вручную: паддинг настроен частично, его правят руками",
     "check.fleet.same_asn.title": "Ноды одной страны у одного хостера (AS{asn})",
     "check.fleet.same_asn.threat": "Блокировку по AS хостера получат сразу все такие ноды",
     "check.fleet.same_asn.how": "держите резерв у другого хостера",
@@ -490,12 +489,20 @@ TEXT: dict[str, str] = {
         "закройте панель барьером: caddy-security, секретный путь или доступ по VPN; "
         "перед Caddy в Docker по схеме Remnawave портал ставит KERBEROS"
     ),
+    # K19: what to do by hand when the fix of a check does not apply on this server
+    "check.panel.public.manual": (
+        "закройте панель барьером: caddy-security, секретный путь или доступ по VPN"
+    ),
     "check.xui.panel_exposed.title": "Панель 3x-ui открыта всем на порту {port}",
     "check.xui.panel_exposed.threat": (
         "Сканеры находят панель по порту и странице входа, а через неё весь сервер"
     ),
     "check.xui.panel_exposed.how": (
         "KERBEROS переносит панель на случайный порт и секретный путь; надёжнее слушать "
+        "только 127.0.0.1 и входить через SSH-туннель"
+    ),
+    "check.xui.panel_exposed.manual": (
+        "поставьте панели случайный порт и секретный путь в её настройках; надёжнее слушать "
         "только 127.0.0.1 и входить через SSH-туннель"
     ),
     "check.xui.panel_tls.title": "Панель 3x-ui открыта без TLS",
@@ -526,6 +533,7 @@ TEXT: dict[str, str] = {
     ),
     "check.xhttp.padding.title": "У XHTTP нет паддинга",
     "check.xhttp.padding.threat": "Размеры запросов складываются в узнаваемую сигнатуру",
+    "check.xhttp.padding.manual": "паддинг настроен частично, его правят руками",
     "check.xhttp.uplink_get.title": "XHTTP за CDN отправляет данные методом POST",
     "check.xhttp.uplink_get.threat": "Российские CDN режут POST: наблюдали ответ 405",
     "check.xhttp.post_size.title": (

@@ -299,14 +299,24 @@ class SelfSteal:
         if not ip:
             raise StepFailed("check_failed")
         self.reach_site(data, ip)
-        try:
-            online = {n.uuid: n.is_connected for n in self.client.nodes()}
-        except PanelError as exc:
-            raise StepFailed(exc.code) from exc
-        if not online.get(self.node.uuid, False):
-            raise StepFailed("node_offline")
+        self.wait_online()
         self.read_facts(node_data)
         self.judge(data)
+
+    def wait_online(self) -> None:
+        """The node is back in the panel. After node.letsencrypt_mount the panel first finds
+        the recreated container again: on Remnawave 2.8.1 its health check restarted the node
+        about 8 s after the profile, while Xray already answered with the site (K19)."""
+        for attempt in range(CHECK_ATTEMPTS):
+            try:
+                online = {n.uuid: n.is_connected for n in self.client.nodes()}
+            except PanelError as exc:
+                raise StepFailed(exc.code) from exc
+            if online.get(self.node.uuid, False):
+                return
+            if attempt + 1 < CHECK_ATTEMPTS:
+                self.env.clock.sleep(CHECK_PAUSE)
+        raise StepFailed("node_offline")
 
     def reach_site(self, data: Any, ip: str) -> None:
         prober = self.env.prober

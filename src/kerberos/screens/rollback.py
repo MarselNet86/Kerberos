@@ -20,6 +20,7 @@ from kerberos.fixes.journal import RunStore, iso
 from kerberos.fixes.panel_changes import PANEL_FIXES, undo
 from kerberos.flow import EXIT_OK, EXIT_PANEL, EXIT_ROLLBACK_FAILED
 from kerberos.nodes.transport import NodeAgentError, Target, TransportError
+from kerberos.report.view import change_target
 from kerberos.screens.check import write_report
 from kerberos.screens.fix import agree, error_text
 from kerberos.ui.widgets import Checklist, Consent, Menu, Notice
@@ -34,11 +35,10 @@ def node_of(run: dict, target: str) -> Optional[dict]:
 
 
 def label(app: App, run: dict, change: dict) -> str:
-    target = (
-        f"node:{change['params']['node']}" if change["params"].get("node") else change["target"]
-    )
-    node = node_of(run, target)
-    name = node["name"] if node else t("target.panel")
+    # Named the way S9 and report.md name it: two host changes are «хост NL Reality» and
+    # «хост DE Reality», not two lines «панель: …» (K19).
+    names = {n["uuid"]: n["name"] for n in run["nodes"]}
+    name = change_target(change["target"], change["params"], names)
     ports = ", ".join(change["params"].get("ports", []))
     text = t(
         "fix." + change["fixId"] + ".label",
@@ -92,6 +92,16 @@ def choose_run(app: App, runs: list) -> Optional[dict]:
     body = Group(Text(t("rb.choose"), style="bold"), Text(""), menu)
     choice = app.interact(t("rb.title"), body, keys, handle)
     return next((r for r in runs if r["runId"] == choice), None)
+
+
+def current_nodes(app: App, nodes: list) -> list:
+    """The nodes of a run with the SSH port they answer on now (nodes.json): a rolled back
+    ssh.port is on the old port again, and report.md says how to log in (K19)."""
+    result = []
+    for node in nodes:
+        record = app.env.state.node(node.get("uuid", ""))
+        result.append(dict(node, sshPort=record.ssh_port) if record is not None else dict(node))
+    return result
 
 
 def target_of(app: App, run: dict, change: dict) -> Target:
@@ -313,7 +323,7 @@ def rollback_flow(app: App, run_id: Optional[str] = None) -> int:
         from kerberos.screens.panel import settle_token
 
         settle_token(app, client)
-    record = store.new_run("rollback", run["panel"], run["nodes"])
+    record = store.new_run("rollback", run["panel"], current_nodes(app, run["nodes"]))
     record["changes"] = copy.deepcopy(chosen)
     record["findings"] = run.get("findings", [])
     # The rollback goes from the protection after the fix back to the one before it;
