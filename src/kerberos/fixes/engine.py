@@ -354,6 +354,11 @@ class Engine:
         if record is not None:
             record.ssh_port = port
             self.env.state.save_node(record)
+        # The nodes of report.md say how to log in now, not the port the run began with (K19).
+        for node in self.run["nodes"]:
+            if node.get("uuid") == node_uuid:
+                node["sshPort"] = port
+        self.save()
 
     def confirm(self, target: Target, change_id: str) -> bool:
         clock = self.env.clock

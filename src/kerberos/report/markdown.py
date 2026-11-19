@@ -34,7 +34,9 @@ def render(run: Run, mask: Optional[Callable[[str], str]] = None) -> str:
         )
     else:
         lines.append("**" + t("report.score", score=run["scoreBefore"]) + "**")
-    findings = run["findings"]
+    # A fix run reports what is left after it, as its score and S9 do; what it changed is in
+    # «Изменения» below. Before K19 it listed the findings before, «Исправит KERBEROS» and all.
+    findings = run.get("findingsAfter") or run["findings"]
     failing = problems(findings)
     for topic in TOPICS:
         part = [f for f in failing if f["topic"] == topic]
