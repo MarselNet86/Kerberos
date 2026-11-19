@@ -43,9 +43,7 @@ SECTIONS = {
 # «Исправление» changes nodes only by `PATCH /nodes` (the inbounds a node runs, §10.4, K20):
 # the endpoint scope, not the whole write right of the section.
 SCOPES_CHECK = [f"{section}:read" for section in SECTIONS.values()]
-SCOPES_FIX = ["nodes:read", "nodes:update"] + [
-    f"{s}:*" for s in SECTIONS.values() if s != "nodes"
-]
+SCOPES_FIX = ["nodes:read", "nodes:update"] + [f"{s}:*" for s in SECTIONS.values() if s != "nodes"]
 
 
 def section_of(operation: str) -> tuple[str, str]:
