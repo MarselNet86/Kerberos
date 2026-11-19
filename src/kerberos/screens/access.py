@@ -2,7 +2,8 @@
 
 For every chosen node without KERBEROS access: show the host key fingerprint
 and pin it after the person confirms; log in with the panel server's root
-keys or hand the terminal to `ssh` for the node password; install the agent
+keys or a key forwarded with `ssh -A`, else hand the terminal to `ssh` for the
+node password, unless the node takes only keys; install the agent
 and the restricted KERBEROS key; prove the access with a new connection.
 Nodes that already have access get their agent version checked (§8.3).
 In «Проверка» the screen first says what it installs and that settings stay
@@ -37,6 +38,7 @@ OK, NONE, DENIED = "ok", "none", "denied"
 LOCAL_ADDRESS = "127.0.0.1"
 LOCAL_HOST_KEY = "/etc/ssh/ssh_host_ed25519_key.pub"
 ROOT_KEYS = "/root/.ssh/authorized_keys"
+PASSWORD_METHODS = {"password", "keyboard-interactive"}
 
 
 def local_ssh_port(host: Any) -> int:
@@ -318,6 +320,11 @@ class AccessScreen:
         try:
             if transport.open_root(target, interactive=False):
                 return
+            # A node that lets root in only with a key would reject any password:
+            # asking for one only wastes the person's tries (§8.2).
+            offered = transport.offered_methods(target)
+            if offered is not None and not PASSWORD_METHODS & set(offered):
+                raise AccessFailed(NONE, t("access.reason.key_only"))
             message = t("access.password", node=self.app.mask(node.name))
             with self.app.term.suspend(message):
                 ok = transport.open_root(target, interactive=True)
@@ -497,6 +504,12 @@ class AccessScreen:
             lines.append(Text(t("access.summary", ok=ok, total=len(self.nodes))))
             if ok < len(self.nodes):
                 lines.append(Text(t("access.panel_only"), style="muted"))
+            key_only = t("access.reason.key_only")
+            if any(self.reasons.get(n.uuid) == key_only for n in self.nodes
+                   if self.status.get(n.uuid) != OK):  # fmt: skip
+                forwarded = self.app.env.transport.agent_forwarded
+                hint = "access.key_only.hint.agent" if forwarded else "access.key_only.hint"
+                lines.append(Notice("warning", t(hint)))
         admin = self.session.data.get("admin")
         if admin and admin["mode"] == "local":
             own = int(admin.get("own") or 0)

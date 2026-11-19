@@ -39,6 +39,9 @@ class FakeNode:
     reachable: bool = True
     root_keys: bool = False
     password_ok: bool = True
+    # False: sshd lets root in only with a key (PasswordAuthentication and
+    # KbdInteractiveAuthentication no), so no password can work (§8.2).
+    password_offered: bool = True
     python: bool = True
     panel_ip: str = "198.51.100.5"
     authorized_keys: list[str] = field(default_factory=list)
@@ -59,7 +62,9 @@ class FakeTransport:
         self.state = state
         self.log: list[tuple[str, str]] = []
         self._root_open: set[str] = set()
+        self._offered: dict[str, list[str]] = {}
         self.interactive_logins = 0
+        self.agent_forwarded = False
 
     # -- helpers -----------------------------------------------------------
     def _node(self, target: Target) -> FakeNode:
@@ -95,10 +100,17 @@ class FakeTransport:
         self.log.append((target.address, "open_root interactive" if interactive else "open_root"))
         if interactive:
             self.interactive_logins += 1
-        ok = node.password_ok if interactive else node.root_keys
+        ok = (node.password_ok and node.password_offered) if interactive else node.root_keys
         if ok:
             self._root_open.add(target.address)
+        elif not interactive:
+            self._offered[target.address] = ["publickey"] + (
+                ["password"] if node.password_offered else []
+            )
         return ok
+
+    def offered_methods(self, target: Target) -> Optional[list[str]]:
+        return self._offered.get(target.address)
 
     def root_run(
         self, target: Target, command: str, stdin: Optional[str] = None, timeout: float = 120

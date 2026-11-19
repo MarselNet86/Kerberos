@@ -2,9 +2,9 @@
 
 Agent commands go with the KERBEROS key through one ControlMaster per node
 (socket in /run/kerberos/). Bootstrap uses a separate master opened either
-with the root keys of the panel server (BatchMode) or interactively: the
-terminal is handed to `ssh`, which reads the node password itself, so
-KERBEROS never sees it.
+with the root keys of the panel server and a key forwarded with `ssh -A`
+(BatchMode) or interactively: the terminal is handed to `ssh`, which reads the
+node password itself, so KERBEROS never sees it.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import os
+import re
 import subprocess
 from dataclasses import dataclass
 from typing import Callable, Optional, Protocol
@@ -60,6 +61,15 @@ class NodeTransport(Protocol):
     def keyscan(self, address: str, port: int) -> Optional[PublicKey]: ...
 
     def open_root(self, target: Target, *, interactive: bool) -> bool: ...
+
+    def offered_methods(self, target: Target) -> Optional[list[str]]:
+        """How root may log in, as the node said when the key login failed; None: unknown."""
+        ...
+
+    @property
+    def agent_forwarded(self) -> bool:
+        """A key forwarded with `ssh -A` is there for the key login (§8.2)."""
+        ...
 
     def root_run(
         self, target: Target, command: str, stdin: Optional[str] = None, timeout: float = 120
@@ -125,10 +135,24 @@ def parse_answer(stdout: str) -> dict:
     raise TransportError("failed", "the agent printed no JSON")
 
 
+def denied_methods(stderr: str) -> Optional[list[str]]:
+    """«Permission denied (publickey,password)»: what the server still lets root try."""
+    match = re.search(r"Permission denied \(([^)]*)\)", stderr)
+    return [m.strip() for m in match.group(1).split(",") if m.strip()] if match else None
+
+
 class SshTransport:
     def __init__(self, state: State) -> None:
         self.state = state
         self._used: dict[str, Target] = {}
+        self._offered: dict[str, list[str]] = {}
+
+    @property
+    def agent_forwarded(self) -> bool:
+        return bool(os.environ.get("SSH_AUTH_SOCK"))
+
+    def offered_methods(self, target: Target) -> Optional[list[str]]:
+        return self._offered.get(target.address)
 
     def _run_dir(self) -> str:
         os.makedirs(RUN_DIR, mode=0o700, exist_ok=True)
@@ -171,6 +195,7 @@ class SshTransport:
                 "-o", "NumberOfPasswordPrompts=3",
             ]  # fmt: skip
         else:
+            # No IdentitiesOnly: the agent of `ssh -A` offers the person's own key (§8.2).
             argv += ["-o", "BatchMode=yes", "-o", "PreferredAuthentications=publickey"]
         argv.append(f"root@{target.address}")
         try:
@@ -179,6 +204,10 @@ class SshTransport:
             proc = subprocess.run(argv, capture_output=True, text=True, timeout=60, check=False)
         except (OSError, subprocess.TimeoutExpired):
             return False
+        if proc.returncode != 0:
+            methods = denied_methods(proc.stderr)
+            if methods is not None:
+                self._offered[target.address] = methods
         return proc.returncode == 0
 
     def root_run(

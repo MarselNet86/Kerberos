@@ -118,6 +118,8 @@ def render(run: Run, mask: Optional[Callable[[str], str]] = None) -> str:
     lines += ["", f"## {t('report.nodes')}", "", t("report.nodes.head"), "|---|---|---|---|"]
     for node in run["nodes"]:
         access = t(f"access.status.{node.get('access', 'none')}")
+        if node.get("accessReason"):
+            access += f": {node['accessReason']}"
         lines.append(
             f"| {node['name']} | {node['address']} | {node.get('sshPort', 22)} | {access} |"
         )
