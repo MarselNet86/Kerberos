@@ -323,15 +323,21 @@ def test_s6_at_80x24_pages_through_findings_with_a_one_line_score():
     path = str(RunStore(app.env.state, app.env.clock).path(run["runId"]) / "report.md")
     assert any(path in line for line in body_lines(s6[0])), "the path is never cut"
     topics = {t(f"topic.{topic}") for topic in TOPICS}
-    for line in body_lines(s6[0])[6:]:
+    lines = body_lines(s6[0])
+    after_path = next(i for i, line in enumerate(lines) if "report.md" in line) + 1
+    for line in lines[after_path:]:
         text = line.strip()
-        if not text or text in topics or text[0] in "›●":
+        if not text or text in topics or text[0] in "›●" or t("s6.col.what") in text:
             continue
-        assert line.startswith(" " * 5), f"a wrapped line lost its indent: {line!r}"
+        # K22: a wrapped cell goes on in its own column, under «Где» or further right.
+        assert line.startswith(" " * 13), f"a wrapped line lost its column: {line!r}"
 
 
 def test_s6_texts_are_plain_words():
-    app, term, _code = check_app(["end", "q", "enter"], width=100, height=200)
+    # K22: what a finding threatens is in its details, so every row is opened; wide
+    # enough that no cell wraps.
+    keys = ["space", "down"] * 60 + ["q", "enter"]
+    app, term, _code = check_app(keys, width=200, height=400)
     text = " ".join(flat(f) for f in titled(term, "s6.title"))
     for jargon in ("Маленький scMaxEachPostBytes", "пустой fingerprint", "Клиент шлёт ClientHello",
                    "Параметры sc*", "журналы CT", "клиентским сертификатом",
@@ -341,7 +347,8 @@ def test_s6_texts_are_plain_words():
                 "check.fleet.one_zone.threat"):  # fmt: skip
         assert flat(t(key)) in text, key
     assert flat(t("check.host.fingerprint.title", host="NL Reality")) in text
-    assert flat(t("action.plan", how=t("check.reserve.missing.how"))) in text
+    how = t("check.reserve.missing.how")
+    assert flat(how[:1].upper() + how[1:]) in text
 
 
 def test_esc_on_s6_neither_collects_nor_asks_whois_again():

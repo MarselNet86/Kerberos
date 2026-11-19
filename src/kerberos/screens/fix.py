@@ -895,7 +895,7 @@ def apply_summary(run: dict, findings: list) -> list[RenderableType]:
         line.append(" " + t("s9.failed", n=failed), style="risk.high")
     if stuck:
         line.append(" " + t("s9.rollback_failed", n=stuck), style="risk.high")
-    numbers = counts(findings)
+    numbers = counts(findings, {n["uuid"]: n["name"] for n in run["nodes"]})
     if numbers["problems"]:
         left = Text(t("s9.left", **numbers), style="bold")
     else:

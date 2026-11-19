@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional, Union
 
 from rich import box
+from rich.cells import cell_len
 from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
 from rich.padding import Padding
 from rich.panel import Panel
@@ -39,6 +40,7 @@ Body = Union[RenderableType, Callable[[int, int], RenderableType]]
 KeyHints = Union[Sequence[tuple[str, str]], Callable[[], Sequence[tuple[str, str]]]]
 
 POINTER = "›"
+RISKS = ("high", "medium", "low", "info")
 # Without colour the reverse video of the cursor is lost: a bar marks its place.
 CURSOR_BAR = "▏"
 SCROLL_KEYS = ("up", "down", "pgup", "pgdn", "home", "end")
@@ -615,7 +617,7 @@ class ScoreBadge:
 
 @dataclass
 class FindingItem:
-    """One finding as the screen shows it; texts are ready and masked."""
+    """One row of findings as the screen shows it; texts are ready and masked."""
 
     risk: str
     group: str
@@ -627,16 +629,39 @@ class FindingItem:
     details: str = ""
     passed: bool = False
     extra: dict = field(default_factory=dict)
+    # The «Что делать» cell: in full, and in one word for a narrow terminal (K22).
+    todo: str = ""
+    todo_short: str = ""
+
+
+def cell_lines(console: Console, cells: Sequence[tuple[Text, int]]) -> list[Text]:
+    """Cells side by side, each wrapped to its width; one space between them."""
+    wrapped = [list(cell.wrap(console, width, overflow="fold")) or [Text("")]
+               for cell, width in cells]  # fmt: skip
+    lines = []
+    for row in range(max(len(w) for w in wrapped)):
+        line = Text()
+        for column, (_cell, width) in enumerate(cells):
+            part = wrapped[column][row].copy() if row < len(wrapped[column]) else Text("")
+            part.truncate(width, pad=True)
+            if column:
+                line.append(" ")
+            line.append_text(part)
+        line.rstrip()
+        lines.append(line)
+    return lines
 
 
 class FindingList:
-    """Findings grouped by topic; Space opens the details of one (Enter goes on).
+    """Findings as a table under each topic: risk, where, what is wrong, what to do
+    (K22). Space opens the details of one row (Enter goes on).
 
-    ↑ ↓ move by one finding, PgUp and PgDn by a screenful, Home and End to the
-    first and the last. Wrapped lines keep their indent.
+    ↑ ↓ move by one row, PgUp and PgDn by a screenful, Home and End to the first and
+    the last. Below WIDE columns «Что делать» shrinks to one word; the full text is in
+    the details.
     """
 
-    INDENT = 4
+    WIDE = 90
 
     def __init__(self, items: Sequence[FindingItem], group_by: str = "group") -> None:
         self.items = list(items)
@@ -645,7 +670,8 @@ class FindingList:
         self.expanded: set[int] = set()
         self.viewport: Optional[int] = None
         self._offset = 0
-        self._page = 1  # findings that fit on the screen, from the last frame
+        self._page = 1  # rows that fit on the screen, from the last frame
+        self._narrow = False
 
     def handle(self, key: str) -> Optional[str]:
         if not self.items:
@@ -662,30 +688,59 @@ class FindingList:
             self.expanded ^= {self.cursor}
         return None
 
-    def _block(self, i: int, item: FindingItem) -> list[tuple[Text, int]]:
-        """Lines of one finding with the indent of their continuation."""
+    def _widths(self, width: int) -> list[int]:
+        """Pointer, risk, where, what is wrong, what to do."""
+        narrow = self._narrow = width < self.WIDE
+        risk = max(cell_len(f"{SYMBOL_RISK} {t('risk.' + r)}") for r in RISKS)
+        if narrow:
+            todo = max([cell_len(t("s6.col.todo"))]
+                       + [cell_len(i.todo_short or i.action) for i in self.items])  # fmt: skip
+        else:
+            todo = max(16, width * 26 // 100)
+        longest = max([cell_len(i.target) for i in self.items] + [cell_len(t("s6.col.where"))])
+        where = min(longest, max(8, width * 20 // 100))
+        what = width - 1 - risk - where - todo - 4
+        if what < 20:
+            where = max(6, where - (20 - what))
+            what = width - 1 - risk - where - todo - 4
+        return [1, risk, where, max(10, what), todo]
+
+    def _head(self, widths: list[int]) -> Text:
+        names = ["", t("s6.col.risk"), t("s6.col.where"), t("s6.col.what"), t("s6.col.todo")]
+        return Text(" ").join(Text(n.ljust(w)[:w], style="muted") for n, w in zip(names, widths))
+
+    def _block(self, console: Console, i: int, item: FindingItem, widths: list[int]) -> list[Text]:
+        """Lines of one row, and its details under «Что не так» when open."""
         current = i == self.cursor
         style = "ok" if item.passed else risk_style(item.risk)
         symbol = SYMBOL_OK if item.passed else SYMBOL_RISK
-        head = Text(POINTER + " " if current else "  ", style="accent")
-        head.append(f"{symbol} ", style=style)
-        head.append(f"{t('risk.' + item.risk):<8} ", style=style)
-        head.append(f"{item.target}  ", style="bold")
-        head.append(item.title, style="accent" if current else "")
-        indent = " " * self.INDENT
-        lines = [(head, self.INDENT)]
-        if item.threat:
-            lines.append((Text(indent + item.threat, style="muted"), self.INDENT))
-        if item.action:
-            lines.append((Text(indent + item.action, style=item.action_style), self.INDENT))
-        if i in self.expanded and item.details:
-            for detail in item.details.split("\n"):
-                lines.append((Text(indent + "  " + detail, style="muted"), self.INDENT + 2))
+        narrow = self._narrow
+        todo = (item.todo_short if narrow else item.todo) or item.action
+        cells = [
+            (Text(POINTER if current else " ", style="accent"), widths[0]),
+            (Text(f"{symbol} {t('risk.' + item.risk)}", style=style), widths[1]),
+            (Text(item.target, style="bold"), widths[2]),
+            (Text(item.title, style="accent" if current else ""), widths[3]),
+            (Text(todo, style=item.action_style), widths[4]),
+        ]
+        lines = cell_lines(console, cells)
+        if i in self.expanded:
+            indent = sum(widths[:3]) + 3
+            width = sum(widths) + 4
+            extra = [(item.threat, "muted")]
+            if narrow or not item.todo:
+                extra.append((item.action, item.action_style))
+            extra += [(d, "muted") for d in item.details.split("\n")]
+            for value, tone in extra:
+                if value:
+                    line = Text(" " * indent + value, style=tone)
+                    lines.extend(hang(console, line, width, indent))
         return lines
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         width = options.max_width
         height = self.viewport or options.height or 10**6
+        widths = self._widths(width)
         rendered: list[Text] = []
         start_of: dict[int, int] = {}
         end_of: dict[int, int] = {}
@@ -696,15 +751,15 @@ class FindingList:
                 if rendered:
                     rendered.append(Text(""))
                 rendered.append(Text(key, style="bold"))
+                rendered.append(self._head(widths))
                 group = key
             start_of[i] = len(rendered)
-            for line, indent in self._block(i, item):
-                rendered.extend(hang(console, line, width, indent))
+            rendered.extend(self._block(console, i, item, widths))
             end_of[i] = len(rendered)
         if self.items:
             start, end = start_of[self.cursor], end_of[self.cursor]
             if start < self._offset:
-                self._offset = max(0, start - 1)
+                self._offset = max(0, start - 2)
             elif end > self._offset + height:
                 self._offset = end - height
             bottom = self._offset + height
