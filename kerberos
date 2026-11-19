@@ -29,6 +29,11 @@ if [ "$need_root" = 1 ] && [ "$(id -u)" != 0 ]; then
   if command -v sudo >/dev/null 2>&1; then
     echo "KERBEROS нужны права root: перезапускаю через sudo." >&2
     # Plain `sudo --`: sudo-rs on Ubuntu 26.04 lacks some classic flags (§3.1).
+    if [ -n "${SSH_AUTH_SOCK:-}" ]; then
+      # sudo drops SSH_AUTH_SOCK; `env` hands it on, so a key forwarded with
+      # `ssh -A` still opens nodes that take only keys (§8.2).
+      exec sudo -- env "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" "$0" "$@"
+    fi
     exec sudo -- "$0" "$@"
   fi
   echo "KERBEROS нужны права root: запустите его от root." >&2
