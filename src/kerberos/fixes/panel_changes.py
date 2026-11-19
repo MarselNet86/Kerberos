@@ -20,6 +20,7 @@ from kerberos.panel.errors import PanelError
 
 PANEL_FIXES = {
     "self_steal.profile",
+    "self_steal.node",
     "self_steal.squads",
     "self_steal.hosts",
     "sub.templates",
@@ -118,6 +119,8 @@ def undo(client: PanelClient, change: dict,
             return undo_hosts(client, details, reserve_fields, dict, ask)
         if fix_id == "self_steal.squads":
             return undo_squads(client, details)
+        if fix_id == "self_steal.node":
+            return undo_node(client, change)
         if fix_id == "xui.reality":
             return undo_xui_reality(client, change, ask)
         if fix_id == "xhttp.uplink_get":
@@ -201,6 +204,21 @@ def undo_squads(client: PanelClient, details: dict) -> Optional[str]:
             client.patch_squad(uuid, before)  # a journal before v18 knows only the old list
         elif added in squad.inbound_uuids:
             client.patch_squad(uuid, [i for i in squad.inbound_uuids if i != added])
+    return None
+
+
+def undo_node(client: PanelClient, change: dict) -> Optional[str]:
+    """Only the inbounds KERBEROS switched on leave the node (K20): what the person switched
+    on since stays, and a node moved to another profile since is left alone."""
+    details = change["details"]
+    added = set(details.get("added") or [])
+    node = next((n for n in client.nodes() if n.uuid == change["params"].get("node")), None)
+    if node is None or not added & set(node.inbound_uuids):
+        return None  # deleted since, or the request never landed: nothing to take out
+    if node.profile_uuid != details.get("profileUuid"):
+        return None
+    client.patch_node_inbounds(node.uuid, node.profile_uuid,
+                               [u for u in node.inbound_uuids if u not in added])  # fmt: skip
     return None
 
 

@@ -2,7 +2,8 @@
 
 Steps, each a journaled change: the site and certificate on the node; the
 letsencrypt volume if the node container lacks it; the profile from the
-template; the new inbound in the squads; copies of hosts with the new SNI,
+template; its new inbound switched on at the node (the panel runs only the
+inbounds active there); the new inbound in the squads; copies of hosts with the new SNI,
 then the old hosts disabled (never before the copies exist); a check from
 the panel server. A failure undoes what was done, in reverse order: the step
 caught half way first. A change that cannot be undone keeps the state it
@@ -189,6 +190,33 @@ class SelfSteal:
             )
             self.engine.save()
 
+    def activate(self, patched: Any, tags: dict) -> None:
+        """The inbounds of the template run on the node (K20). Remnawave 2.8.1 and 3.4.11 run
+        only `configProfile.activeInbounds` of a node, and a new inbound of the profile is
+        active nowhere: without this Hysteria2 answers nobody while its hosts are handed out."""
+        by_tag = {i.tag: i.uuid for i in patched.inbounds}
+        wanted = [by_tag[t] for t in (tags["reality"], tags["hysteria"]) if t in by_tag]
+        node = next((n for n in self.panel_call(self.client.nodes) if n.uuid == self.node.uuid),
+                    None)  # fmt: skip
+        if node is None:
+            raise StepFailed("node_offline")
+        active = list(node.inbound_uuids)
+        added = [u for u in wanted if u not in active]
+        if not added:
+            return
+        change = self.change("self_steal.node", self.item.target, {"domain": self.domain})
+        # Journaled before the request: an answer that never comes still leaves the undo to
+        # take out what KERBEROS added, and only that (§10.9).
+        change["details"] = {"profileUuid": patched.uuid, "before": active, "added": added}
+        self.engine.save()
+        answer = self.panel_call(
+            lambda: self.client.patch_node_inbounds(node.uuid, patched.uuid, active + added)
+        )
+        if any(u not in answer.inbound_uuids for u in added):
+            raise StepFailed("node_mismatch")
+        self.node.inbound_uuids = list(answer.inbound_uuids)
+        self.applied(change)
+
     def squads(self, patched: Any, had_hysteria: bool, tags: dict) -> None:
         if had_hysteria:
             return
@@ -359,6 +387,7 @@ class SelfSteal:
         self.mount()
         patched, had_hysteria, tags = self.profile()
         profile_change = self.done[-1]
+        self.activate(patched, tags)
         self.squads(patched, had_hysteria, tags)
         self.hosts(patched, tags)
         return profile_change

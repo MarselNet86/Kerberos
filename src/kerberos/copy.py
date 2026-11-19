@@ -230,8 +230,9 @@ TEXT: dict[str, str] = {
         "в окне создания токена:"
     ),
     "panel.token_rights.fix": (
-        "Права: «Полный доступ» или чтение и запись. Этот список прав можно вставить "
-        "в окне создания токена:"
+        "Права: «Полный доступ» или чтение и запись, а у нод чтение и изменение: свой домен "
+        "включает на ноде новый инбаунд Hysteria2. Этот список прав можно вставить в окне "
+        "создания токена:"
     ),
     "panel.token_saved_note": (
         "KERBEROS сохранит токен на этом сервере, читать его может только root. "
@@ -646,6 +647,7 @@ TEXT: dict[str, str] = {
     "fix.self_steal.site.label": "Сайт и сертификат на {domain}",
     "fix.node.letsencrypt_mount.label": "Сертификат виден контейнеру ноды",
     "fix.self_steal.profile.label": "Профиль ноды по шаблону KERBEROS на {domain}",
+    "fix.self_steal.node.label": "Новый инбаунд включён на ноде",
     "fix.self_steal.squads.label": "Новый инбаунд в сквадах",
     "fix.self_steal.hosts.label": "Копии хостов с SNI {domain}, старые выключены",
     "fix.sub.templates.label": "Шаблоны подписки KERBEROS в панели",
@@ -789,6 +791,7 @@ TEXT: dict[str, str] = {
     "error.check_failed": "проверка снаружи не увидела свой домен",
     "error.node_offline": "нода не подключилась к панели после смены профиля",
     "error.host_mismatch": "панель сохранила копию хоста не так, как её отправили",
+    "error.node_mismatch": "панель не включила новый инбаунд на ноде",
     "error.hostkey_mismatch": (
         "сервер по-прежнему показывает старый ключ, новых ключей sshd не видит"
     ),
