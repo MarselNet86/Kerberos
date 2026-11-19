@@ -22,7 +22,7 @@ from kerberos.fixes.journal import RunStore
 from kerberos.fixes.model import Run
 from kerberos.flow import BACK, NEXT
 from kerberos.report import markdown
-from kerberos.report.view import counts, finding_items
+from kerberos.report.view import counts, finding_items, projected
 from kerberos.ui.keys import hotkey
 from kerberos.ui.widgets import STEP_VIEW, FindingList, Menu, Notice, Pager, ScoreBadge, Stack
 
@@ -203,11 +203,19 @@ def show_full_report(app: App, run_id: str, title: str) -> None:
 COMPACT_BELOW = 26
 
 
-def check_summary(findings: list) -> list[RenderableType]:
-    numbers = counts(findings)
-    if numbers["problems"]:
-        return [Text(t("s6.summary", **numbers), style="bold")]
-    return [Text(f"✓ {t('s6.none')}", style="ok")]
+def check_summary(findings: list, names: Optional[dict] = None, *,
+                  hint: bool = False) -> list[RenderableType]:  # fmt: skip
+    """What was found, what KERBEROS fixes itself and the score after it (K22)."""
+    numbers = counts(findings, names)
+    if not numbers["problems"]:
+        return [Text(f"✓ {t('s6.none')}", style="ok")]
+    line = Text(t("s6.summary", **numbers), style="bold")
+    if numbers["auto"]:
+        line.append(t("s6.after", score=projected(findings)), style="bold")
+    lines: list[RenderableType] = [line]
+    if hint and numbers["auto"]:
+        lines.append(Text(t("s6.fix_hint"), style="accent"))
+    return lines
 
 
 def report_header(app: App, findings: list, value: int, before: Optional[int],
@@ -259,6 +267,7 @@ def step_report(app: App, session: Session) -> Any:
     def body(_w: int, height: int) -> RenderableType:
         listing.items = finding_items(findings, names, app.mask)
         head = report_header(app, findings, session.data["score"], None, without, path,
+                             summary=check_summary(findings, names, hint=checking),
                              compact=height < COMPACT_BELOW)  # fmt: skip
         return Stack(head, Text(""), listing, flex=2)
 
