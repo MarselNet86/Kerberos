@@ -65,6 +65,8 @@ SECTIONS = {
     "/internal-squads": "internal-squads",
     "/subscription-settings": "subscription-settings",
 }
+# Scopes of single endpoints, `<section>:<slug>` (scope slugs of the 2.8.1 and 3.4.11 contract).
+ENDPOINT_SCOPES = {("PATCH", "/nodes"): "nodes:update"}
 
 
 class ContractError(Exception):
@@ -219,6 +221,8 @@ class FakePanel:
         kind = "read" if method == "GET" else "write"
         if section is None or {"*", f"{section}:*", f"{section}:{kind}"} & set(scopes):
             return None
+        if ENDPOINT_SCOPES.get((method, path)) in scopes:
+            return None
         return self._json(403, {"message": "Forbidden resource"})
 
     def _deleted(self) -> tuple[int, Any]:
@@ -279,7 +283,17 @@ class FakePanel:
             # The panel stores the config validated and sorted, not byte for byte (§10.4).
             profile["config"] = self.normalize_profile(config) if self.normalize_profile else config
             self._sync_inbounds(profile)
+            # An inbound that left the profile leaves the nodes too; a new one is active on no
+            # node until PATCH /nodes switches it on (2.8.1 and 3.4.11, K20).
+            known = {i["uuid"] for i in profile["inbounds"]}
+            for node in self.nodes:
+                ref = node.get("configProfile") or {}
+                if ref.get("activeConfigProfileUuid") == profile["uuid"]:
+                    ref["activeInbounds"] = [i for i in ref.get("activeInbounds") or []
+                                             if i.get("uuid") in known]  # fmt: skip
             return 200, copy.deepcopy(profile)
+        if method == "PATCH" and path == "/nodes":
+            return self._patch_node(data)
         if method == "GET" and path == "/hosts":
             return 200, copy.deepcopy(self.hosts)
         if method == "GET" and path.startswith("/hosts/") and path.count("/") == 2:
@@ -362,6 +376,28 @@ class FakePanel:
             )
             return 200, copy.deepcopy(self.sub_settings)
         return 404, {"message": f"no route {method} {path}"}
+
+    def _patch_node(self, data: Any) -> tuple[int, Any]:
+        """Only the inbounds a node runs (K20): the list is replaced as a whole, every inbound
+        must be one of the profile's, and the node restarts (the fake keeps it connected)."""
+        body = self._body(data, {"uuid": str, "configProfile": dict})
+        node = self._find(self.nodes, body["uuid"], "node")
+        ref = body["configProfile"]
+        if set(ref) != {"activeConfigProfileUuid", "activeInbounds"}:
+            raise ContractError("configProfile needs activeConfigProfileUuid and activeInbounds")
+        profile = self._find(self.profiles, ref["activeConfigProfileUuid"], "config profile")
+        uuids = ref["activeInbounds"]
+        if not isinstance(uuids, list) or not all(isinstance(u, str) for u in uuids):
+            raise ContractError("activeInbounds must be a list of uuids")
+        inbounds = {i["uuid"]: i for i in profile["inbounds"]}
+        if any(u not in inbounds for u in uuids):
+            return 404, {"message": "Config profile inbound not found in specified profile",
+                         "errorCode": "A124"}  # fmt: skip
+        node["configProfile"] = {
+            "activeConfigProfileUuid": profile["uuid"],
+            "activeInbounds": [{"uuid": u, "tag": inbounds[u]["tag"]} for u in uuids],
+        }
+        return 200, copy.deepcopy(node)
 
     # -- contract checks -------------------------------------------------
     @staticmethod

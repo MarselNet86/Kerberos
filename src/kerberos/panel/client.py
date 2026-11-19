@@ -40,8 +40,10 @@ SECTIONS = {
     "/subscription-settings": "subscription-settings",
 }
 # Rights to give the token, as the panel's «create token» window takes them pasted.
+# «Исправление» changes nodes only by `PATCH /nodes` (the inbounds a node runs, §10.4, K20):
+# the endpoint scope, not the whole write right of the section.
 SCOPES_CHECK = [f"{section}:read" for section in SECTIONS.values()]
-SCOPES_FIX = ["nodes:read"] + [f"{s}:*" for s in SECTIONS.values() if s != "nodes"]
+SCOPES_FIX = ["nodes:read", "nodes:update"] + [f"{s}:*" for s in SECTIONS.values() if s != "nodes"]
 
 
 def section_of(operation: str) -> tuple[str, str]:
@@ -239,6 +241,13 @@ class PanelClient:
         return schema.profile(
             self.request("PATCH", "/config-profiles", {"uuid": uuid, "config": config})
         )
+
+    def patch_node_inbounds(self, uuid: str, profile_uuid: str, inbounds: list[str]) -> Node:
+        """The inbounds a node runs (§10.4, K20). The panel replaces the whole list, every
+        inbound must be one of the profile's, and the node restarts."""
+        body = {"uuid": uuid, "configProfile": {"activeConfigProfileUuid": profile_uuid,
+                                                "activeInbounds": list(inbounds)}}  # fmt: skip
+        return schema.node(self.request("PATCH", "/nodes", body))
 
     def create_host(self, fields: dict) -> Host:
         self.learn_shape()
